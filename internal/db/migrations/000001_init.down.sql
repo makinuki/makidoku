@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS download_queue;
+DROP TABLE IF EXISTS tracker_bindings;
+DROP TABLE IF EXISTS reading_progress;
+DROP TABLE IF EXISTS chapters;
+DROP TABLE IF EXISTS manga_categories;
+DROP TABLE IF EXISTS manga;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS plugin_storage;
+DROP TABLE IF EXISTS sources;
+DROP TABLE IF EXISTS _migrations;

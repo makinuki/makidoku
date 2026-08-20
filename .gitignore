@@ -1,0 +1,21 @@
+# Build output
+/makidoku
+/makidoku.exe
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Web build
+/web/node_modules/
+/web/dist/*.js
+/web/dist/*.css
+# keep placeholder index.html
+!/web/dist/index.html
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env

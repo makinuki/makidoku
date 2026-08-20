@@ -1,59 +1,104 @@
 package app
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jmoiron/sqlx"
+
+	"github.com/makinuki/makidoku/internal/api"
+	"github.com/makinuki/makidoku/internal/config"
+	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/web"
 )
 
-// Mount registers API routes on r. Currently it exposes only health and a
-// categories listing so the DB wiring can be smoke-tested.
-func Mount(r chi.Router, db *sqlx.DB) {
-	r.Get("/api/health", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
-
-	r.Get("/api/categories", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var out []map[string]any
-		rows, err := db.Queryx(`SELECT id, name, sort_order FROM categories ORDER BY sort_order, name`)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			m := map[string]any{}
-			if err := rows.MapScan(m); err != nil {
-				continue
-			}
-			for k, v := range m {
-				if b, ok := v.([]byte); ok {
-					m[k] = string(b)
-				}
-			}
-			out = append(out, m)
-		}
-		if out == nil {
-			out = []map[string]any{}
-		}
-		// Minimal JSON without importing encoding/json streaming helpers.
-		w.Header().Set("Content-Type", "application/json")
-		// Use standard encoder.
-		writeJSON(w, out)
-	})
+// Server owns the process wide resources: the database, the plugin engine and
+// the HTTP listener serving the API and the embedded reader.
+type Server struct {
+	cfg    config.Config
+	db     *sqlx.DB
+	engine *engine.Engine
+	http   *http.Server
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	// Keep import local to avoid cycle.
-	type encodable = any
-	// Inline encode to avoid an extra helper file.
-	// We deliberately use encoding/json here.
-	// Note: not importing at top to keep file self-contained for go vet demo
-	// but Go requires the import - add it.
-	// To satisfy vet, we do the real work via a helper that does import.
-	encodeJSON(w, v)
+// New opens the database, applies migrations and wires the router.
+func New(cfg config.Config) (*Server, error) {
+	database, err := db.Open(cfg.DBPath())
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	eng := engine.New(database, engine.Options{
+		DataDir:       cfg.DataDir,
+		RegistryURL:   cfg.RegistryURL,
+		ChallengeWait: cfg.ChallengeWait,
+	})
+
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	// RealIP is intentionally omitted: the daemon binds to loopback and must
+	// not trust client supplied forwarding headers.
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
+
+	api.NewServer(db.NewRepository(database), eng).Mount(router)
+	web.Mount(router)
+
+	return &Server{
+		cfg:    cfg,
+		db:     database,
+		engine: eng,
+		http: &http.Server{
+			Addr:              net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port)),
+			Handler:           router,
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+	}, nil
+}
+
+// Addr is the address the daemon listens on.
+func (s *Server) Addr() string { return s.http.Addr }
+
+// Run serves until ctx is cancelled, then shuts down and releases resources.
+func (s *Server) Run(ctx context.Context) error {
+	defer s.close()
+
+	errs := make(chan error, 1)
+	go func() {
+		log.Printf("makidoku listening on http://%s (data: %s)", s.http.Addr, s.cfg.DataDir)
+		if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errs <- err
+			return
+		}
+		errs <- nil
+	}()
+
+	select {
+	case err := <-errs:
+		return err
+	case <-ctx.Done():
+	}
+
+	log.Printf("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.http.Shutdown(shutdownCtx)
+}
+
+// close releases the engine and the database. Plugins are released before the
+// database because their storage writes go through it.
+func (s *Server) close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.engine.Close(ctx)
+	if err := s.db.Close(); err != nil {
+		log.Printf("closing database failed: %v", err)
+	}
 }

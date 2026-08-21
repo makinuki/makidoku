@@ -1,5 +1,14 @@
 package db
 
+const (
+	QueuePending     = "PENDING"
+	QueueDownloading = "DOWNLOADING"
+	QueueCompleted   = "COMPLETED"
+	QueueFailed      = "FAILED"
+	QueuePaused      = "PAUSED"
+	QueueCanceled    = "CANCELED"
+)
+
 // Models mirror the DDL in migrations/000001_init.up.sql. They are plain
 // structs for sqlx mapping; JSON tags follow the REST API shape.
 
@@ -89,4 +98,25 @@ type DownloadQueue struct {
 	DownloadedPages int     `db:"downloaded_pages" json:"downloadedPages"`
 	ErrorMessage    *string `db:"error_message" json:"errorMessage"`
 	QueuedAt        int64   `db:"queued_at" json:"queuedAt"`
+}
+
+// DownloadQueueItem includes the source, manga and chapter data needed by a
+// worker so claiming an item does not require a series of follow-up queries.
+type DownloadQueueItem struct {
+	DownloadQueue
+	MangaID          string   `db:"manga_id" json:"mangaId"`
+	SourceID         string   `db:"source_id" json:"sourceId"`
+	SourceMangaID    string   `db:"source_manga_id" json:"sourceMangaId"`
+	MangaTitle       string   `db:"manga_title" json:"mangaTitle"`
+	MangaDescription *string  `db:"manga_description" json:"mangaDescription,omitempty"`
+	MangaAuthors     *string  `db:"manga_authors" json:"mangaAuthors,omitempty"`
+	MangaArtists     *string  `db:"manga_artists" json:"mangaArtists,omitempty"`
+	MangaGenres      *string  `db:"manga_genres" json:"mangaGenres,omitempty"`
+	DownloadFormat   string   `db:"download_format" json:"downloadFormat"`
+	SourceName       string   `db:"source_name" json:"sourceName"`
+	SourceChapterID  string   `db:"source_chapter_id" json:"sourceChapterId"`
+	ChapterNumber    *float64 `db:"chapter_number" json:"chapterNumber,omitempty"`
+	ChapterTitle     *string  `db:"chapter_title" json:"chapterTitle,omitempty"`
+	Language         *string  `db:"language" json:"language,omitempty"`
+	Scanlator        *string  `db:"scanlator" json:"scanlator,omitempty"`
 }

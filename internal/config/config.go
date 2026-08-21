@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -19,7 +20,10 @@ type Config struct {
 	RegistryURL string
 	// ChallengeWait is how long a request blocked by an anti-bot challenge
 	// waits for clearance to be submitted through the API before it fails.
-	ChallengeWait time.Duration
+	ChallengeWait   time.Duration
+	DownloadDir     string
+	DownloadWorkers int
+	PageInterval    time.Duration
 }
 
 // DefaultDataDir returns the default directory for makidoku.db, wasm cache,
@@ -50,6 +54,44 @@ func ResolveDataDir(dir string) (string, error) {
 // DBPath returns the SQLite file path.
 func (c Config) DBPath() string {
 	return filepath.Join(c.DataDir, "makidoku.db")
+}
+
+func DefaultDownloadDir() string {
+	return os.Getenv("MAKIDOKU_DOWNLOAD_DIR")
+}
+
+func ResolveDownloadDir(dir, dataDir string) (string, error) {
+	if dir == "" {
+		dir = filepath.Join(dataDir, "downloads")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func DefaultDownloadWorkers() int {
+	workers, err := strconv.Atoi(os.Getenv("MAKIDOKU_DOWNLOAD_WORKERS"))
+	if err != nil || workers < 1 {
+		return 3
+	}
+	return workers
+}
+
+func DefaultPageInterval() time.Duration {
+	value := os.Getenv("MAKIDOKU_PAGE_INTERVAL")
+	if value == "" {
+		return 500 * time.Millisecond
+	}
+	interval, err := time.ParseDuration(value)
+	if err != nil || interval < 0 {
+		return 500 * time.Millisecond
+	}
+	return interval
 }
 
 // DefaultRegistryURL returns the catalog location from the environment. An

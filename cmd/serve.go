@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/makinuki/makidoku/internal/app"
-	"github.com/makinuki/makidoku/internal/config"
 )
 
 var serveTray bool
@@ -41,10 +40,6 @@ func init() {
 	serveCmd.Flags().IntVar(&cfg.Port, "port", 8080, "HTTP port")
 	serveCmd.Flags().StringVar(&cfg.Bind, "bind", "127.0.0.1", "bind address")
 	serveCmd.Flags().BoolVar(&serveTray, "tray", false, "run with system tray (requires tray build tag)")
-	serveCmd.Flags().StringVar(&cfg.RegistryURL, "registry", config.DefaultRegistryURL(),
-		"source catalog: an index.json URL, or a path to a local mirror (default: the public registry)")
-	serveCmd.Flags().DurationVar(&cfg.ChallengeWait, "challenge-wait", config.DefaultChallengeWait(),
-		"how long a request blocked by an anti-bot challenge waits for clearance to be submitted")
 	rootCmd.AddCommand(serveCmd)
 }
 

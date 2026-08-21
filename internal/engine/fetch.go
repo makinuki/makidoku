@@ -48,6 +48,12 @@ type Fetcher struct {
 	clients map[string]*http.Client
 }
 
+type rawHTTPResponse struct {
+	Status  int
+	Headers map[string]string
+	Body    []byte
+}
+
 func NewFetcher(storage Storage, resolver ChallengeResolver) *Fetcher {
 	return &Fetcher{
 		transport: http.DefaultTransport,
@@ -80,6 +86,37 @@ func (f *Fetcher) client(sourceID string) *http.Client {
 // verbatim so the plugin performs its own mapping; only a host-side failure or
 // an anti-bot challenge yields an HttpError.
 func (f *Fetcher) Do(ctx context.Context, sourceID string, req HttpRequest) (*HttpResponse, *HttpError) {
+	resp, herr := f.do(ctx, sourceID, req)
+	if herr != nil {
+		return nil, herr
+	}
+	return &HttpResponse{
+		Status:  resp.Status,
+		Headers: resp.Headers,
+		Body:    string(resp.Body),
+	}, nil
+}
+
+// FetchImage downloads an image through the same per-source client used by
+// plugin requests. Page headers, session cookies and anti-bot clearance are
+// preserved, and the returned buffer is capped at the host transfer limit.
+func (f *Fetcher) FetchImage(ctx context.Context, sourceID, target string, headers map[string]string) ([]byte, error) {
+	resp, herr := f.do(ctx, sourceID, HttpRequest{
+		URL:     target,
+		Method:  http.MethodGet,
+		Headers: headers,
+	})
+	if herr != nil {
+		return nil, CodedError(herr.Error, "%s", herr.Message)
+	}
+	if resp.Status < http.StatusOK || resp.Status >= http.StatusMultipleChoices {
+		return nil, CodedError(codeForStatus(resp.Status),
+			"image request to %s returned HTTP %d", target, resp.Status)
+	}
+	return resp.Body, nil
+}
+
+func (f *Fetcher) do(ctx context.Context, sourceID string, req HttpRequest) (*rawHTTPResponse, *HttpError) {
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = http.MethodGet
@@ -89,7 +126,7 @@ func (f *Fetcher) Do(ctx context.Context, sourceID string, req HttpRequest) (*Ht
 	if herr != nil {
 		return nil, herr
 	}
-	if !isChallenge(resp) {
+	if !isChallengeRaw(resp) {
 		return resp, nil
 	}
 
@@ -113,7 +150,7 @@ func (f *Fetcher) Do(ctx context.Context, sourceID string, req HttpRequest) (*Ht
 	if herr != nil {
 		return nil, herr
 	}
-	if isChallenge(replayed) {
+	if isChallengeRaw(replayed) {
 		challenge.Status = replayed.Status
 		challenge.Message = "anti-bot challenge persisted after clearance replay"
 		return nil, &challenge
@@ -123,7 +160,7 @@ func (f *Fetcher) Do(ctx context.Context, sourceID string, req HttpRequest) (*Ht
 
 // attempt performs one HTTP round trip and reports the clearance cookie it
 // applied, so a replay can tell stale clearance from fresh.
-func (f *Fetcher) attempt(ctx context.Context, sourceID, method string, req HttpRequest) (*HttpResponse, string, *HttpError) {
+func (f *Fetcher) attempt(ctx context.Context, sourceID, method string, req HttpRequest) (*rawHTTPResponse, string, *HttpError) {
 	target, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil || !target.IsAbs() || (target.Scheme != "http" && target.Scheme != "https") {
 		return nil, "", &HttpError{
@@ -191,10 +228,10 @@ func (f *Fetcher) attempt(ctx context.Context, sourceID, method string, req Http
 		}
 	}
 
-	return &HttpResponse{
+	return &rawHTTPResponse{
 		Status:  httpResp.StatusCode,
 		Headers: flattenHeaders(httpResp.Header),
-		Body:    string(raw),
+		Body:    raw,
 	}, cookie, nil
 }
 
@@ -219,13 +256,24 @@ func isChallenge(resp *HttpResponse) bool {
 	if resp == nil {
 		return false
 	}
-	if resp.Status == http.StatusForbidden {
-		return true
-	}
-	if resp.Status != http.StatusServiceUnavailable {
+	return isChallengeResponse(resp.Status, resp.Headers, []byte(resp.Body))
+}
+
+func isChallengeRaw(resp *rawHTTPResponse) bool {
+	if resp == nil {
 		return false
 	}
-	return hasChallengeMarkers(resp)
+	return isChallengeResponse(resp.Status, resp.Headers, resp.Body)
+}
+
+func isChallengeResponse(status int, headers map[string]string, body []byte) bool {
+	if status == http.StatusForbidden {
+		return true
+	}
+	if status != http.StatusServiceUnavailable {
+		return false
+	}
+	return hasChallengeMarkers(headers, body)
 }
 
 var challengeMarkers = []string{
@@ -238,16 +286,16 @@ var challengeMarkers = []string{
 	"checking your browser",
 }
 
-func hasChallengeMarkers(resp *HttpResponse) bool {
-	for name := range resp.Headers {
+func hasChallengeMarkers(headers map[string]string, raw []byte) bool {
+	for name := range headers {
 		if strings.EqualFold(name, "cf-mitigated") {
 			return true
 		}
 	}
-	body := strings.ToLower(resp.Body)
-	if len(body) > 64<<10 {
-		body = body[:64<<10]
+	if len(raw) > 64<<10 {
+		raw = raw[:64<<10]
 	}
+	body := strings.ToLower(string(raw))
 	for _, marker := range challengeMarkers {
 		if strings.Contains(body, marker) {
 			return true

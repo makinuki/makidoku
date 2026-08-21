@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,17 +9,33 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
 )
 
-// Server holds the dependencies shared by the REST handlers.
-type Server struct {
-	repo   *db.Repository
-	engine *engine.Engine
+type downloadQueue interface {
+	List() ([]db.DownloadQueueItem, error)
+	Stats() downloader.Stats
+	EnqueueManga(context.Context, string, downloader.ChapterSelection, string) ([]db.DownloadQueueItem, error)
+	Pause(int64) error
+	Resume(int64) error
+	Cancel(int64) error
+	Subscribe() (<-chan downloader.Event, func())
 }
 
-func NewServer(repo *db.Repository, eng *engine.Engine) *Server {
-	return &Server{repo: repo, engine: eng}
+// Server holds the dependencies shared by the REST handlers.
+type Server struct {
+	repo      *db.Repository
+	engine    *engine.Engine
+	downloads downloadQueue
+}
+
+func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQueue) *Server {
+	server := &Server{repo: repo, engine: eng}
+	if len(downloads) > 0 {
+		server.downloads = downloads[0]
+	}
+	return server
 }
 
 // Mount registers the local REST API under /api.
@@ -27,6 +44,9 @@ func (s *Server) Mount(r chi.Router) {
 		api.Get("/health", s.health)
 		s.mountLibrary(api)
 		s.mountSources(api)
+		if s.downloads != nil {
+			s.mountDownloads(api)
+		}
 	})
 }
 

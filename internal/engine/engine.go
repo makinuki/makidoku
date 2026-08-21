@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -313,6 +314,25 @@ func (e *Engine) Pages(ctx context.Context, sourceID, chapterID string) ([]PageI
 		pages = []PageItem{}
 	}
 	return pages, nil
+}
+
+// FetchImage downloads one reader page through the source's shared HTTP
+// client, including its cookie jar and stored anti-bot clearance.
+func (e *Engine) FetchImage(ctx context.Context, sourceID, target string, headers map[string]string) ([]byte, error) {
+	effectiveHeaders := make(map[string]string, len(headers)+1)
+	hasReferer := false
+	for name, value := range headers {
+		effectiveHeaders[name] = value
+		if strings.EqualFold(name, "Referer") && value != "" {
+			hasReferer = true
+		}
+	}
+	if !hasReferer && e.db != nil {
+		if row, err := e.row(sourceID); err == nil && row.BaseURL != "" {
+			effectiveHeaders["Referer"] = strings.TrimRight(row.BaseURL, "/") + "/"
+		}
+	}
+	return e.fetcher.FetchImage(ctx, sourceID, target, effectiveHeaders)
 }
 
 // Unscramble routes scrambled image bytes through the source. Sources without

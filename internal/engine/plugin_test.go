@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/makinuki/makidoku/internal/config"
 	"github.com/makinuki/makidoku/internal/db"
 )
 
@@ -19,6 +20,10 @@ import (
 // test run exercises the same plugins the daemon installs.
 func liveEngine(t *testing.T) *Engine {
 	t.Helper()
+	config.LoadEnv()
+	if os.Getenv("MAKIDOKU_NETWORK_TESTS") != "1" {
+		t.Skip("set MAKIDOKU_NETWORK_TESTS=1 to run live source tests")
+	}
 	catalog := os.Getenv("MAKIDOKU_TEST_REGISTRY")
 	if catalog == "" {
 		catalog = os.Getenv("MAKIDOKU_REGISTRY_URL")

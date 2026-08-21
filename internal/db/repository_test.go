@@ -135,3 +135,66 @@ func TestQueueStateMachine(t *testing.T) {
 		t.Fatal("a canceled item must not resume")
 	}
 }
+
+func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
+	repo := testRepository(t)
+	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "two", Title: "Two", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: second.ID, SourceChapterID: "chapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.UpsertReadingProgress(ReadingProgress{MangaID: first.ID, LastReadChapterID: chapter.ID, LastReadPage: 1, TotalPages: 10})
+	if err == nil {
+		t.Fatal("accepted chapter from another manga")
+	}
+}
+
+func TestRebindingTrackerClearsOldSyncHistory(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "tracker", Title: "Tracker", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := repo.UpsertTrackerBinding(TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "1", RemoteTitle: "Old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := repo.EnqueueTrackerSync(manga.ID, binding.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompleteTrackerSync(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateTrackerSyncedChapter(binding.ID, 3); err != nil {
+		t.Fatal(err)
+	}
+	rebound, err := repo.UpsertTrackerBinding(TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "2", RemoteTitle: "New"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.LastSyncedChapter != 0 {
+		t.Fatalf("last synced chapter = %v", rebound.LastSyncedChapter)
+	}
+	jobs, err := repo.ListTrackerSyncJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("old jobs remained: %+v", jobs)
+	}
+	queued, err := repo.EnqueueTrackerSync(manga.ID, rebound.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.Status != SyncPending {
+		t.Fatalf("queued status = %q", queued.Status)
+	}
+}

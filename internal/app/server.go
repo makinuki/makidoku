@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/internal/tracker"
 	"github.com/makinuki/makidoku/web"
 )
 
@@ -27,7 +29,24 @@ type Server struct {
 	db        *sqlx.DB
 	engine    *engine.Engine
 	downloads *downloader.Queue
+	trackers  *tracker.Registry
+	syncer    *tracker.SyncWorker
 	http      *http.Server
+}
+
+func waitForBackground(downloadErrs, syncErrs <-chan error, downloadConsumed, syncConsumed bool) error {
+	var first error
+	if !downloadConsumed {
+		if err := <-downloadErrs; err != nil && first == nil && !errors.Is(err, context.Canceled) {
+			first = err
+		}
+	}
+	if !syncConsumed {
+		if err := <-syncErrs; err != nil && first == nil && !errors.Is(err, context.Canceled) {
+			first = err
+		}
+	}
+	return first
 }
 
 // New opens the database, applies migrations and wires the router.
@@ -64,7 +83,10 @@ func New(cfg config.Config) (*Server, error) {
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
-	api.NewServer(db.NewRepository(database), eng, downloads).Mount(router)
+	repo := db.NewRepository(database)
+	trackers := tracker.NewRegistry(repo)
+	syncer := &tracker.SyncWorker{Repo: repo, Registry: trackers}
+	api.NewTrackerServer(repo, eng, downloads, trackers).Mount(router)
 	web.Mount(router)
 
 	return &Server{
@@ -72,6 +94,8 @@ func New(cfg config.Config) (*Server, error) {
 		db:        database,
 		engine:    eng,
 		downloads: downloads,
+		trackers:  trackers,
+		syncer:    syncer,
 		http: &http.Server{
 			Addr:              net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port)),
 			Handler:           router,
@@ -100,21 +124,43 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 	downloadErrs := make(chan error, 1)
 	go func() { downloadErrs <- s.downloads.Run(runCtx) }()
+	syncErrs := make(chan error, 1)
+	go func() { syncErrs <- s.syncer.Run(runCtx) }()
 
 	select {
 	case err := <-errs:
 		cancel()
-		<-downloadErrs
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		_ = s.http.Shutdown(shutdownCtx)
+		_ = waitForBackground(downloadErrs, syncErrs, false, false)
 		return err
 	case err := <-downloadErrs:
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		shutdownErr := s.http.Shutdown(shutdownCtx)
+		backgroundErr := waitForBackground(downloadErrs, syncErrs, true, false)
 		if err != nil {
 			return fmt.Errorf("downloader: %w", err)
 		}
-		return shutdownErr
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		return backgroundErr
+	case err := <-syncErrs:
+		cancel()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		shutdownErr := s.http.Shutdown(shutdownCtx)
+		backgroundErr := waitForBackground(downloadErrs, syncErrs, false, true)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("tracker sync: %w", err)
+		}
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		return backgroundErr
 	case <-ctx.Done():
 	}
 
@@ -125,12 +171,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := s.http.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
-	select {
-	case err := <-downloadErrs:
-		return err
-	case <-shutdownCtx.Done():
-		return shutdownCtx.Err()
-	}
+	return waitForBackground(downloadErrs, syncErrs, false, false)
 }
 
 // close releases the engine and the database. Plugins are released before the

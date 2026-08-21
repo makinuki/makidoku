@@ -89,6 +89,41 @@ type TrackerBinding struct {
 	TotalRemoteChapters *int     `db:"total_remote_chapters" json:"totalRemoteChapters"`
 }
 
+type TrackerCredential struct {
+	TrackerType string `db:"tracker_type" json:"trackerType"`
+	ExpiresAt   *int64 `db:"expires_at" json:"expiresAt,omitempty"`
+	CreatedAt   int64  `db:"created_at" json:"createdAt"`
+	UpdatedAt   int64  `db:"updated_at" json:"updatedAt"`
+}
+
+type TrackerCredentialRecord struct {
+	TrackerType  string `db:"tracker_type"`
+	AccessToken  []byte `db:"access_token"`
+	RefreshToken []byte `db:"refresh_token"`
+	ExpiresAt    *int64 `db:"expires_at"`
+	Metadata     []byte `db:"metadata"`
+}
+
+const (
+	SyncPending = "PENDING"
+	SyncRunning = "RUNNING"
+	SyncFailed  = "FAILED"
+	SyncDone    = "COMPLETED"
+)
+
+type TrackerSyncJob struct {
+	ID            int64   `db:"id" json:"id"`
+	MangaID       string  `db:"manga_id" json:"mangaId"`
+	BindingID     int64   `db:"binding_id" json:"bindingId"`
+	ChapterNumber float64 `db:"chapter_number" json:"chapterNumber"`
+	Status        string  `db:"status" json:"status"`
+	Attempts      int     `db:"attempts" json:"attempts"`
+	NextAttemptAt int64   `db:"next_attempt_at" json:"nextAttemptAt"`
+	ErrorMessage  *string `db:"error_message" json:"errorMessage,omitempty"`
+	CreatedAt     int64   `db:"created_at" json:"createdAt"`
+	CompletedAt   *int64  `db:"completed_at" json:"completedAt,omitempty"`
+}
+
 type DownloadQueue struct {
 	ID              int64   `db:"id" json:"id"`
 	ChapterID       string  `db:"chapter_id" json:"chapterId"`

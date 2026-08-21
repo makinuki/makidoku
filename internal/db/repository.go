@@ -144,6 +144,231 @@ func (r *Repository) ListChapters(mangaID string) ([]Chapter, error) {
 	return chapters, err
 }
 
+func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingProgress, error) {
+	if strings.TrimSpace(progress.MangaID) == "" || strings.TrimSpace(progress.LastReadChapterID) == "" {
+		return ReadingProgress{}, errors.New("manga id and chapter id are required")
+	}
+	if progress.LastReadPage < 1 || progress.TotalPages < 1 || progress.LastReadPage > progress.TotalPages {
+		return ReadingProgress{}, errors.New("invalid reading progress")
+	}
+	var chapterManga string
+	if err := r.db.Get(&chapterManga, `SELECT manga_id FROM chapters WHERE id=?`, progress.LastReadChapterID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReadingProgress{}, errors.New("last read chapter does not exist")
+		}
+		return ReadingProgress{}, err
+	}
+	if chapterManga != progress.MangaID {
+		return ReadingProgress{}, errors.New("last read chapter does not belong to manga")
+	}
+	progress.LastReadAt = time.Now().Unix()
+	_, err := r.db.Exec(`INSERT INTO reading_progress(
+		manga_id, last_read_chapter_id, last_read_page, total_pages, is_completed, last_read_at
+	) VALUES(?, ?, ?, ?, ?, ?)
+	ON CONFLICT(manga_id) DO UPDATE SET last_read_chapter_id=excluded.last_read_chapter_id,
+	last_read_page=excluded.last_read_page, total_pages=excluded.total_pages,
+	is_completed=excluded.is_completed, last_read_at=excluded.last_read_at`,
+		progress.MangaID, progress.LastReadChapterID, progress.LastReadPage,
+		progress.TotalPages, progress.IsCompleted, progress.LastReadAt)
+	if err != nil {
+		return ReadingProgress{}, err
+	}
+	return r.GetReadingProgress(progress.MangaID)
+}
+
+func (r *Repository) GetReadingProgress(mangaID string) (ReadingProgress, error) {
+	var p ReadingProgress
+	err := r.db.Get(&p, `SELECT manga_id, last_read_chapter_id, last_read_page, total_pages,
+		is_completed, last_read_at FROM reading_progress WHERE manga_id = ?`, mangaID)
+	return p, err
+}
+
+func (r *Repository) UpsertTrackerBinding(binding TrackerBinding) (TrackerBinding, error) {
+	if strings.TrimSpace(binding.MangaID) == "" || strings.TrimSpace(binding.TrackerType) == "" || strings.TrimSpace(binding.RemoteID) == "" {
+		return TrackerBinding{}, errors.New("manga id, tracker type and remote id are required")
+	}
+	existing, lookupErr := r.GetTrackerBinding(binding.MangaID, binding.TrackerType)
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		return TrackerBinding{}, lookupErr
+	}
+	rebound := lookupErr == nil && existing.RemoteID != binding.RemoteID
+	_, err := r.db.Exec(`INSERT INTO tracker_bindings(
+		manga_id, tracker_type, remote_id, remote_title, remote_score, remote_status,
+		last_synced_chapter, total_remote_chapters
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(manga_id, tracker_type) DO UPDATE SET remote_id=excluded.remote_id,
+	remote_title=excluded.remote_title, remote_score=excluded.remote_score,
+	remote_status=excluded.remote_status, total_remote_chapters=excluded.total_remote_chapters`,
+		binding.MangaID, binding.TrackerType, binding.RemoteID, binding.RemoteTitle,
+		binding.RemoteScore, binding.RemoteStatus, binding.LastSyncedChapter, binding.TotalRemoteChapters)
+	if err != nil {
+		return TrackerBinding{}, err
+	}
+	if rebound {
+		if _, err := r.db.Exec(`DELETE FROM tracker_sync_jobs WHERE binding_id=?`, existing.ID); err != nil {
+			return TrackerBinding{}, err
+		}
+		if _, err := r.db.Exec(`UPDATE tracker_bindings SET last_synced_chapter=0 WHERE id=?`, existing.ID); err != nil {
+			return TrackerBinding{}, err
+		}
+	}
+	return r.GetTrackerBinding(binding.MangaID, binding.TrackerType)
+}
+
+func (r *Repository) GetTrackerBinding(mangaID, trackerType string) (TrackerBinding, error) {
+	var b TrackerBinding
+	err := r.db.Get(&b, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score,
+		remote_status, last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
+	return b, err
+}
+
+func (r *Repository) GetTrackerBindingByID(id int64) (TrackerBinding, error) {
+	var b TrackerBinding
+	err := r.db.Get(&b, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score, remote_status,
+		last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE id=?`, id)
+	return b, err
+}
+
+func (r *Repository) ListTrackerBindings(mangaID string) ([]TrackerBinding, error) {
+	var out []TrackerBinding
+	err := r.db.Select(&out, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score,
+		remote_status, last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE manga_id=? ORDER BY tracker_type`, mangaID)
+	return out, err
+}
+
+func (r *Repository) DeleteTrackerBinding(mangaID, trackerType string) error {
+	_, err := r.db.Exec(`DELETE FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
+	return err
+}
+
+func (r *Repository) SaveTrackerCredential(trackerType string, accessToken, refreshToken []byte, expiresAt *int64, metadata []byte) error {
+	now := time.Now().Unix()
+	_, err := r.db.Exec(`INSERT INTO tracker_credentials(tracker_type,access_token,refresh_token,expires_at,metadata,created_at,updated_at)
+	VALUES(?,?,?,?,?,?,?) ON CONFLICT(tracker_type) DO UPDATE SET access_token=excluded.access_token,refresh_token=excluded.refresh_token,
+	expires_at=excluded.expires_at,metadata=excluded.metadata,updated_at=excluded.updated_at`, trackerType, accessToken, refreshToken, expiresAt, metadata, now, now)
+	return err
+}
+
+func (r *Repository) LoadTrackerCredential(trackerType string) (TrackerCredentialRecord, error) {
+	var c TrackerCredentialRecord
+	err := r.db.Get(&c, `SELECT tracker_type,access_token,refresh_token,expires_at,metadata FROM tracker_credentials WHERE tracker_type=?`, trackerType)
+	return c, err
+}
+
+func (r *Repository) DeleteTrackerCredential(trackerType string) error {
+	_, err := r.db.Exec(`DELETE FROM tracker_credentials WHERE tracker_type=?`, trackerType)
+	return err
+}
+
+func (r *Repository) ListTrackerCredentials() ([]TrackerCredential, error) {
+	var out []TrackerCredential
+	err := r.db.Select(&out, `SELECT tracker_type,expires_at,created_at,updated_at FROM tracker_credentials ORDER BY tracker_type`)
+	return out, err
+}
+
+func (r *Repository) UpdateTrackerSyncedChapter(bindingID int64, chapter float64) error {
+	_, err := r.db.Exec(`UPDATE tracker_bindings SET last_synced_chapter = CASE WHEN last_synced_chapter > ? THEN last_synced_chapter ELSE ? END WHERE id=?`, chapter, chapter, bindingID)
+	return err
+}
+
+func (r *Repository) EnqueueTrackerSync(mangaID string, bindingID int64, chapter float64) (TrackerSyncJob, error) {
+	now := time.Now().Unix()
+	_, err := r.db.Exec(`INSERT INTO tracker_sync_jobs(manga_id,binding_id,chapter_number,status,attempts,next_attempt_at,created_at)
+		VALUES(?,?,?,'PENDING',0,?,?) ON CONFLICT(manga_id,binding_id,chapter_number) DO UPDATE SET
+		status=CASE WHEN tracker_sync_jobs.status='COMPLETED' THEN tracker_sync_jobs.status ELSE 'PENDING' END,
+		next_attempt_at=CASE WHEN tracker_sync_jobs.status='COMPLETED' THEN tracker_sync_jobs.next_attempt_at ELSE excluded.next_attempt_at END,
+		error_message=CASE WHEN tracker_sync_jobs.status='COMPLETED' THEN tracker_sync_jobs.error_message ELSE NULL END`, mangaID, bindingID, chapter, now, now)
+	if err != nil {
+		return TrackerSyncJob{}, err
+	}
+	var job TrackerSyncJob
+	err = r.db.Get(&job, `SELECT id,manga_id,binding_id,chapter_number,status,attempts,next_attempt_at,error_message,created_at,completed_at FROM tracker_sync_jobs WHERE manga_id=? AND binding_id=? AND chapter_number=?`, mangaID, bindingID, chapter)
+	return job, err
+}
+
+func (r *Repository) ClaimTrackerSync(now int64) (*TrackerSyncJob, error) {
+	return r.claimTrackerSync(now, "")
+}
+
+func (r *Repository) ClaimTrackerSyncForTracker(now int64, trackerType string) (*TrackerSyncJob, error) {
+	return r.claimTrackerSync(now, trackerType)
+}
+
+func (r *Repository) claimTrackerSync(now int64, trackerType string) (*TrackerSyncJob, error) {
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var id int64
+	var query string
+	var args []any
+	if trackerType == "" {
+		query = `SELECT id FROM tracker_sync_jobs WHERE status='PENDING' AND next_attempt_at<=? ORDER BY next_attempt_at,id LIMIT 1`
+		args = []any{now}
+	} else {
+		query = `SELECT j.id FROM tracker_sync_jobs j JOIN tracker_bindings b ON b.id=j.binding_id WHERE j.status='PENDING' AND j.next_attempt_at<=? AND b.tracker_type=? ORDER BY j.next_attempt_at,j.id LIMIT 1`
+		args = []any{now, trackerType}
+	}
+	if err := tx.Get(&id, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE tracker_sync_jobs SET status='RUNNING' WHERE id=?`, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	var job TrackerSyncJob
+	if err := r.db.Get(&job, `SELECT id,manga_id,binding_id,chapter_number,status,attempts,next_attempt_at,error_message,created_at,completed_at FROM tracker_sync_jobs WHERE id=?`, id); err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (r *Repository) CompleteTrackerSync(id int64) error {
+	now := time.Now().Unix()
+	_, err := r.db.Exec(`UPDATE tracker_sync_jobs SET status='COMPLETED',completed_at=?,error_message=NULL WHERE id=?`, now, id)
+	return err
+}
+
+func (r *Repository) FailTrackerSync(id int64, retry bool, message string) error {
+	if !retry {
+		_, err := r.db.Exec(`UPDATE tracker_sync_jobs SET status='FAILED',attempts=attempts+1,error_message=? WHERE id=?`, message, id)
+		return err
+	}
+	var attempts int
+	if err := r.db.Get(&attempts, `SELECT attempts FROM tracker_sync_jobs WHERE id=?`, id); err != nil {
+		return err
+	}
+	attempts++
+	delay := int64(1 << min(attempts, 5))
+	next := time.Now().Unix() + delay
+	_, err := r.db.Exec(`UPDATE tracker_sync_jobs SET status='PENDING',attempts=?,next_attempt_at=?,error_message=? WHERE id=?`, attempts, next, message, id)
+	return err
+}
+
+func (r *Repository) ResetInterruptedTrackerSync() error {
+	_, err := r.db.Exec(`UPDATE tracker_sync_jobs SET status='PENDING',next_attempt_at=? WHERE status='RUNNING'`, time.Now().Unix())
+	return err
+}
+
+func (r *Repository) ListTrackerSyncJobs() ([]TrackerSyncJob, error) {
+	var jobs []TrackerSyncJob
+	err := r.db.Select(&jobs, `SELECT id,manga_id,binding_id,chapter_number,status,attempts,next_attempt_at,error_message,created_at,completed_at FROM tracker_sync_jobs ORDER BY created_at DESC,id DESC`)
+	return jobs, err
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (r *Repository) EnqueueChapter(chapterID string) (DownloadQueueItem, error) {
 	now := time.Now().Unix()
 	_, err := r.db.Exec(`INSERT INTO download_queue(

@@ -17,9 +17,33 @@ Current binary provides:
 
 Planned:
 
-- Tracker integrations for AniList, MyAnimeList, MangaUpdates, Kitsu and MangaBaka
 - React frontend with library views and reader
 - Single binary embedding and system tray integration
+
+## Tracker sync
+
+Tracker credentials are encrypted in SQLite with `MAKIDOKU_SECRET`; the secret
+is never included in backups or API responses. Configure provider OAuth client
+settings in `.env`, then start authorization from the local API. The callback
+must be the loopback URL shown by the API. MangaBaka also accepts an explicit
+PAT through MakiDoku's local credential endpoint:
+
+```bash
+curl http://127.0.0.1:8080/api/trackers
+curl 'http://127.0.0.1:8080/api/trackers/anilist/auth/start'
+curl -X POST http://127.0.0.1:8080/api/trackers/mangabaka/token \
+  -H 'Content-Type: application/json' \
+  -d '{"accessToken":"mb-your-personal-access-token","metadata":{"auth":"pat"}}'
+go run . sync --tracker anilist
+```
+
+The MangaBaka PAT is encrypted before it is stored. Authenticated MangaBaka
+requests then send the stored PAT in the `X-API-Key` header.
+
+Reader progress is stored locally and enqueues one durable job per bound
+tracker when a chapter reaches 90 percent or is explicitly completed. AniList,
+MyAnimeList, and MangaBaka expose status and progress writes; MangaUpdates and
+Kitsu currently expose search only and report unsupported write capabilities.
 
 ## Quick start
 

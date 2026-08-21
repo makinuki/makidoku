@@ -11,6 +11,7 @@ import (
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/internal/tracker"
 )
 
 type downloadQueue interface {
@@ -28,13 +29,22 @@ type Server struct {
 	repo      *db.Repository
 	engine    *engine.Engine
 	downloads downloadQueue
+	trackers  *tracker.Registry
+	syncer    *tracker.SyncWorker
 }
 
 func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQueue) *Server {
 	server := &Server{repo: repo, engine: eng}
-	if len(downloads) > 0 {
+	if len(downloads) > 0 && downloads[0] != nil {
 		server.downloads = downloads[0]
 	}
+	return server
+}
+
+func NewTrackerServer(repo *db.Repository, eng *engine.Engine, downloads downloadQueue, trackers *tracker.Registry) *Server {
+	server := NewServer(repo, eng, downloads)
+	server.trackers = trackers
+	server.syncer = &tracker.SyncWorker{Repo: repo, Registry: trackers}
 	return server
 }
 
@@ -46,6 +56,9 @@ func (s *Server) Mount(r chi.Router) {
 		s.mountSources(api)
 		if s.downloads != nil {
 			s.mountDownloads(api)
+		}
+		if s.trackers != nil {
+			s.mountTrackers(api)
 		}
 	})
 }

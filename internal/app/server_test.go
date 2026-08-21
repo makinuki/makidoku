@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/makinuki/makidoku/internal/config"
 )
@@ -27,5 +28,24 @@ func TestNewMountsDownloadAPI(t *testing.T) {
 	server.http.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/download", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWaitForBackgroundConsumesBothWorkers(t *testing.T) {
+	downloadErrs := make(chan error)
+	syncErrs := make(chan error)
+	sent := make(chan struct{})
+	go func() {
+		downloadErrs <- nil
+		syncErrs <- nil
+		close(sent)
+	}()
+	if err := waitForBackground(downloadErrs, syncErrs, false, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-sent:
+	case <-time.After(time.Second):
+		t.Fatal("sync worker result was not consumed")
 	}
 }

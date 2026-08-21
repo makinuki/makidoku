@@ -101,3 +101,49 @@ func TestTrackerStatusRejectsBindingWithoutStatusCapability(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestManualScrobbleSkipsUnsupportedBindings(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "mixed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	repo := db.NewRepository(handle)
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','S','1',1,'en','https://example.test','source.wasm',?)`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "M", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "kitsu", RemoteID: "1", RemoteTitle: "M"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "2", RemoteTitle: "M"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewTrackerServer(repo, nil, nil, tracker.NewRegistry(repo))
+	router := chi.NewRouter()
+	server.Mount(router)
+	req := httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/trackers/scrobble", strings.NewReader(`{"chapterNumber":4}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	jobs, err := repo.ListTrackerSyncJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("jobs=%+v", jobs)
+	}
+	binding, err := repo.GetTrackerBinding(manga.ID, "anilist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs[0].BindingID != binding.ID {
+		t.Fatalf("job binding=%d want=%d", jobs[0].BindingID, binding.ID)
+	}
+}

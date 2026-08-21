@@ -240,8 +240,7 @@ func (s *Server) manualScrobble(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !provider.Capabilities().Scrobble {
-			writeLocalError(w, http.StatusNotImplemented, tracker.ErrUnsupported)
-			return
+			continue
 		}
 		if _, err := s.trackers.Repo.EnqueueTrackerSync(b.MangaID, b.ID, body.ChapterNumber); err != nil {
 			writeLocalError(w, http.StatusInternalServerError, err)

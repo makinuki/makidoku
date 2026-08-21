@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,12 +20,13 @@ import (
 )
 
 type Registry struct {
-	Repo  *db.Repository
-	Store *CredentialStore
-	HTTP  *http.Client
-	mu    sync.Mutex
-	items map[string]Tracker
-	oauth map[string]oauthState
+	Repo         *db.Repository
+	Store        *CredentialStore
+	HTTP         *http.Client
+	mu           sync.Mutex
+	refreshLocks sync.Map
+	items        map[string]Tracker
+	oauth        map[string]oauthState
 }
 
 type oauthState struct {
@@ -47,6 +49,10 @@ func NewRegistry(repo *db.Repository) *Registry {
 }
 
 func (r *Registry) credential(name string) (Credential, error) {
+	lockValue, _ := r.refreshLocks.LoadOrStore(name, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
 	cred, err := r.Store.Load(name)
 	if err != nil {
 		return Credential{}, err
@@ -241,5 +247,6 @@ func (r *Registry) List() []Tracker {
 	for _, t := range r.items {
 		out = append(out, t)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
 }

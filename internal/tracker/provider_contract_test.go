@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -233,6 +235,47 @@ func TestMangaBakaUsesOIDCRefreshEndpoint(t *testing.T) {
 	}
 	if gotURL != "https://mangabaka.org/auth/oauth2/token" || gotGrant != "refresh_token" || credential.AccessToken != "new" || credential.RefreshToken != "next" {
 		t.Fatalf("url=%q grant=%q credential=%+v", gotURL, gotGrant, credential)
+	}
+}
+
+func TestCredentialRefreshIsSerialized(t *testing.T) {
+	repo := trackerRepo(t)
+	t.Setenv("MAKIDOKU_SECRET", "refresh-secret")
+	t.Setenv("MAKIDOKU_MANGABAKA_CLIENT_ID", "baka-client")
+	expired := time.Now().Add(-time.Minute)
+	registry := NewRegistry(repo)
+	if err := registry.Store.Save("mangabaka", Credential{AccessToken: "old", RefreshToken: "refresh", ExpiresAt: &expired}); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"access_token":"new","refresh_token":"next","expires_in":3600}`))
+	}))
+	defer server.Close()
+	target, _ := url.Parse(server.URL)
+	base := server.Client().Transport
+	registry.HTTP = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		cloned := request.Clone(request.Context())
+		copyURL := *request.URL
+		copyURL.Scheme = target.Scheme
+		copyURL.Host = target.Host
+		cloned.URL = &copyURL
+		return base.RoundTrip(cloned)
+	})}
+	var group sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if _, err := registry.Credential("mangabaka"); err != nil {
+				t.Errorf("credential: %v", err)
+			}
+		}()
+	}
+	group.Wait()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("refresh calls=%d want=1", got)
 	}
 }
 

@@ -43,8 +43,5 @@ func (m *MangaUpdates) ScrobbleProgress(context.Context, db.TrackerBinding, floa
 	return ErrUnsupported
 }
 func itoa(v int) string {
-	if v == 0 {
-		return "0"
-	}
 	return fmt.Sprint(v)
 }

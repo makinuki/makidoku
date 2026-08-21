@@ -362,13 +362,6 @@ func (r *Repository) ListTrackerSyncJobs() ([]TrackerSyncJob, error) {
 	return jobs, err
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func (r *Repository) EnqueueChapter(chapterID string) (DownloadQueueItem, error) {
 	now := time.Now().Unix()
 	_, err := r.db.Exec(`INSERT INTO download_queue(

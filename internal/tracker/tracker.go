@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -72,17 +73,23 @@ type Client struct {
 }
 
 func (c Client) do(ctx context.Context, method, path string, body any, out any, auth bool) error {
-	var reader *strings.Reader
+	var reader io.Reader
+	contentType := ""
 	if body == nil {
-		reader = strings.NewReader("")
+		reader = nil
 	} else {
 		raw, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
 		reader = strings.NewReader(string(raw))
+		contentType = "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, reader)
+	return c.request(ctx, method, path, reader, contentType, out, auth)
+}
+
+func (c Client) request(ctx context.Context, method, path string, body io.Reader, contentType string, out any, auth bool) error {
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, body)
 	if err != nil {
 		return err
 	}
@@ -90,8 +97,8 @@ func (c Client) do(ctx context.Context, method, path string, body any, out any, 
 	for k, v := range c.Headers {
 		req.Header.Set(k, v)
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	if auth {
 		cred, err := c.Token()
@@ -136,53 +143,5 @@ func (c Client) do(ctx context.Context, method, path string, body any, out any, 
 }
 
 func (c Client) doForm(ctx context.Context, method, path string, form url.Values, out any, auth bool) error {
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for k, v := range c.Headers {
-		req.Header.Set(k, v)
-	}
-	if auth {
-		cred, err := c.Token()
-		if err != nil {
-			return err
-		}
-		if cred.AccessToken == "" {
-			return errors.New("tracker credentials are not configured")
-		}
-		if c.TokenHeader != nil {
-			key, value := c.TokenHeader(cred)
-			req.Header.Set(key, value)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+cred.AccessToken)
-		}
-	}
-	httpClient := c.HTTP
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var msg struct {
-			Message string `json:"message"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&msg)
-		if msg.Message == "" {
-			msg.Message = resp.Status
-		}
-		return &HTTPError{Status: resp.StatusCode, Message: msg.Message}
-	}
-	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return err
-		}
-	}
-	return nil
+	return c.request(ctx, method, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", out, auth)
 }

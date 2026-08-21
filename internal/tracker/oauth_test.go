@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -49,5 +50,17 @@ func TestStartOAuthUsesDocumentedAniListFlow(t *testing.T) {
 	}
 	if query.Get("code_challenge") != "" || query.Get("code_challenge_method") != "" {
 		t.Fatalf("AniList URL unexpectedly used PKCE: %v", query)
+	}
+}
+
+func TestRegistryListIsSortedByProviderName(t *testing.T) {
+	registry := NewRegistry(trackerRepo(t))
+	providers := registry.List()
+	names := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		names = append(names, provider.Name())
+	}
+	if !sort.StringsAreSorted(names) {
+		t.Fatalf("provider names are not sorted: %v", names)
 	}
 }

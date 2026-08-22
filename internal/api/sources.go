@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/engine"
 )
 
@@ -18,6 +20,7 @@ func (s *Server) mountSources(r chi.Router) {
 	r.Get("/sources", s.listSources)
 	r.Get("/sources/catalog", s.catalog)
 	r.Post("/sources/install", s.installSource)
+	r.Get("/reader/image", s.readerImage)
 	r.Route("/sources/{sourceID}", func(source chi.Router) {
 		source.Get("/", s.getSource)
 		source.Delete("/", s.uninstallSource)
@@ -25,8 +28,122 @@ func (s *Server) mountSources(r chi.Router) {
 		source.Get("/search", s.search)
 		source.Get("/details", s.details)
 		source.Get("/pages", s.pages)
+		source.Post("/library", s.saveSourceManga)
 		source.Post("/clearance", s.submitClearance)
 	})
+}
+
+func (s *Server) saveSourceManga(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MangaID string `json:"mangaId"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	sourceID := chi.URLParam(r, "sourceID")
+	mangaID := strings.TrimSpace(body.MangaID)
+	if mangaID == "" {
+		writeBadRequest(w, "mangaId is required")
+		return
+	}
+	details, err := s.engine.Details(r.Context(), sourceID, mangaID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if strings.TrimSpace(details.ID) == "" {
+		details.ID = mangaID
+	}
+	manga, err := s.repo.UpsertManga(db.Manga{
+		SourceID: sourceID, SourceMangaID: details.ID, Title: details.Title,
+		AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description),
+		Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres),
+		Status: details.Status, CoverURL: details.CoverURL,
+	})
+	if err != nil {
+		writeLocalError(w, http.StatusConflict, err)
+		return
+	}
+	for _, item := range details.Chapters {
+		if _, err := s.repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: item.ID, ChapterNumber: item.Number, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
+			writeLocalError(w, http.StatusConflict, err)
+			return
+		}
+	}
+	if _, err := s.repo.SetMangaLibrary(manga.ID, true); err != nil {
+		writeLocalError(w, http.StatusConflict, err)
+		return
+	}
+	aggregate, err := s.repo.GetMangaAggregate(manga.ID)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, aggregate)
+}
+
+func (s *Server) readerImage(w http.ResponseWriter, r *http.Request) {
+	sourceID := strings.TrimSpace(r.URL.Query().Get("source"))
+	target := strings.TrimSpace(r.URL.Query().Get("url"))
+	if sourceID == "" || target == "" {
+		writeBadRequest(w, "source and url are required")
+		return
+	}
+	headers, err := decodeOptionalObject(r.URL.Query().Get("headers"))
+	if err != nil {
+		writeBadRequest(w, "headers must be a JSON object")
+		return
+	}
+	for name := range headers {
+		if strings.EqualFold(name, "Cookie") || strings.EqualFold(name, "Host") {
+			writeBadRequest(w, "cookie and host headers are not allowed")
+			return
+		}
+	}
+	allowed, err := s.engine.ImageURLAllowed(r.Context(), sourceID, target)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !allowed {
+		writeLocalError(w, http.StatusForbidden, fmt.Errorf("image host is not allowed for source %s", sourceID))
+		return
+	}
+	data, err := s.engine.FetchImage(r.Context(), sourceID, target, headers)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if r.URL.Query().Get("scrambled") == "1" {
+		data, err = s.engine.Unscramble(r.Context(), sourceID, data)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	if len(data) == 0 {
+		writeError(w, engine.CodedError(engine.CodeUnscrambleFailed, "image data is empty"))
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(data))
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = w.Write(data)
+}
+
+func jsonString(values []string) *string {
+	if len(values) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(values)
+	v := string(b)
+	return &v
+}
+
+func stringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {

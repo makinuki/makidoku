@@ -53,7 +53,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/health", s.health)
 		s.mountLibrary(api)
+		s.mountBackup(api)
 		s.mountSources(api)
+		s.mountMigration(api)
 		if s.downloads != nil {
 			s.mountDownloads(api)
 		}

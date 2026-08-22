@@ -55,6 +55,30 @@ type Manga struct {
 	UpdatedAt      int64   `db:"updated_at" json:"updatedAt"`
 }
 
+// LibraryManga is a library title with its user-facing reading metadata.
+type LibraryManga struct {
+	Manga
+	Categories     []Category       `json:"categories"`
+	Progress       *ReadingProgress `json:"progress,omitempty"`
+	UnreadChapters int              `json:"unreadChapters"`
+}
+
+// MangaAggregate contains all local state needed by the details and reader
+// views. The aggregate is assembled from normalized tables by the repository.
+type MangaAggregate struct {
+	Manga      Manga            `json:"manga"`
+	Categories []Category       `json:"categories"`
+	Chapters   []Chapter        `json:"chapters"`
+	Progress   *ReadingProgress `json:"progress,omitempty"`
+	Trackers   []TrackerBinding `json:"trackers"`
+}
+
+type HistoryItem struct {
+	Manga    Manga           `json:"manga"`
+	Chapter  Chapter         `json:"chapter"`
+	Progress ReadingProgress `json:"progress"`
+}
+
 type Chapter struct {
 	ID              string   `db:"id" json:"id"`
 	MangaID         string   `db:"manga_id" json:"mangaId"`

@@ -94,7 +94,7 @@ func TestTrackerStatusRejectsBindingWithoutStatusCapability(t *testing.T) {
 	server := NewTrackerServer(repo, nil, nil, tracker.NewRegistry(repo))
 	router := chi.NewRouter()
 	server.Mount(router)
-	req := httptest.NewRequest(http.MethodGet, "/api/manga/"+manga.ID+"/trackers/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/manga/"+manga.SourceID+"/"+manga.SourceMangaID+"/trackers/status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotImplemented {
@@ -125,7 +125,7 @@ func TestManualScrobbleSkipsUnsupportedBindings(t *testing.T) {
 	server := NewTrackerServer(repo, nil, nil, tracker.NewRegistry(repo))
 	router := chi.NewRouter()
 	server.Mount(router)
-	req := httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/trackers/scrobble", strings.NewReader(`{"chapterNumber":4}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.SourceID+"/"+manga.SourceMangaID+"/trackers/scrobble", strings.NewReader(`{"chapterNumber":4}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

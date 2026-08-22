@@ -17,8 +17,31 @@ Current binary provides:
 
 Planned:
 
-- React frontend with library views and reader
 - Single binary embedding and system tray integration
+
+## Web UI
+
+MakiDoku includes a React 19 reader and library workspace in `web/`. The
+frontend uses Vite+ for development, checking, testing, and production builds.
+The generated `web/dist` directory is embedded by the Go daemon, so the
+portable binary serves the same UI without a separate web server.
+
+```bash
+cd web
+pnpm install --ignore-scripts
+pnpm run dev           # development server with /api proxy
+pnpm run test:run      # Vitest and Testing Library
+pnpm run check         # Vite+ formatting and linting
+pnpm run typecheck     # TypeScript compiler checks
+pnpm run build         # refresh web/dist before Go embedding
+```
+
+The UI provides library categories, cross-source browsing, manga details,
+chapter downloads, tracker-aware title actions, reading history, backup
+import/export, and paged or virtualized webtoon reading. Reader images are
+served through the daemon image proxy, which reuses source cookies, headers,
+anti-bot clearance, and optional unscrambling rather than exposing those
+credentials to the browser.
 
 ## Tracker sync
 
@@ -128,6 +151,9 @@ The cookie and agent are stored with the source and applied to its later request
 ## Tests
 
 ```bash
+cd web
+pnpm run build
+cd ..
 go test ./...
 ```
 

@@ -8,13 +8,12 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+//go:generate pnpm run build
 //go:embed dist
 var distFS embed.FS
 
-// Mount serves the embedded React build at /. The dist directory may hold
-// only a placeholder index.html, so the handler returns a notice when the
-// real build is absent. The placeholder will be replaced by a Vite build and
-// embedded via //go:embed all:dist later.
+// Mount serves the embedded React build at /. Unknown non-API paths fall back
+// to index.html so React Router can handle deep links in the single binary.
 func Mount(r chi.Router) {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
@@ -37,7 +36,7 @@ func Mount(r chi.Router) {
 
 	fileServer := http.FileServer(http.FS(sub))
 	r.Get("/*", func(w http.ResponseWriter, req *http.Request) {
-		// SPA fallback: try file, fall back to index.html.
+		// SPA fallback: try a static asset, then serve index.html.
 		path := req.URL.Path
 		if path == "/" {
 			path = "/index.html"

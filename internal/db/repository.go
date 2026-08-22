@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,336 @@ func (r *Repository) CreateCategory(name string, sortOrder int) (Category, error
 	}
 	id, _ := res.LastInsertId()
 	return Category{ID: id, Name: name, SortOrder: sortOrder}, nil
+}
+
+func (r *Repository) UpdateCategory(id int64, name string, sortOrder int) (Category, error) {
+	name = strings.TrimSpace(name)
+	if id < 1 || name == "" {
+		return Category{}, errors.New("category id and name are required")
+	}
+	result, err := r.db.Exec(`UPDATE categories SET name=?, sort_order=? WHERE id=?`, name, sortOrder, id)
+	if err != nil {
+		return Category{}, err
+	}
+	if err := requireChange(result, "update category"); err != nil {
+		return Category{}, err
+	}
+	var category Category
+	err = r.db.Get(&category, `SELECT id,name,sort_order FROM categories WHERE id=?`, id)
+	return category, err
+}
+
+func (r *Repository) DeleteCategory(id int64) error {
+	if id < 1 {
+		return errors.New("category id must be positive")
+	}
+	_, err := r.db.Exec(`DELETE FROM categories WHERE id=?`, id)
+	return err
+}
+
+func (r *Repository) SetMangaLibrary(id string, inLibrary bool) (Manga, error) {
+	result, err := r.db.Exec(`UPDATE manga SET in_library=?, updated_at=? WHERE id=?`, inLibrary, time.Now().Unix(), strings.TrimSpace(id))
+	if err != nil {
+		return Manga{}, err
+	}
+	if err := requireChange(result, "update library membership"); err != nil {
+		return Manga{}, err
+	}
+	return r.GetManga(id)
+}
+
+func (r *Repository) SetMangaCategory(mangaID string, categoryID int64, enabled bool) error {
+	if strings.TrimSpace(mangaID) == "" || categoryID < 1 {
+		return errors.New("manga id and category id are required")
+	}
+	if enabled {
+		_, err := r.db.Exec(`INSERT OR IGNORE INTO manga_categories(manga_id,category_id) VALUES(?,?)`, mangaID, categoryID)
+		return err
+	}
+	_, err := r.db.Exec(`DELETE FROM manga_categories WHERE manga_id=? AND category_id=?`, mangaID, categoryID)
+	return err
+}
+
+func (r *Repository) ListMangaCategories(mangaID string) ([]Category, error) {
+	var out []Category
+	err := r.db.Select(&out, `SELECT c.id,c.name,c.sort_order FROM categories c JOIN manga_categories mc ON mc.category_id=c.id WHERE mc.manga_id=? ORDER BY c.sort_order,c.name`, mangaID)
+	return out, err
+}
+
+func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga, error) {
+	query = strings.TrimSpace(query)
+	args := []any{}
+	where := `WHERE m.in_library=1`
+	if query != "" {
+		where += ` AND (m.title LIKE ? OR m.alt_titles LIKE ?)`
+		like := "%" + query + "%"
+		args = append(args, like, like)
+	}
+	if categoryID > 0 {
+		where += ` AND EXISTS (SELECT 1 FROM manga_categories mc WHERE mc.manga_id=m.id AND mc.category_id=?)`
+		args = append(args, categoryID)
+	}
+	var manga []Manga
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.in_library,m.download_format,m.created_at,m.updated_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LibraryManga, 0, len(manga))
+	for _, item := range manga {
+		categories, err := r.ListMangaCategories(item.ID)
+		if err != nil {
+			return nil, err
+		}
+		var progress *ReadingProgress
+		if p, err := r.GetReadingProgress(item.ID); err == nil {
+			progress = &p
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		var unread int
+		if progress != nil {
+			if err := r.db.Get(&unread, `SELECT COUNT(*) FROM chapters WHERE manga_id=? AND (downloaded=0 OR id<>?)`, item.ID, progress.LastReadChapterID); err != nil {
+				return nil, err
+			}
+		} else if err := r.db.Get(&unread, `SELECT COUNT(*) FROM chapters WHERE manga_id=? AND downloaded=0`, item.ID); err != nil {
+			return nil, err
+		}
+		out = append(out, LibraryManga{Manga: item, Categories: categories, Progress: progress, UnreadChapters: unread})
+	}
+	return out, nil
+}
+
+func (r *Repository) GetMangaAggregate(id string) (MangaAggregate, error) {
+	manga, err := r.GetManga(id)
+	if err != nil {
+		return MangaAggregate{}, err
+	}
+	chapters, err := r.ListChapters(id)
+	if err != nil {
+		return MangaAggregate{}, err
+	}
+	categories, err := r.ListMangaCategories(id)
+	if err != nil {
+		return MangaAggregate{}, err
+	}
+	trackers, err := r.ListTrackerBindings(id)
+	if err != nil {
+		return MangaAggregate{}, err
+	}
+	var progress *ReadingProgress
+	if p, err := r.GetReadingProgress(id); err == nil {
+		progress = &p
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return MangaAggregate{}, err
+	}
+	return MangaAggregate{Manga: manga, Categories: categories, Chapters: chapters, Progress: progress, Trackers: trackers}, nil
+}
+
+// MigrateManga moves a title and its local state to a replacement source. The
+// operation is transactional so a failed chapter mapping cannot leave a
+// partially migrated library graph.
+func (r *Repository) MigrateManga(oldID string, replacement Manga, replacementChapters []Chapter) (MangaAggregate, error) {
+	oldID = strings.TrimSpace(oldID)
+	if oldID == "" {
+		return MangaAggregate{}, errors.New("old manga id is required")
+	}
+	replacement.SourceID = strings.TrimSpace(replacement.SourceID)
+	replacement.SourceMangaID = strings.TrimSpace(replacement.SourceMangaID)
+	if replacement.SourceID == "" || replacement.SourceMangaID == "" {
+		return MangaAggregate{}, errors.New("replacement source id and manga id are required")
+	}
+	replacement.ID = replacement.SourceID + ":" + replacement.SourceMangaID
+	if replacement.ID == oldID {
+		return MangaAggregate{}, errors.New("replacement manga must have a different id")
+	}
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return MangaAggregate{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var old Manga
+	if err := tx.Get(&old, `SELECT id,source_id,source_manga_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,created_at,updated_at FROM manga WHERE id=?`, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	var exists int
+	if err := tx.Get(&exists, `SELECT COUNT(*) FROM manga WHERE id=?`, replacement.ID); err != nil {
+		return MangaAggregate{}, err
+	}
+	if exists != 0 {
+		return MangaAggregate{}, fmt.Errorf("replacement manga %q already exists", replacement.ID)
+	}
+	if replacement.DownloadFormat == "" {
+		replacement.DownloadFormat = old.DownloadFormat
+	}
+	if replacement.DownloadFormat == "" {
+		replacement.DownloadFormat = "cbz"
+	}
+	if replacement.CreatedAt == 0 {
+		replacement.CreatedAt = old.CreatedAt
+	}
+	if replacement.UpdatedAt == 0 {
+		replacement.UpdatedAt = time.Now().Unix()
+	}
+	if replacement.Title == "" {
+		replacement.Title = old.Title
+	}
+	if replacement.Status == "" {
+		replacement.Status = old.Status
+	}
+	if replacement.CoverURL == "" {
+		replacement.CoverURL = old.CoverURL
+	}
+	if _, err := tx.Exec(`INSERT INTO manga(id,source_id,source_manga_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, replacement.ID, replacement.SourceID, replacement.SourceMangaID, replacement.Title, replacement.AltTitles, replacement.Description, replacement.Authors, replacement.Artists, replacement.Genres, replacement.Status, replacement.CoverURL, old.InLibrary, replacement.DownloadFormat, replacement.CreatedAt, replacement.UpdatedAt); err != nil {
+		return MangaAggregate{}, fmt.Errorf("create replacement manga: %w", err)
+	}
+
+	var oldChapters []Chapter
+	if err := tx.Select(&oldChapters, `SELECT id,manga_id,source_chapter_id,chapter_number,title,language,uploaded_at,scanlator,downloaded,download_path FROM chapters WHERE manga_id=? ORDER BY chapter_number IS NULL,chapter_number,source_chapter_id`, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	used := make(map[string]bool)
+	chapterMap := make(map[string]string, len(oldChapters))
+	chapterByNumber := make(map[string][]Chapter)
+	for _, candidate := range replacementChapters {
+		candidate.MangaID = replacement.ID
+		candidate.ID = replacement.ID + ":" + strings.TrimSpace(candidate.SourceChapterID)
+		if candidate.SourceChapterID == "" {
+			return MangaAggregate{}, errors.New("replacement chapter id is required")
+		}
+		if candidate.ChapterNumber != nil {
+			key := strconv.FormatFloat(*candidate.ChapterNumber, 'g', -1, 64)
+			chapterByNumber[key] = append(chapterByNumber[key], candidate)
+		}
+	}
+	for index, oldChapter := range oldChapters {
+		var match *Chapter
+		if oldChapter.ChapterNumber != nil {
+			key := strconv.FormatFloat(*oldChapter.ChapterNumber, 'g', -1, 64)
+			for i := range chapterByNumber[key] {
+				candidate := chapterByNumber[key][i]
+				if !used[candidate.ID] {
+					match = &candidate
+					break
+				}
+			}
+		}
+		if match == nil {
+			for i := range replacementChapters {
+				candidate := replacementChapters[i]
+				candidate.MangaID = replacement.ID
+				candidate.ID = replacement.ID + ":" + strings.TrimSpace(candidate.SourceChapterID)
+				if candidate.SourceChapterID == oldChapter.SourceChapterID && !used[candidate.ID] {
+					match = &candidate
+					break
+				}
+			}
+		}
+		if match == nil && index < len(replacementChapters) {
+			candidate := replacementChapters[index]
+			candidate.MangaID = replacement.ID
+			candidate.ID = replacement.ID + ":" + strings.TrimSpace(candidate.SourceChapterID)
+			if !used[candidate.ID] {
+				match = &candidate
+			}
+		}
+		if match == nil {
+			return MangaAggregate{}, fmt.Errorf("no replacement chapter for %s", oldChapter.ID)
+		}
+		used[match.ID] = true
+		chapterMap[oldChapter.ID] = match.ID
+		if oldChapter.Downloaded {
+			match.Downloaded = true
+			match.DownloadPath = oldChapter.DownloadPath
+		}
+		if _, err := tx.Exec(`INSERT INTO chapters(id,manga_id,source_chapter_id,chapter_number,title,language,uploaded_at,scanlator,downloaded,download_path) VALUES(?,?,?,?,?,?,?,?,?,?)`, match.ID, replacement.ID, match.SourceChapterID, match.ChapterNumber, match.Title, match.Language, match.UploadedAt, match.Scanlator, match.Downloaded, match.DownloadPath); err != nil {
+			return MangaAggregate{}, fmt.Errorf("create replacement chapter %s: %w", match.ID, err)
+		}
+		var queueID int64
+		if err := tx.Get(&queueID, `SELECT id FROM download_queue WHERE chapter_id=?`, oldChapter.ID); err == nil {
+			if _, err := tx.Exec(`UPDATE download_queue SET chapter_id=? WHERE id=?`, match.ID, queueID); err != nil {
+				return MangaAggregate{}, fmt.Errorf("move download queue item: %w", err)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return MangaAggregate{}, err
+		}
+	}
+	for _, candidate := range replacementChapters {
+		candidate.MangaID = replacement.ID
+		candidate.ID = replacement.ID + ":" + strings.TrimSpace(candidate.SourceChapterID)
+		if candidate.SourceChapterID == "" || used[candidate.ID] {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO chapters(id,manga_id,source_chapter_id,chapter_number,title,language,uploaded_at,scanlator,downloaded,download_path) VALUES(?,?,?,?,?,?,?,?,?,?)`, candidate.ID, replacement.ID, candidate.SourceChapterID, candidate.ChapterNumber, candidate.Title, candidate.Language, candidate.UploadedAt, candidate.Scanlator, candidate.Downloaded, candidate.DownloadPath); err != nil {
+			return MangaAggregate{}, fmt.Errorf("create replacement chapter %s: %w", candidate.ID, err)
+		}
+	}
+
+	var categories []struct {
+		ID int64 `db:"category_id"`
+	}
+	if err := tx.Select(&categories, `SELECT category_id FROM manga_categories WHERE manga_id=?`, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	for _, category := range categories {
+		if _, err := tx.Exec(`INSERT INTO manga_categories(manga_id,category_id) VALUES(?,?)`, replacement.ID, category.ID); err != nil {
+			return MangaAggregate{}, err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE tracker_bindings SET manga_id=? WHERE manga_id=?`, replacement.ID, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	if _, err := tx.Exec(`UPDATE tracker_sync_jobs SET manga_id=? WHERE manga_id=?`, replacement.ID, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	var storedProgress ReadingProgress
+	if err := tx.Get(&storedProgress, `SELECT manga_id,last_read_chapter_id,last_read_page,total_pages,is_completed,last_read_at FROM reading_progress WHERE manga_id=?`, oldID); err == nil {
+		newChapterID, ok := chapterMap[storedProgress.LastReadChapterID]
+		if !ok {
+			return MangaAggregate{}, fmt.Errorf("reading progress chapter %q has no replacement", storedProgress.LastReadChapterID)
+		}
+		storedProgress.MangaID = replacement.ID
+		storedProgress.LastReadChapterID = newChapterID
+		if _, err := tx.Exec(`INSERT INTO reading_progress(manga_id,last_read_chapter_id,last_read_page,total_pages,is_completed,last_read_at) VALUES(?,?,?,?,?,?)`, storedProgress.MangaID, storedProgress.LastReadChapterID, storedProgress.LastReadPage, storedProgress.TotalPages, storedProgress.IsCompleted, storedProgress.LastReadAt); err != nil {
+			return MangaAggregate{}, err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return MangaAggregate{}, err
+	}
+	if _, err := tx.Exec(`DELETE FROM reading_progress WHERE manga_id=?`, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	if _, err := tx.Exec(`DELETE FROM download_queue WHERE chapter_id IN (SELECT id FROM chapters WHERE manga_id=?)`, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	if _, err := tx.Exec(`DELETE FROM manga WHERE id=?`, oldID); err != nil {
+		return MangaAggregate{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MangaAggregate{}, err
+	}
+	return r.GetMangaAggregate(replacement.ID)
+}
+
+func (r *Repository) ListHistory() ([]HistoryItem, error) {
+	var rows []ReadingProgress
+	err := r.db.Select(&rows, `SELECT manga_id,last_read_chapter_id,last_read_page,total_pages,is_completed,last_read_at FROM reading_progress ORDER BY last_read_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HistoryItem, 0, len(rows))
+	for _, row := range rows {
+		manga, err := r.GetManga(row.MangaID)
+		if err != nil {
+			return nil, err
+		}
+		chapter, err := r.GetChapter(row.LastReadChapterID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, HistoryItem{Manga: manga, Chapter: chapter, Progress: row})
+	}
+	return out, nil
 }
 
 func (r *Repository) UpsertManga(manga Manga) (Manga, error) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -333,6 +334,39 @@ func (e *Engine) FetchImage(ctx context.Context, sourceID, target string, header
 		}
 	}
 	return e.fetcher.FetchImage(ctx, sourceID, target, effectiveHeaders)
+}
+
+// ImageURLAllowed restricts browser-facing image delivery to hosts declared by
+// the installed source. It prevents the local daemon from becoming an open
+// proxy while still allowing CDN hosts listed by a plugin.
+func (e *Engine) ImageURLAllowed(ctx context.Context, sourceID, target string) (bool, error) {
+	u, err := url.Parse(strings.TrimSpace(target))
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return false, CodedError(CodeParsingError, "image URL must be absolute http or https")
+	}
+	row, err := e.row(sourceID)
+	if err != nil {
+		return false, err
+	}
+	host := strings.ToLower(u.Hostname())
+	if base, parseErr := url.Parse(row.BaseURL); parseErr == nil && strings.EqualFold(base.Hostname(), host) {
+		return true, nil
+	}
+	meta, err := e.Metadata(ctx, sourceID)
+	if err != nil {
+		if CodeOf(err) == CodeNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, allowed := range meta.AllowedHosts {
+		allowed = strings.ToLower(strings.TrimSpace(allowed))
+		allowed = strings.TrimPrefix(allowed, "*.")
+		if allowed != "" && (host == allowed || strings.HasSuffix(host, "."+allowed)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Unscramble routes scrambled image bytes through the source. Sources without

@@ -8,10 +8,7 @@
 
 # Web build
 /web/node_modules/
-/web/dist/*.js
-/web/dist/*.css
-# keep placeholder index.html
-!/web/dist/index.html
+/web/dist/
 
 # OS
 .DS_Store

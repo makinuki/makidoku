@@ -108,26 +108,32 @@ func (q *Queue) List() ([]db.DownloadQueueItem, error) {
 // EnqueueManga refreshes title and chapter metadata through the source, stores
 // it locally, and adds the selected chapters to the persistent queue.
 func (q *Queue) EnqueueManga(ctx context.Context, mangaID string, selection ChapterSelection, format string) ([]db.DownloadQueueItem, error) {
-	sourceID, sourceMangaID, err := splitMangaID(mangaID)
+	mangaID = strings.TrimSpace(mangaID)
+	if mangaID == "" {
+		return nil, errors.New("manga id is required")
+	}
+	existingManga, err := q.repo.GetManga(mangaID)
 	if err != nil {
 		return nil, err
 	}
-	details, err := q.engine.Details(ctx, sourceID, sourceMangaID)
+	source, err := q.repo.GetMangaSource(mangaID)
 	if err != nil {
 		return nil, err
 	}
-	if details.ID != "" {
-		sourceMangaID = details.ID
+	details, err := q.engine.Details(ctx, source.SourceID, source.SourceMangaID)
+	if err != nil {
+		return nil, err
 	}
 	if format == "" {
 		format = FormatCBZ
-		if existing, lookupErr := q.repo.GetManga(sourceID + ":" + sourceMangaID); lookupErr == nil && existing.DownloadFormat != "" {
-			format = existing.DownloadFormat
+		if existingManga.DownloadFormat != "" {
+			format = existingManga.DownloadFormat
 		}
 	}
 	manga, err := q.repo.UpsertManga(db.Manga{
-		SourceID:       sourceID,
-		SourceMangaID:  sourceMangaID,
+		ID:             mangaID,
+		SourceID:       source.SourceID,
+		SourceMangaID:  source.SourceMangaID,
 		Title:          details.Title,
 		AltTitles:      jsonString(details.AltTitles),
 		Description:    stringPointer(details.Description),
@@ -146,6 +152,7 @@ func (q *Queue) EnqueueManga(ctx context.Context, mangaID string, selection Chap
 	for _, item := range details.Chapters {
 		chapter, err := q.repo.UpsertChapter(db.Chapter{
 			MangaID:         manga.ID,
+			SourceID:        source.SourceID,
 			SourceChapterID: item.ID,
 			ChapterNumber:   item.Number,
 			Title:           stringPointer(item.Title),
@@ -414,14 +421,6 @@ func (q *Queue) notify() {
 	case q.wake <- struct{}{}:
 	default:
 	}
-}
-
-func splitMangaID(id string) (string, string, error) {
-	parts := strings.SplitN(strings.TrimSpace(id), ":", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", errors.New("manga id must use the source:manga-id form")
-	}
-	return parts[0], parts[1], nil
 }
 
 func selectChapters(chapters []db.Chapter, selection ChapterSelection) ([]db.Chapter, error) {

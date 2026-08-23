@@ -12,12 +12,22 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../../api";
-import type { Aggregate, Binding, Category, MigrationCandidate, TrackerInfo } from "../../types";
-import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
+import type {
+  Aggregate,
+  Binding,
+  Category,
+  MigrationCandidate,
+  TrackerInfo,
+} from "../../types";
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+} from "../../components/States";
 
 export function DetailsPage() {
-  const { sourceId = "", mangaId = "" } = useParams();
-  const decodedSource = decodeURIComponent(sourceId);
+  const { mangaId = "" } = useParams();
   const decodedManga = decodeURIComponent(mangaId);
   const navigate = useNavigate();
   const [data, setData] = useState<Aggregate>();
@@ -31,7 +41,7 @@ export function DetailsPage() {
     setLoading(true);
     setError("");
     try {
-      setData(await api.manga(decodedSource, decodedManga));
+      setData(await api.manga(decodedManga));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load title");
     } finally {
@@ -44,7 +54,7 @@ export function DetailsPage() {
       .categories()
       .then(setCategories)
       .catch(() => undefined);
-  }, [decodedSource, decodedManga]);
+  }, [decodedManga]);
   if (loading) return <LoadingState label="Loading title" />;
   if (error || !data)
     return (
@@ -59,7 +69,7 @@ export function DetailsPage() {
     );
   const enqueue = async () => {
     try {
-      await api.enqueue(manga.sourceId, manga.sourceMangaId, selected, range, manga.downloadFormat);
+      await api.enqueue(manga.id, selected, range, manga.downloadFormat);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to enqueue chapters");
@@ -74,8 +84,14 @@ export function DetailsPage() {
         <ArrowLeft size={16} /> Back
       </button>
       <section className="grid gap-6 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 md:grid-cols-[180px_1fr] md:p-7">
-        <div className="aspect-[3/4] overflow-hidden rounded-xl bg-zinc-800">
-          {manga.coverUrl && <img src={manga.coverUrl} alt="" className="size-full object-cover" />}
+        <div className="aspect-3/4 overflow-hidden rounded-xl bg-zinc-800">
+          {manga.coverUrl && (
+            <img
+              src={manga.coverUrl}
+              alt=""
+              className="size-full object-cover"
+            />
+          )}
         </div>
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-amber-400">
@@ -100,19 +116,20 @@ export function DetailsPage() {
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
             <Link
-              to={`/reader/${encodeURIComponent(manga.sourceId)}/${encodeURIComponent(manga.sourceMangaId)}/${encodeURIComponent(chapters[0]?.sourceChapterId || "")}`}
+              to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(chapters[0]?.id || "")}`}
               className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
             >
               <Play size={15} /> Read
             </Link>
             <button
               onClick={async () => {
-                await api.setLibrary(manga.sourceId, manga.sourceMangaId, !manga.inLibrary);
+                await api.setLibrary(manga.id, !manga.inLibrary);
                 await load();
               }}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
             >
-              <Bookmark size={15} /> {manga.inLibrary ? "In library" : "Add to library"}
+              <Bookmark size={15} />{" "}
+              {manga.inLibrary ? "In library" : "Add to library"}
             </button>
             <button
               onClick={() => setModal("tracker")}
@@ -134,12 +151,14 @@ export function DetailsPage() {
           <PageHeader title="Categories" />{" "}
           <div className="flex flex-wrap gap-2">
             {categories.map((category) => {
-              const active = data.categories.some((item) => item.id === category.id);
+              const active = data.categories.some(
+                (item) => item.id === category.id,
+              );
               return (
                 <button
                   key={category.id}
                   onClick={async () => {
-                    await api.setCategory(manga.sourceId, manga.sourceMangaId, category.id, !active);
+                    await api.setCategory(manga.id, category.id, !active);
                     await load();
                   }}
                   className={`rounded-full border px-3 py-2 text-xs ${active ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400"}`}
@@ -161,7 +180,7 @@ export function DetailsPage() {
               className="w-28 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs"
             />
             <button
-              onClick={() => setSelected(chapters.map((item) => item.sourceChapterId))}
+              onClick={() => setSelected(chapters.map((item) => item.id))}
               className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"
             >
               Select all
@@ -177,15 +196,18 @@ export function DetailsPage() {
         {chapters.length ? (
           <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
             {chapters.map((chapter) => (
-              <label key={chapter.id} className="flex items-center gap-3 p-4 hover:bg-zinc-900">
+              <label
+                key={chapter.id}
+                className="flex items-center gap-3 p-4 hover:bg-zinc-900"
+              >
                 <input
                   type="checkbox"
-                  checked={selected.includes(chapter.sourceChapterId)}
-                  onChange={() => toggle(chapter.sourceChapterId)}
+                  checked={selected.includes(chapter.id)}
+                  onChange={() => toggle(chapter.id)}
                   className="accent-amber-400"
                 />
                 <Link
-                  to={`/reader/${encodeURIComponent(manga.sourceId)}/${encodeURIComponent(manga.sourceMangaId)}/${encodeURIComponent(chapter.sourceChapterId)}`}
+                  to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(chapter.id)}`}
                   className="min-w-0 flex-1"
                 >
                   <b className="block text-sm">
@@ -196,7 +218,9 @@ export function DetailsPage() {
                     {chapter.scanlator ? ` · ${chapter.scanlator}` : ""}
                   </span>
                 </Link>
-                {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
+                {chapter.downloaded && (
+                  <Check size={16} className="text-emerald-400" />
+                )}
               </label>
             ))}
           </div>
@@ -214,8 +238,7 @@ export function DetailsPage() {
       )}
       {modal === "tracker" && (
         <TrackerModal
-          sourceId={manga.sourceId}
-          mangaId={manga.sourceMangaId}
+          mangaId={manga.id}
           bindings={data.trackers}
           onClose={() => setModal(undefined)}
           onChanged={load}
@@ -225,8 +248,8 @@ export function DetailsPage() {
         <MigrationModal
           manga={manga}
           onClose={() => setModal(undefined)}
-          onApplied={(sourceId, mangaId) =>
-            navigate(`/manga/${encodeURIComponent(sourceId)}/${encodeURIComponent(mangaId)}`)
+          onApplied={(nextMangaId) =>
+            navigate(`/manga/${encodeURIComponent(nextMangaId)}`)
           }
         />
       )}
@@ -251,13 +274,11 @@ function parseList(value?: string) {
 }
 
 function TrackerModal({
-  sourceId,
   mangaId,
   bindings,
   onClose,
   onChanged,
 }: {
-  sourceId: string;
   mangaId: string;
   bindings: Binding[];
   onClose: () => void;
@@ -307,30 +328,34 @@ function TrackerModal({
           </button>
         ))}
       </div>
-      {active && !trackers.find((item) => item.name === active)?.capabilities.search && (
-        <p className="mt-4 text-sm text-zinc-400">This provider does not support title search.</p>
-      )}
-      {active && trackers.find((item) => item.name === active)?.capabilities.search && (
-        <div className="mt-4 flex gap-2">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search provider"
-            className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-          />
-          <button
-            onClick={() => void search()}
-            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
-          >
-            Search
-          </button>
-        </div>
-      )}
+      {active &&
+        !trackers.find((item) => item.name === active)?.capabilities.search && (
+          <p className="mt-4 text-sm text-zinc-400">
+            This provider does not support title search.
+          </p>
+        )}
+      {active &&
+        trackers.find((item) => item.name === active)?.capabilities.search && (
+          <div className="mt-4 flex gap-2">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search provider"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            />
+            <button
+              onClick={() => void search()}
+              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+            >
+              Search
+            </button>
+          </div>
+        )}
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
       {binding && (
         <button
           onClick={async () => {
-            await api.unbindTracker(sourceId, mangaId, active);
+            await api.unbindTracker(mangaId, active);
             await onChanged();
           }}
           className="mt-4 inline-flex items-center gap-2 rounded-lg border border-red-900 px-3 py-2 text-sm text-red-300"
@@ -343,7 +368,7 @@ function TrackerModal({
           <button
             key={item.remoteId}
             onClick={async () => {
-              await api.bindTracker(sourceId, mangaId, active, {
+              await api.bindTracker(mangaId, active, {
                 remoteId: item.remoteId,
                 remoteTitle: item.title,
                 remoteStatus: item.status,
@@ -369,22 +394,22 @@ function MigrationModal({
 }: {
   manga: SourceManga;
   onClose: () => void;
-  onApplied: (sourceId: string, mangaId: string) => void;
+  onApplied: (mangaId: string) => void;
 }) {
   const [items, setItems] = useState<MigrationCandidate[]>([]);
   const [selected, setSelected] = useState<MigrationCandidate>();
   const [error, setError] = useState("");
   useEffect(() => {
     void api
-      .migrationCandidates(manga.sourceId, manga.sourceMangaId)
+      .migrationCandidates(manga.id)
       .then(setItems)
       .catch((e) => setError(e.message));
-  }, [manga.sourceId, manga.sourceMangaId]);
+  }, [manga.id]);
   return (
     <Modal title="Migrate source" onClose={onClose}>
       <p className="text-sm text-zinc-400">
-        Select a matching title from another installed source. Reading state and tracker bindings
-        are preserved.
+        Select a matching title from another installed source. Reading state and
+        tracker bindings are preserved.
       </p>
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
       <div className="mt-4 grid gap-2">
@@ -404,11 +429,16 @@ function MigrationModal({
           </button>
         ))}
         {!items.length && !error && (
-          <p className="text-sm text-zinc-500">No replacement candidates found.</p>
+          <p className="text-sm text-zinc-500">
+            No replacement candidates found.
+          </p>
         )}
       </div>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onClose} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm">
+        <button
+          onClick={onClose}
+          className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+        >
           Cancel
         </button>
         <button
@@ -416,12 +446,11 @@ function MigrationModal({
           onClick={async () => {
             if (!selected) return;
             const result = await api.applyMigration(
-              manga.sourceId,
-              manga.sourceMangaId,
+              manga.id,
               selected.source.id,
               selected.result.id,
             );
-            onApplied(result.manga.manga.sourceId, result.manga.manga.sourceMangaId);
+            onApplied(result.manga.manga.id);
           }}
           className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
         >

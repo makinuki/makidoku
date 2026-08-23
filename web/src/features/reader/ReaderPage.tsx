@@ -8,39 +8,20 @@ import { ErrorState, LoadingState } from "../../components/States";
 
 type Mode = "single" | "double" | "webtoon";
 export function ReaderPage() {
-  const { sourceId: routeSource, mangaId: routeManga, chapterId: routeChapter } = useParams();
+  const { mangaId: routeManga, chapterId: routeChapter } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  let sourceId = "";
   let mangaId = "";
   let chapterId = "";
-  if (routeSource && routeManga && routeChapter) {
-    sourceId = decodeURIComponent(routeSource);
+  if (routeManga && routeChapter) {
     mangaId = decodeURIComponent(routeManga);
     chapterId = decodeURIComponent(routeChapter);
   } else {
     const mangaParam = searchParams.get("manga") || "";
     const chapterParam = searchParams.get("chapter") || "";
-    if (mangaParam.includes(":")) {
-      const idx = mangaParam.indexOf(":");
-      sourceId = mangaParam.slice(0, idx);
-      mangaId = mangaParam.slice(idx + 1);
-    } else {
-      mangaId = mangaParam;
-    }
-    if (chapterParam) {
-      if (chapterParam.includes(":")) {
-        chapterId = chapterParam.split(":").pop() || chapterParam;
-        if (!sourceId && chapterParam.includes(":")) {
-          const firstIdx = chapterParam.indexOf(":");
-          const possibleSource = chapterParam.slice(0, firstIdx);
-          if (!sourceId && possibleSource) sourceId = possibleSource;
-        }
-      } else {
-        chapterId = chapterParam;
-      }
-    }
+    mangaId = mangaParam;
+    chapterId = chapterParam;
   }
 
   const [aggregate, setAggregate] = useState<Aggregate>();
@@ -50,20 +31,21 @@ export function ReaderPage() {
   const [menu, setMenu] = useState(true);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (!sourceId || !mangaId || !chapterId) return;
+    if (!mangaId || !chapterId) return;
     let active = true;
     (async () => {
       try {
-        const data = await api.manga(sourceId, mangaId);
-        const chapter = data.chapters.find((item) => item.sourceChapterId === chapterId);
+        const data = await api.manga(mangaId);
+        const chapter = data.chapters.find((item) => item.id === chapterId);
         if (!chapter) throw new Error("Chapter is not available");
-        const loaded = await api.pages(data.manga.sourceId, chapter.sourceChapterId);
+        const loaded = await api.pages(chapter.id);
         if (!active) return;
         setAggregate(data);
         setPages(loaded);
-        const savedChapterSourceId = data.progress?.lastReadChapterId.split(":").pop() || "";
         const saved =
-          savedChapterSourceId === chapterId ? (data.progress?.lastReadPage ?? 1) - 1 : 0;
+          data.progress?.lastReadChapterId === chapterId
+            ? (data.progress?.lastReadPage ?? 1) - 1
+            : 0;
         setIndex(Math.max(0, Math.min(saved, loaded.length - 1)));
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : "Unable to open chapter");
@@ -72,15 +54,15 @@ export function ReaderPage() {
     return () => {
       active = false;
     };
-  }, [sourceId, mangaId, chapterId]);
+  }, [mangaId, chapterId]);
   useEffect(() => {
     if (!pages.length || !aggregate) return;
     const visibleEnd = Math.min(pages.length, index + (mode === "double" ? 2 : 1));
     const timer = window.setTimeout(() => {
-      void api.progress(sourceId, mangaId, chapterId, visibleEnd, pages.length, visibleEnd >= pages.length);
+      void api.progress(mangaId, chapterId, visibleEnd, pages.length, visibleEnd >= pages.length);
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [index, mode, pages.length, aggregate, sourceId, mangaId, chapterId]);
+  }, [index, mode, pages.length, aggregate, mangaId, chapterId]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "m") setMenu((value) => !value);
@@ -166,20 +148,9 @@ export function ReaderPage() {
         </div>
       </div>
       {mode === "webtoon" ? (
-        <Webtoon
-          pages={pages}
-          source={aggregate.manga.sourceId}
-          index={index}
-          setIndex={setIndex}
-        />
+        <Webtoon pages={pages} index={index} setIndex={setIndex} />
       ) : (
-        <Paged
-          pages={pages}
-          source={aggregate.manga.sourceId}
-          index={index}
-          setIndex={setIndex}
-          double={mode === "double"}
-        />
+        <Paged pages={pages} index={index} setIndex={setIndex} double={mode === "double"} />
       )}
       <div
         className={`flex items-center gap-3 border-t border-zinc-800 bg-zinc-950 px-4 py-2 ${menu ? "" : "hidden"}`}
@@ -218,13 +189,11 @@ export function ReaderPage() {
 
 function Paged({
   pages,
-  source,
   index,
   setIndex,
   double,
 }: {
   pages: Page[];
-  source: string;
   index: number;
   setIndex: (value: number) => void;
   double: boolean;
@@ -235,7 +204,7 @@ function Paged({
       {pages.slice(index, index + count).map((page, offset) => (
         <img
           key={page.index}
-          src={api.readerImage(source, page)}
+          src={api.readerImage(page)}
           alt={`Page ${index + offset + 1}`}
           className="max-h-full max-w-[calc(50%-0.5rem)] object-contain"
         />
@@ -259,12 +228,10 @@ function Paged({
 }
 function Webtoon({
   pages,
-  source,
   index,
   setIndex,
 }: {
   pages: Page[];
-  source: string;
   index: number;
   setIndex: (value: number) => void;
 }) {
@@ -291,7 +258,7 @@ function Webtoon({
             style={{ transform: `translateY(${item.start}px)` }}
           >
             <img
-              src={api.readerImage(source, pages[item.index])}
+              src={api.readerImage(pages[item.index])}
               alt={`Page ${item.index + 1}`}
               className="w-full rounded-sm"
             />
@@ -301,7 +268,7 @@ function Webtoon({
     </div>
   );
 }
-function chapterLabel(data: Aggregate, sourceChapterId: string) {
-  const item = data.chapters.find((chapter) => chapter.sourceChapterId === sourceChapterId);
+function chapterLabel(data: Aggregate, chapterID: string) {
+  const item = data.chapters.find((chapter) => chapter.id === chapterID);
   return item?.chapterNumber == null ? item?.title || "Special" : `Chapter ${item.chapterNumber}`;
 }

@@ -29,11 +29,11 @@ export default function App() {
         <Route path="/" element={<LibraryPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/browse" element={<BrowsePage />} />
-        <Route path="/manga/:sourceId/:mangaId" element={<DetailsPage />} />
+        <Route path="/manga/:mangaId" element={<DetailsPage />} />
         <Route path="/downloads" element={<DownloadsPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/reader/:sourceId/:mangaId/:chapterId" element={<ReaderPage />} />
+        <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
         <Route path="/reader" element={<ReaderPage />} />
       </Routes>
       {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}

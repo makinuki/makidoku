@@ -29,7 +29,7 @@ export function HistoryPage() {
           {items.map((item) => (
             <Link
               key={item.manga.id}
-              to={`/reader/${encodeURIComponent(item.manga.sourceId)}/${encodeURIComponent(item.manga.sourceMangaId)}/${encodeURIComponent(item.chapter.sourceChapterId)}`}
+              to={`/reader/${encodeURIComponent(item.manga.id)}/${encodeURIComponent(item.chapter.id)}`}
               className="flex items-center gap-4 p-4 hover:bg-zinc-900"
             >
               <div className="size-14 overflow-hidden rounded-lg bg-zinc-800">

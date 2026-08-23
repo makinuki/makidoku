@@ -45,7 +45,7 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
           {items.slice(0, 12).map((item) => (
             <Link
               key={item.id}
-              to={`/manga/${encodeURIComponent(item.sourceId)}/${encodeURIComponent(item.sourceMangaId)}`}
+              to={`/manga/${encodeURIComponent(item.id)}`}
               onClick={onClose}
               className="flex items-center gap-3 rounded-lg p-2 hover:bg-zinc-800"
             >

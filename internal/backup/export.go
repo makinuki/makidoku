@@ -15,7 +15,9 @@ type Document struct {
 	Categories      []any     `json:"categories"`
 	MangaCategories []any     `json:"mangaCategories"`
 	Manga           []any     `json:"manga"`
+	MangaSources    []any     `json:"mangaSources"`
 	Chapters        []any     `json:"chapters"`
+	ChapterSources  []any     `json:"chapterSources"`
 	Progress        []any     `json:"progress"`
 	Trackers        []any     `json:"trackers"`
 }
@@ -28,7 +30,9 @@ func Export(db *sqlx.DB) ([]byte, error) {
 		Categories:      []any{},
 		MangaCategories: []any{},
 		Manga:           []any{},
+		MangaSources:    []any{},
 		Chapters:        []any{},
+		ChapterSources:  []any{},
 		Progress:        []any{},
 		Trackers:        []any{},
 	}
@@ -68,7 +72,13 @@ func Export(db *sqlx.DB) ([]byte, error) {
 	if err := query(`SELECT * FROM manga ORDER BY updated_at DESC`, &doc.Manga); err != nil {
 		return nil, err
 	}
+	if err := query(`SELECT * FROM manga_sources ORDER BY manga_id, source_id`, &doc.MangaSources); err != nil {
+		return nil, err
+	}
 	if err := query(`SELECT * FROM chapters ORDER BY manga_id, chapter_number`, &doc.Chapters); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM chapter_sources ORDER BY chapter_id, source_id`, &doc.ChapterSources); err != nil {
 		return nil, err
 	}
 	if err := query(`SELECT * FROM reading_progress`, &doc.Progress); err != nil {

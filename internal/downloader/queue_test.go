@@ -73,13 +73,28 @@ func queueFixture() *fakeEngine {
 	}
 }
 
+// seedLibrary stores the source representation that queue runs refresh from
+// and returns its opaque MakiDoku id.
+func seedLibrary(t *testing.T, repo *db.Repository) string {
+	t.Helper()
+	manga, err := repo.UpsertManga(db.Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Yosuga no Sora",
+		Status: "completed", CoverURL: "cover", DownloadFormat: FormatCBZ,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manga.ID
+}
+
 func TestQueueDownloadsChapterAndMarksArtifact(t *testing.T) {
 	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()
 	queue := NewQueue(repo, eng, Options{
 		Workers: 2, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
 	})
-	items, err := queue.EnqueueManga(context.Background(), "mangadex:title-id", ChapterSelection{Range: "1-1"}, FormatCBZ)
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{Range: "1-1"}, FormatCBZ)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -126,7 +141,8 @@ func TestQueueStopsBetweenPagesWhenPaused(t *testing.T) {
 	queue := NewQueue(repo, eng, Options{
 		Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
 	})
-	items, err := queue.EnqueueManga(context.Background(), "mangadex:title-id", ChapterSelection{}, FormatCBZ)
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, FormatCBZ)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,13 +174,14 @@ func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {
 	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()
 	queue := NewQueue(repo, eng, Options{Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads")})
-	if _, err := queue.EnqueueManga(context.Background(), "mangadex:title-id", ChapterSelection{}, FormatFolder); err != nil {
+	mangaID := seedLibrary(t, repo)
+	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, FormatFolder); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queue.EnqueueManga(context.Background(), "mangadex:title-id", ChapterSelection{}, ""); err != nil {
+	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, ""); err != nil {
 		t.Fatal(err)
 	}
-	manga, err := repo.GetManga("mangadex:title-id")
+	manga, err := repo.GetManga(mangaID)
 	if err != nil {
 		t.Fatal(err)
 	}

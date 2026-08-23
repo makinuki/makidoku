@@ -3,7 +3,12 @@ import { Link } from "react-router-dom";
 import { BookOpen, Search } from "lucide-react";
 import { api } from "../../api";
 import type { Category, LibraryManga } from "../../types";
-import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+} from "../../components/States";
 
 export function LibraryPage() {
   const [items, setItems] = useState<LibraryManga[]>([]);
@@ -31,7 +36,9 @@ export function LibraryPage() {
   const visible = useMemo(
     () =>
       [...items].sort((a, b) =>
-        sort === "title" ? a.title.localeCompare(b.title) : b.updatedAt - a.updatedAt,
+        sort === "title"
+          ? a.title.localeCompare(b.title)
+          : b.updatedAt - a.updatedAt,
       ),
     [items, sort],
   );
@@ -52,7 +59,7 @@ export function LibraryPage() {
         </select>
       </PageHeader>
       <div className="mb-6 flex flex-wrap gap-3">
-        <label className="flex min-w-[240px] flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2">
+        <label className="flex min-w-60 flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2">
           <Search size={16} className="text-zinc-500" />
           <input
             value={query}
@@ -103,14 +110,16 @@ export function LibraryPage() {
 function LibraryCard({ item }: { item: LibraryManga }) {
   const progress =
     item.progress && item.progress.totalPages
-      ? Math.round((item.progress.lastReadPage / item.progress.totalPages) * 100)
+      ? Math.round(
+          (item.progress.lastReadPage / item.progress.totalPages) * 100,
+        )
       : 0;
   return (
     <Link
-      to={`/manga/${encodeURIComponent(item.sourceId)}/${encodeURIComponent(item.sourceMangaId)}`}
+      to={`/manga/${encodeURIComponent(item.id)}`}
       className="group min-w-0"
     >
-      <div className="aspect-[3/4] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+      <div className="aspect-3/4 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
         {item.coverUrl ? (
           <img
             src={item.coverUrl}

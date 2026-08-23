@@ -21,7 +21,7 @@ func (s *Server) mountTrackers(r chi.Router) {
 	r.Delete("/trackers/{trackerType}/credentials", s.deleteTrackerCredentials)
 	r.Get("/trackers/{trackerType}/auth/start", s.startTrackerAuth)
 	r.Get("/trackers/{trackerType}/auth/callback", s.trackerAuthCallback)
-	r.Route("/manga/{sourceId}/{mangaId}/trackers", func(manga chi.Router) {
+	r.Route("/manga/{mangaID}/trackers", func(manga chi.Router) {
 		manga.Get("/", s.listBindings)
 		manga.Post("/{trackerType}/bind", s.bindTracker)
 		manga.Delete("/{trackerType}", s.deleteBinding)
@@ -29,7 +29,7 @@ func (s *Server) mountTrackers(r chi.Router) {
 		manga.Post("/scrobble", s.manualScrobble)
 	})
 	r.Get("/tracker-sync", s.listSyncJobs)
-	r.Get("/progress/{sourceId}/{mangaId}", s.getProgress)
+	r.Get("/progress/{mangaID}", s.getProgress)
 	r.Post("/progress", s.updateProgress)
 	r.Post("/progress/complete", s.completeProgress)
 }
@@ -145,7 +145,7 @@ func (s *Server) trackerAuthCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listBindings(w http.ResponseWriter, r *http.Request) {
-	items, err := s.trackers.Repo.ListTrackerBindings(composeMangaID(chi.URLParam(r, "sourceId"), chi.URLParam(r, "mangaId")))
+	items, err := s.trackers.Repo.ListTrackerBindings(chi.URLParam(r, "mangaID"))
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
@@ -176,7 +176,7 @@ func (s *Server) bindTracker(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, "remoteId and remoteTitle are required")
 		return
 	}
-	b, err := s.trackers.Repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: composeMangaID(chi.URLParam(r, "sourceId"), chi.URLParam(r, "mangaId")), TrackerType: typ, RemoteID: strings.TrimSpace(body.RemoteID), RemoteTitle: body.RemoteTitle, RemoteScore: body.RemoteScore, RemoteStatus: body.RemoteStatus, TotalRemoteChapters: body.TotalRemoteChapters})
+	b, err := s.trackers.Repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: chi.URLParam(r, "mangaID"), TrackerType: typ, RemoteID: strings.TrimSpace(body.RemoteID), RemoteTitle: body.RemoteTitle, RemoteScore: body.RemoteScore, RemoteStatus: body.RemoteStatus, TotalRemoteChapters: body.TotalRemoteChapters})
 	if err != nil {
 		writeLocalError(w, http.StatusBadRequest, err)
 		return
@@ -184,7 +184,7 @@ func (s *Server) bindTracker(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, b)
 }
 func (s *Server) deleteBinding(w http.ResponseWriter, r *http.Request) {
-	if err := s.trackers.Repo.DeleteTrackerBinding(composeMangaID(chi.URLParam(r, "sourceId"), chi.URLParam(r, "mangaId")), chi.URLParam(r, "trackerType")); err != nil {
+	if err := s.trackers.Repo.DeleteTrackerBinding(chi.URLParam(r, "mangaID"), chi.URLParam(r, "trackerType")); err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -192,7 +192,7 @@ func (s *Server) deleteBinding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trackerStatuses(w http.ResponseWriter, r *http.Request) {
-	bindings, err := s.trackers.Repo.ListTrackerBindings(composeMangaID(chi.URLParam(r, "sourceId"), chi.URLParam(r, "mangaId")))
+	bindings, err := s.trackers.Repo.ListTrackerBindings(chi.URLParam(r, "mangaID"))
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
@@ -228,7 +228,7 @@ func (s *Server) manualScrobble(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	bindings, err := s.trackers.Repo.ListTrackerBindings(composeMangaID(chi.URLParam(r, "sourceId"), chi.URLParam(r, "mangaId")))
+	bindings, err := s.trackers.Repo.ListTrackerBindings(chi.URLParam(r, "mangaID"))
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
@@ -267,7 +267,7 @@ func (s *Server) listSyncJobs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateProgress(w http.ResponseWriter, r *http.Request)   { s.progress(w, r, false) }
 func (s *Server) completeProgress(w http.ResponseWriter, r *http.Request) { s.progress(w, r, true) }
 func (s *Server) getProgress(w http.ResponseWriter, r *http.Request) {
-	p, err := s.trackers.Repo.GetReadingProgress(composeMangaID(chi.URLParam(r, "sourceId"), chi.URLParam(r, "mangaId")))
+	p, err := s.trackers.Repo.GetReadingProgress(chi.URLParam(r, "mangaID"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusOK, nil)

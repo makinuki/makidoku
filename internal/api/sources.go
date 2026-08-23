@@ -1,11 +1,15 @@
 package api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -20,14 +24,11 @@ func (s *Server) mountSources(r chi.Router) {
 	r.Get("/sources", s.listSources)
 	r.Get("/sources/catalog", s.catalog)
 	r.Post("/sources/install", s.installSource)
-	r.Get("/reader/image", s.readerImage)
 	r.Route("/sources/{sourceID}", func(source chi.Router) {
 		source.Get("/", s.getSource)
 		source.Delete("/", s.uninstallSource)
 		source.Get("/filters", s.sourceFilters)
 		source.Get("/search", s.search)
-		source.Get("/details", s.details)
-		source.Get("/pages", s.pages)
 		source.Post("/library", s.saveSourceManga)
 		source.Post("/clearance", s.submitClearance)
 	})
@@ -40,94 +41,21 @@ func (s *Server) saveSourceManga(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	sourceID := chi.URLParam(r, "sourceID")
 	mangaID := strings.TrimSpace(body.MangaID)
 	if mangaID == "" {
 		writeBadRequest(w, "mangaId is required")
 		return
 	}
-	details, err := s.engine.Details(r.Context(), sourceID, mangaID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if strings.TrimSpace(details.ID) == "" {
-		details.ID = mangaID
-	}
-	manga, err := s.repo.UpsertManga(db.Manga{
-		SourceID: sourceID, SourceMangaID: details.ID, Title: details.Title,
-		AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description),
-		Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres),
-		Status: details.Status, CoverURL: details.CoverURL,
-	})
-	if err != nil {
+	if _, err := s.repo.SetMangaLibrary(mangaID, true); err != nil {
 		writeLocalError(w, http.StatusConflict, err)
 		return
 	}
-	for _, item := range details.Chapters {
-		if _, err := s.repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: item.ID, ChapterNumber: item.Number, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
-			writeLocalError(w, http.StatusConflict, err)
-			return
-		}
-	}
-	if _, err := s.repo.SetMangaLibrary(manga.ID, true); err != nil {
-		writeLocalError(w, http.StatusConflict, err)
-		return
-	}
-	aggregate, err := s.repo.GetMangaAggregate(manga.ID)
+	aggregate, err := s.repo.GetMangaAggregate(mangaID)
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, aggregate)
-}
-
-func (s *Server) readerImage(w http.ResponseWriter, r *http.Request) {
-	sourceID := strings.TrimSpace(r.URL.Query().Get("source"))
-	target := strings.TrimSpace(r.URL.Query().Get("url"))
-	if sourceID == "" || target == "" {
-		writeBadRequest(w, "source and url are required")
-		return
-	}
-	headers, err := decodeOptionalObject(r.URL.Query().Get("headers"))
-	if err != nil {
-		writeBadRequest(w, "headers must be a JSON object")
-		return
-	}
-	for name := range headers {
-		if strings.EqualFold(name, "Cookie") || strings.EqualFold(name, "Host") {
-			writeBadRequest(w, "cookie and host headers are not allowed")
-			return
-		}
-	}
-	allowed, err := s.engine.ImageURLAllowed(r.Context(), sourceID, target)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if !allowed {
-		writeLocalError(w, http.StatusForbidden, fmt.Errorf("image host is not allowed for source %s", sourceID))
-		return
-	}
-	data, err := s.engine.FetchImage(r.Context(), sourceID, target, headers)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if r.URL.Query().Get("scrambled") == "1" {
-		data, err = s.engine.Unscramble(r.Context(), sourceID, data)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-	}
-	if len(data) == 0 {
-		writeError(w, engine.CodedError(engine.CodeUnscrambleFailed, "image data is empty"))
-		return
-	}
-	w.Header().Set("Content-Type", http.DetectContentType(data))
-	w.Header().Set("Cache-Control", "private, max-age=3600")
-	_, _ = w.Write(data)
 }
 
 func jsonString(values []string) *string {
@@ -241,7 +169,16 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		manga, upsertErr := s.repo.UpsertManga(db.Manga{SourceID: chi.URLParam(r, "sourceID"), SourceMangaID: item.ID, Title: item.Title, CoverURL: item.CoverURL, Status: "unknown"})
+		if upsertErr != nil {
+			writeLocalError(w, http.StatusConflict, upsertErr)
+			return
+		}
+		items = append(items, map[string]any{"id": manga.ID, "title": item.Title, "coverUrl": "/api/manga/" + manga.ID + "/cover", "latestChapter": item.LatestChapter, "url": ""})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"page": result.Page, "hasNextPage": result.HasNextPage, "items": items})
 }
 
 func (s *Server) details(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +207,123 @@ func (s *Server) pages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, pages)
+}
+
+func (s *Server) materializePages(w http.ResponseWriter, r *http.Request) {
+	chapterID := chi.URLParam(r, "chapterID")
+	chapter, err := s.repo.GetChapter(chapterID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	pageItems, err := s.engine.Pages(r.Context(), chapter.SourceID, chapter.SourceChapterID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	rows := make([]db.Page, 0, len(pageItems))
+	for _, item := range pageItems {
+		headers, marshalErr := json.Marshal(item.Headers)
+		if marshalErr != nil {
+			writeLocalError(w, http.StatusInternalServerError, marshalErr)
+			return
+		}
+		headersJSON := string(headers)
+		rows = append(rows, db.Page{ChapterID: chapter.ID, PageIndex: item.Index, RemoteURL: item.URL, HeadersJSON: &headersJSON, IsScrambled: item.IsScrambled})
+	}
+	pages, err := s.repo.UpsertPages(chapter.ID, chapter.SourceID, rows)
+	if err != nil {
+		writeLocalError(w, http.StatusConflict, err)
+		return
+	}
+	if pages == nil {
+		pages = []db.Page{}
+	}
+	writeJSON(w, http.StatusOK, pages)
+}
+
+func (s *Server) pageImage(w http.ResponseWriter, r *http.Request) {
+	page, err := s.repo.GetPage(chi.URLParam(r, "pageID"))
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	cacheRoot := filepath.Join(s.engine.DataDir(), "image-cache")
+	if cache, err := s.repo.GetPageCache(page.ID); err == nil {
+		if data, readErr := os.ReadFile(cache.BytePath); readErr == nil {
+			w.Header().Set("Content-Type", cache.ContentType)
+			w.Header().Set("Cache-Control", "private, max-age=86400")
+			_, _ = w.Write(data)
+			return
+		}
+	}
+	chapter, err := s.repo.GetChapter(page.ChapterID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	var headers map[string]string
+	if page.HeadersJSON != nil && *page.HeadersJSON != "" {
+		if err := json.Unmarshal([]byte(*page.HeadersJSON), &headers); err != nil {
+			writeLocalError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	data, err := s.engine.FetchImage(r.Context(), chapter.SourceID, page.RemoteURL, headers)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if page.IsScrambled {
+		data, err = s.engine.Unscramble(r.Context(), chapter.SourceID, data)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	if len(data) == 0 {
+		writeError(w, engine.CodedError(engine.CodeUnscrambleFailed, "image data is empty"))
+		return
+	}
+	key := fmt.Sprintf("%x", sha256.Sum256(append([]byte(page.RemoteURL), data...)))
+	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	path := filepath.Join(cacheRoot, key+".img")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	contentType := http.DetectContentType(data)
+	if err := s.repo.SetPageCache(page.ID, key, path, contentType, int64(len(data)), time.Now().Unix()); err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.enforceImageCacheRetention()
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	_, _ = w.Write(data)
+}
+
+// enforceImageCacheRetention applies the bounded retention policy after cache
+// writes. Sweeps are throttled so a burst of image requests performs at most
+// one directory walk per interval.
+func (s *Server) enforceImageCacheRetention() {
+	if s.imageCache == nil {
+		return
+	}
+	s.imageCache.AfterWrite(func() (map[string]bool, error) {
+		paths, err := s.repo.ListCachedPaths()
+		if err != nil {
+			return nil, err
+		}
+		keep := make(map[string]bool, len(paths))
+		for _, path := range paths {
+			keep[path] = true
+		}
+		return keep, nil
+	})
 }
 
 // submitClearance records the cf_clearance cookie and matching user agent an

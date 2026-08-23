@@ -269,10 +269,8 @@ function SourceResult({ item }: { item: SearchResult & { source: Source } }) {
     setBusy(true);
     setError("");
     try {
-      const aggregate = await api.saveManga(item.source.id, item.id);
-      navigate(
-        `/manga/${encodeURIComponent(aggregate.manga.sourceId)}/${encodeURIComponent(aggregate.manga.sourceMangaId)}`,
-      );
+      const aggregate = await api.saveManga(item.id);
+      navigate(`/manga/${encodeURIComponent(aggregate.manga.id)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save title");
     } finally {
@@ -281,7 +279,7 @@ function SourceResult({ item }: { item: SearchResult & { source: Source } }) {
   };
   return (
     <article className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-      <div className="aspect-[3/4] bg-zinc-800">
+      <div className="aspect-3/4 bg-zinc-800">
         {item.coverUrl && (
           <img src={item.coverUrl} alt="" className="size-full object-cover" loading="lazy" />
         )}

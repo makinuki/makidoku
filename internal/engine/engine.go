@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+
+	"github.com/makinuki/makidoku/internal/identity"
 )
 
 // Options configures the engine.
@@ -48,6 +50,7 @@ type Engine struct {
 // InstalledSource describes an installed source for the local API.
 type InstalledSource struct {
 	ID           string   `json:"id"`
+	PluginKey    string   `json:"-"`
 	Name         string   `json:"name"`
 	Version      string   `json:"version"`
 	ABIVersion   int      `json:"abiVersion"`
@@ -87,6 +90,9 @@ func New(db *sqlx.DB, opts Options) *Engine {
 
 // Registry exposes the catalog client.
 func (e *Engine) Registry() *Registry { return e.registry }
+
+// DataDir is the daemon-owned root for plugin and processed-image caches.
+func (e *Engine) DataDir() string { return e.dataDir }
 
 // Close releases every loaded plugin.
 func (e *Engine) Close(ctx context.Context) {
@@ -136,7 +142,7 @@ func (e *Engine) Catalog(ctx context.Context, refresh bool) ([]CatalogEntry, err
 	installed := map[string]string{}
 	if rows, err := e.rows(); err == nil {
 		for _, row := range rows {
-			installed[row.ID] = row.Version
+			installed[row.PluginKey] = row.Version
 		}
 	}
 
@@ -208,24 +214,37 @@ func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath str
 	if meta.IconURL != "" {
 		icon = &meta.IconURL
 	}
+	var sourceID string
+	if err := e.db.Get(&sourceID, `SELECT id FROM sources WHERE plugin_key=?`, meta.ID); err != nil {
+		if !isNoRows(err) {
+			return InstalledSource{}, fmt.Errorf("find source %s: %w", meta.ID, err)
+		}
+		var createErr error
+		sourceID, createErr = identity.New()
+		if createErr != nil {
+			return InstalledSource{}, createErr
+		}
+	}
 	_, err := e.db.Exec(
-		`INSERT INTO sources(id, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET
+		`INSERT INTO sources(id, plugin_key, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed, installed_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		 ON CONFLICT(plugin_key) DO UPDATE SET
+		   id = excluded.id,
 		   name = excluded.name,
 		   version = excluded.version,
 		   abi_version = excluded.abi_version,
 		   lang = excluded.lang,
 		   base_url = excluded.base_url,
 		   icon_url = excluded.icon_url,
-		   wasm_path = excluded.wasm_path`,
-		meta.ID, meta.Name, meta.Version, meta.ABIVersion, meta.Lang, meta.BaseURL, icon, wasmPath, time.Now().Unix())
+		   wasm_path = excluded.wasm_path,
+		   installed = 1`,
+		sourceID, meta.ID, meta.Name, meta.Version, meta.ABIVersion, meta.Lang, meta.BaseURL, icon, wasmPath, time.Now().Unix())
 	if err != nil {
 		return InstalledSource{}, fmt.Errorf("record source %s: %w", meta.ID, err)
 	}
 
-	e.unload(ctx, meta.ID)
-	return e.Get(meta.ID)
+	e.unload(ctx, sourceID)
+	return e.Get(sourceID)
 }
 
 // Uninstall removes a source, its plugin storage and its cached binary.
@@ -236,8 +255,7 @@ func (e *Engine) Uninstall(ctx context.Context, id string) error {
 	}
 	e.unload(ctx, id)
 
-	// Plugin storage is removed by the foreign key cascade on sources.
-	if _, err := e.db.Exec(`DELETE FROM sources WHERE id = ?`, id); err != nil {
+	if _, err := e.db.Exec(`UPDATE sources SET installed=0, wasm_path=NULL WHERE id = ?`, row.ID); err != nil {
 		return fmt.Errorf("remove source %s: %w", id, err)
 	}
 	if row.WasmPath != "" && filepath.Dir(row.WasmPath) == filepath.Join(e.dataDir, "wasm") {
@@ -462,6 +480,7 @@ func (e *Engine) unload(ctx context.Context, sourceID string) {
 // sourceRow is the installation record.
 type sourceRow struct {
 	ID          string  `db:"id"`
+	PluginKey   string  `db:"plugin_key"`
 	Name        string  `db:"name"`
 	Version     string  `db:"version"`
 	ABIVersion  int     `db:"abi_version"`
@@ -469,14 +488,15 @@ type sourceRow struct {
 	BaseURL     string  `db:"base_url"`
 	IconURL     *string `db:"icon_url"`
 	WasmPath    string  `db:"wasm_path"`
+	Installed   bool    `db:"installed"`
 	InstalledAt int64   `db:"installed_at"`
 }
 
-const sourceColumns = `id, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed_at`
+const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at`
 
 func (e *Engine) rows() ([]sourceRow, error) {
 	var out []sourceRow
-	if err := e.db.Select(&out, `SELECT `+sourceColumns+` FROM sources ORDER BY name`); err != nil {
+	if err := e.db.Select(&out, `SELECT `+sourceColumns+` FROM sources WHERE installed=1 ORDER BY name`); err != nil {
 		return nil, fmt.Errorf("list sources: %w", err)
 	}
 	return out, nil
@@ -484,7 +504,7 @@ func (e *Engine) rows() ([]sourceRow, error) {
 
 func (e *Engine) row(id string) (sourceRow, error) {
 	var row sourceRow
-	err := e.db.Get(&row, `SELECT `+sourceColumns+` FROM sources WHERE id = ?`, id)
+	err := e.db.Get(&row, `SELECT `+sourceColumns+` FROM sources WHERE installed=1 AND (id = ? OR plugin_key = ?)`, id, id)
 	if err != nil {
 		if isNoRows(err) {
 			return sourceRow{}, CodedError(CodeNotFound, "source %q is not installed", id)
@@ -498,6 +518,7 @@ func (e *Engine) row(id string) (sourceRow, error) {
 func (e *Engine) describe(row sourceRow) InstalledSource {
 	out := InstalledSource{
 		ID:           row.ID,
+		PluginKey:    row.PluginKey,
 		Name:         row.Name,
 		Version:      row.Version,
 		ABIVersion:   row.ABIVersion,

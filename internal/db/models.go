@@ -1,5 +1,7 @@
 package db
 
+import "encoding/json"
+
 const (
 	QueuePending     = "PENDING"
 	QueueDownloading = "DOWNLOADING"
@@ -14,6 +16,7 @@ const (
 
 type Source struct {
 	ID          string  `db:"id" json:"id"`
+	PluginKey   string  `db:"plugin_key" json:"-"`
 	Name        string  `db:"name" json:"name"`
 	Version     string  `db:"version" json:"version"`
 	ABIVersion  int     `db:"abi_version" json:"abiVersion"`
@@ -38,21 +41,33 @@ type Category struct {
 }
 
 type Manga struct {
-	ID             string  `db:"id" json:"id"`
-	SourceID       string  `db:"source_id" json:"sourceId"`
-	SourceMangaID  string  `db:"source_manga_id" json:"sourceMangaId"`
-	Title          string  `db:"title" json:"title"`
-	AltTitles      *string `db:"alt_titles" json:"altTitles"`
-	Description    *string `db:"description" json:"description"`
-	Authors        *string `db:"authors" json:"authors"`
-	Artists        *string `db:"artists" json:"artists"`
-	Genres         *string `db:"genres" json:"genres"`
-	Status         string  `db:"status" json:"status"`
-	CoverURL       string  `db:"cover_url" json:"coverUrl"`
-	InLibrary      bool    `db:"in_library" json:"inLibrary"`
-	DownloadFormat string  `db:"download_format" json:"downloadFormat"`
-	CreatedAt      int64   `db:"created_at" json:"createdAt"`
-	UpdatedAt      int64   `db:"updated_at" json:"updatedAt"`
+	ID               string  `db:"id" json:"id"`
+	SourceID         string  `db:"source_id" json:"sourceId"`
+	SourceMangaID    string  `db:"source_manga_id" json:"-"`
+	Title            string  `db:"title" json:"title"`
+	AltTitles        *string `db:"alt_titles" json:"altTitles"`
+	Description      *string `db:"description" json:"description"`
+	Authors          *string `db:"authors" json:"authors"`
+	Artists          *string `db:"artists" json:"artists"`
+	Genres           *string `db:"genres" json:"genres"`
+	Status           string  `db:"status" json:"status"`
+	CoverURL         string  `db:"cover_url" json:"-"`
+	CoverCachePath   *string `db:"cover_cache_path" json:"-"`
+	CoverContentType *string `db:"cover_content_type" json:"-"`
+	CoverFetchedAt   *int64  `db:"cover_fetched_at" json:"-"`
+	InLibrary        bool    `db:"in_library" json:"inLibrary"`
+	DownloadFormat   string  `db:"download_format" json:"downloadFormat"`
+	CreatedAt        int64   `db:"created_at" json:"createdAt"`
+	UpdatedAt        int64   `db:"updated_at" json:"updatedAt"`
+}
+
+// MarshalJSON exposes a backend-owned cover route instead of the source URL.
+func (m Manga) MarshalJSON() ([]byte, error) {
+	type alias Manga
+	return json.Marshal(struct {
+		alias
+		CoverURL string `json:"coverUrl"`
+	}{alias: alias(m), CoverURL: "/api/manga/" + m.ID + "/cover"})
 }
 
 // LibraryManga is a library title with its user-facing reading metadata.
@@ -73,6 +88,15 @@ type MangaAggregate struct {
 	Trackers   []TrackerBinding `json:"trackers"`
 }
 
+// MangaSource is an internal adapter record. It is never returned directly to
+// the web client because SourceMangaID and PluginKey are source-site details.
+type MangaSource struct {
+	MangaID       string `db:"manga_id"`
+	SourceID      string `db:"source_id"`
+	SourceMangaID string `db:"source_manga_id"`
+	PluginKey     string `db:"plugin_key"`
+}
+
 type HistoryItem struct {
 	Manga    Manga           `json:"manga"`
 	Chapter  Chapter         `json:"chapter"`
@@ -82,7 +106,8 @@ type HistoryItem struct {
 type Chapter struct {
 	ID              string   `db:"id" json:"id"`
 	MangaID         string   `db:"manga_id" json:"mangaId"`
-	SourceChapterID string   `db:"source_chapter_id" json:"sourceChapterId"`
+	SourceID        string   `db:"source_id" json:"sourceId"`
+	SourceChapterID string   `db:"source_chapter_id" json:"-"`
 	ChapterNumber   *float64 `db:"chapter_number" json:"chapterNumber"`
 	Title           *string  `db:"title" json:"title"`
 	Language        *string  `db:"language" json:"language"`
@@ -90,6 +115,28 @@ type Chapter struct {
 	Scanlator       *string  `db:"scanlator" json:"scanlator"`
 	Downloaded      bool     `db:"downloaded" json:"downloaded"`
 	DownloadPath    *string  `db:"download_path" json:"downloadPath"`
+}
+
+// Page is the backend-owned reader contract. The source URL and request
+// headers are intentionally private and are never serialized to the web API.
+type Page struct {
+	ID          string  `db:"id" json:"id"`
+	ChapterID   string  `db:"chapter_id" json:"chapterId"`
+	PageIndex   int     `db:"page_index" json:"index"`
+	RemoteURL   string  `db:"remote_url" json:"-"`
+	HeadersJSON *string `db:"request_headers" json:"-"`
+	IsScrambled bool    `db:"is_scrambled" json:"isScrambled"`
+}
+
+// PageCache records where the processed image bytes of a page live on disk.
+// The byte path and cache key are backend-owned details.
+type PageCache struct {
+	PageID      string `db:"page_id" json:"-"`
+	CacheKey    string `db:"cache_key" json:"-"`
+	BytePath    string `db:"byte_path" json:"-"`
+	ContentType string `db:"content_type" json:"-"`
+	ByteSize    int64  `db:"byte_size" json:"-"`
+	FetchedAt   int64  `db:"fetched_at" json:"-"`
 }
 
 type ReadingProgress struct {
@@ -165,7 +212,7 @@ type DownloadQueueItem struct {
 	DownloadQueue
 	MangaID          string   `db:"manga_id" json:"mangaId"`
 	SourceID         string   `db:"source_id" json:"sourceId"`
-	SourceMangaID    string   `db:"source_manga_id" json:"sourceMangaId"`
+	SourceMangaID    string   `db:"source_manga_id" json:"-"`
 	MangaTitle       string   `db:"manga_title" json:"mangaTitle"`
 	MangaDescription *string  `db:"manga_description" json:"mangaDescription,omitempty"`
 	MangaAuthors     *string  `db:"manga_authors" json:"mangaAuthors,omitempty"`
@@ -173,7 +220,7 @@ type DownloadQueueItem struct {
 	MangaGenres      *string  `db:"manga_genres" json:"mangaGenres,omitempty"`
 	DownloadFormat   string   `db:"download_format" json:"downloadFormat"`
 	SourceName       string   `db:"source_name" json:"sourceName"`
-	SourceChapterID  string   `db:"source_chapter_id" json:"sourceChapterId"`
+	SourceChapterID  string   `db:"source_chapter_id" json:"-"`
 	ChapterNumber    *float64 `db:"chapter_number" json:"chapterNumber,omitempty"`
 	ChapterTitle     *string  `db:"chapter_title" json:"chapterTitle,omitempty"`
 	Language         *string  `db:"language" json:"language,omitempty"`

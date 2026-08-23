@@ -1,3 +1,6 @@
+DROP TABLE IF EXISTS page_cache;
+DROP TABLE IF EXISTS pages;
+DROP TABLE IF EXISTS chapter_sources;
 DROP TABLE IF EXISTS download_queue;
 DROP TABLE IF EXISTS tracker_bindings;
 DROP TABLE IF EXISTS reading_progress;

@@ -71,14 +71,16 @@ func TestPermanentTrackerFailureIsNotReclaimed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repo.ClaimTrackerSync(now)
+	// Claim five seconds past enqueue so a second boundary between the two
+	// repository calls cannot push next_attempt_at past the claim time.
+	claimed, err := repo.ClaimTrackerSync(now + 5)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim = %+v, err=%v", claimed, err)
 	}
 	if err := repo.FailTrackerSync(job.ID, false, "bad credentials"); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err = repo.ClaimTrackerSync(now + 100)
+	claimed, err = repo.ClaimTrackerSync(now + 105)
 	if err != nil {
 		t.Fatal(err)
 	}

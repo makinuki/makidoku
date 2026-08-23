@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,7 @@ import (
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/internal/imagecache"
 	"github.com/makinuki/makidoku/internal/tracker"
 	"github.com/makinuki/makidoku/web"
 )
@@ -86,7 +88,17 @@ func New(cfg config.Config) (*Server, error) {
 	repo := db.NewRepository(database)
 	trackers := tracker.NewRegistry(repo)
 	syncer := &tracker.SyncWorker{Repo: repo, Registry: trackers}
-	api.NewTrackerServer(repo, eng, downloads, trackers).Mount(router)
+	if cfg.ImageCacheMaxBytes == 0 {
+		cfg.ImageCacheMaxBytes = config.DefaultImageCacheMaxBytes()
+	}
+	if cfg.ImageCacheMaxAge == 0 {
+		cfg.ImageCacheMaxAge = config.DefaultImageCacheMaxAge()
+	}
+	imageCache := imagecache.New(filepath.Join(cfg.DataDir, "image-cache"), cfg.ImageCacheMaxBytes, cfg.ImageCacheMaxAge)
+	server := api.NewTrackerServer(repo, eng, downloads, trackers)
+	server.SetImageCache(imageCache)
+	sweepOnce(imageCache, repo.ListCachedPaths)
+	server.Mount(router)
 	web.Mount(router)
 
 	return &Server{
@@ -106,6 +118,23 @@ func New(cfg config.Config) (*Server, error) {
 
 // Addr is the address the daemon listens on.
 func (s *Server) Addr() string { return s.http.Addr }
+
+// sweepOnce applies image cache retention at startup. Failures are logged
+// because a failed sweep must not keep the daemon from serving.
+func sweepOnce(cache *imagecache.Cache, keep func() ([]string, error)) {
+	paths, err := keep()
+	if err != nil {
+		log.Printf("image cache sweep skipped: %v", err)
+		return
+	}
+	keepSet := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		keepSet[path] = true
+	}
+	if err := cache.Sweep(keepSet); err != nil {
+		log.Printf("image cache sweep failed: %v", err)
+	}
+}
 
 // Run serves until ctx is cancelled, then shuts down and releases resources.
 func (s *Server) Run(ctx context.Context) error {

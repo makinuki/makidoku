@@ -5,6 +5,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import App from "./App";
 
 describe("MakiDoku app shell", () => {
+  const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+  const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+  const pageOne = "0198c0de-7a33-7000-8000-000000000001";
+  const pageTwo = "0198c0de-7a33-7000-8000-000000000002";
+
   it("renders the library workspace from the root route", async () => {
     vi.stubGlobal(
       "fetch",
@@ -30,20 +35,21 @@ describe("MakiDoku app shell", () => {
   });
 
   it("opens tracking and migration workflows from manga details", async () => {
-    window.history.pushState({}, "", "/manga/mangadex/yosuga");
+    window.history.pushState({}, "", `/manga/${mangaId}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path.includes("/api/library/mangadex/yosuga")) {
+        if (path === "/api/trackers") return Response.json([]);
+        if (path.includes("/migration/candidates")) return Response.json([]);
+        if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
-              id: "mangadex:yosuga",
-              sourceId: "mangadex",
-              sourceMangaId: "yosuga",
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
               title: "Yosuga no Sora",
               status: "completed",
-              coverUrl: "cover",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
               inLibrary: true,
               downloadFormat: "cbz",
               createdAt: 1,
@@ -54,8 +60,6 @@ describe("MakiDoku app shell", () => {
             trackers: [],
           });
         }
-        if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) return Response.json([]);
         return Response.json([]);
       }),
     );
@@ -97,20 +101,19 @@ describe("MakiDoku app shell", () => {
   });
 
   it("offers single, double, and webtoon reader modes", async () => {
-    window.history.pushState({}, "", "/reader/mangadex/yosuga/chapter-1");
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path.includes("/api/library/mangadex/yosuga")) {
+        if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
-              id: "mangadex:yosuga",
-              sourceId: "mangadex",
-              sourceMangaId: "yosuga",
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
               title: "Yosuga no Sora",
               status: "completed",
-              coverUrl: "cover",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
               inLibrary: true,
               downloadFormat: "cbz",
               createdAt: 1,
@@ -119,9 +122,8 @@ describe("MakiDoku app shell", () => {
             categories: [],
             chapters: [
               {
-                id: "mangadex:yosuga:chapter-1",
-                mangaId: "mangadex:yosuga",
-                sourceChapterId: "chapter-1",
+                id: chapterId,
+                mangaId,
                 chapterNumber: 1,
                 downloaded: false,
               },
@@ -129,13 +131,12 @@ describe("MakiDoku app shell", () => {
             trackers: [],
           });
         }
-        if (path.includes("/pages")) {
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
           return Response.json([
-            { index: 0, url: "https://example.test/1.jpg", isScrambled: false },
-            { index: 1, url: "https://example.test/2.jpg", isScrambled: false },
+            { id: pageOne, chapterId, index: 0, isScrambled: false },
+            { id: pageTwo, chapterId, index: 1, isScrambled: false },
           ]);
         }
-        if (path === "/api/progress") return Response.json({});
         return Response.json([]);
       }),
     );

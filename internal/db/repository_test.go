@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/makinuki/makidoku/internal/identity"
 )
 
 func testRepository(t *testing.T) *Repository {
@@ -21,7 +23,7 @@ func testRepository(t *testing.T) *Repository {
 	return NewRepository(handle)
 }
 
-func TestUpsertMangaAndChapterBuildCompositeIDs(t *testing.T) {
+func TestUpsertMangaAndChapterAssignOpaqueIDs(t *testing.T) {
 	repo := testRepository(t)
 	manga, err := repo.UpsertManga(Manga{
 		SourceID:       "mangadex",
@@ -34,8 +36,8 @@ func TestUpsertMangaAndChapterBuildCompositeIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert manga: %v", err)
 	}
-	if manga.ID != "mangadex:title-id" {
-		t.Fatalf("manga id = %q", manga.ID)
+	if !identity.IsValid(manga.ID) {
+		t.Fatalf("manga id = %q, want a UUIDv7", manga.ID)
 	}
 
 	number := 1.0
@@ -47,8 +49,22 @@ func TestUpsertMangaAndChapterBuildCompositeIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert chapter: %v", err)
 	}
-	if chapter.ID != "mangadex:title-id:chapter-id" {
-		t.Fatalf("chapter id = %q", chapter.ID)
+	if !identity.IsValid(chapter.ID) {
+		t.Fatalf("chapter id = %q, want a UUIDv7", chapter.ID)
+	}
+	stored, err := repo.GetChapter(chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SourceChapterID != "chapter-id" || stored.SourceID != "mangadex" {
+		t.Fatalf("source resolution = %+v", stored)
+	}
+	reread, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "chapter-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reread.ID != chapter.ID {
+		t.Fatalf("re-upsert changed the chapter id from %q to %q", chapter.ID, reread.ID)
 	}
 }
 

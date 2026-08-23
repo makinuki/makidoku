@@ -1,7 +1,6 @@
 import type {
   Aggregate,
   Category,
-  Details,
   DownloadSnapshot,
   LibraryManga,
   Page,
@@ -33,12 +32,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function mangaPath(sourceId: string, mangaId: string) {
-  return `${encodeURIComponent(sourceId)}/${encodeURIComponent(mangaId)}`;
-}
-
-function composeMangaId(sourceId: string, mangaId: string) {
-  return `${sourceId}:${mangaId}`;
+function idPath(id: string) {
+  return encodeURIComponent(id);
 }
 
 export const api = {
@@ -47,22 +42,16 @@ export const api = {
     request<LibraryManga[]>(
       `/api/library?q=${encodeURIComponent(query)}${category ? `&category=${category}` : ""}`,
     ),
-  manga: (sourceId: string, mangaId: string) =>
-    request<Aggregate>(`/api/library/${mangaPath(sourceId, mangaId)}`),
-  saveManga: (source: string, id: string) =>
-    request<Aggregate>(`/api/sources/${encodeURIComponent(source)}/library`, {
-      method: "POST",
-      body: JSON.stringify({ mangaId: id }),
-    }),
-  setLibrary: (sourceId: string, mangaId: string, enabled: boolean) =>
-    request(`/api/library/${mangaPath(sourceId, mangaId)}`, {
-      method: enabled ? "POST" : "DELETE",
-    }),
+  manga: (mangaId: string) => request<Aggregate>(`/api/manga/${idPath(mangaId)}`),
+  saveManga: (mangaId: string) =>
+    request<Aggregate>(`/api/manga/${idPath(mangaId)}/library`, { method: "POST" }),
+  setLibrary: (mangaId: string, enabled: boolean) =>
+    request(`/api/manga/${idPath(mangaId)}/library`, { method: enabled ? "POST" : "DELETE" }),
   categories: () => request<Category[]>("/api/categories"),
   createCategory: (name: string) =>
     request<Category>("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),
-  setCategory: (sourceId: string, mangaId: string, category: number, enabled: boolean) =>
-    request(`/api/manga/${mangaPath(sourceId, mangaId)}/categories/${category}`, {
+  setCategory: (mangaId: string, category: number, enabled: boolean) =>
+    request(`/api/manga/${idPath(mangaId)}/categories/${category}`, {
       method: enabled ? "POST" : "DELETE",
     }),
   history: () =>
@@ -86,38 +75,30 @@ export const api = {
     request<PageResult>(
       `/api/sources/${encodeURIComponent(source)}/search?q=${encodeURIComponent(q)}&page=${page}${filters && Object.keys(filters).length ? `&filters=${encodeURIComponent(JSON.stringify(filters))}` : ""}`,
     ),
-  details: (source: string, id: string) =>
-    request<Details>(
-      `/api/sources/${encodeURIComponent(source)}/details?mangaId=${encodeURIComponent(id)}`,
-    ),
-  pages: (source: string, chapter: string) =>
-    request<Page[]>(
-      `/api/sources/${encodeURIComponent(source)}/pages?chapterId=${encodeURIComponent(chapter)}`,
-    ),
-  enqueue: (sourceId: string, mangaId: string, chapters: string[], range = "", format = "") =>
+  pages: (chapterId: string) => request<Page[]>(`/api/chapters/${idPath(chapterId)}/pages`),
+  enqueue: (mangaId: string, chapters: string[], range = "", format = "") =>
     request<DownloadSnapshot>("/api/download", {
       method: "POST",
-      body: JSON.stringify({ mangaId: composeMangaId(sourceId, mangaId), chapters, range, format }),
+      body: JSON.stringify({ mangaId, chapters, range, format }),
     }),
   downloads: () => request<DownloadSnapshot>("/api/download"),
   controlDownload: (id: number, action: "pause" | "resume" | "cancel") =>
     request(`/api/download/${id}/${action}`, { method: "POST" }),
-  progress: (sourceId: string, mangaId: string, chapterId: string, page: number, total: number, complete = false) =>
+  progress: (mangaId: string, chapterId: string, page: number, total: number, complete = false) =>
     request<Progress>(`/api/progress${complete ? "/complete" : ""}`, {
       method: "POST",
       body: JSON.stringify({
-        mangaId: composeMangaId(sourceId, mangaId),
-        lastReadChapterId: `${composeMangaId(sourceId, mangaId)}:${chapterId}`,
+        mangaId,
+        lastReadChapterId: chapterId,
         lastReadPage: page,
         totalPages: total,
         isCompleted: complete,
         lastReadAt: 0,
       }),
     }),
-  progressGet: (sourceId: string, mangaId: string) =>
-    request<Progress | null>(`/api/progress/${mangaPath(sourceId, mangaId)}`),
-  trackerBindings: (sourceId: string, mangaId: string) =>
-    request<Binding[]>(`/api/manga/${mangaPath(sourceId, mangaId)}/trackers/`),
+  progressGet: (mangaId: string) => request<Progress | null>(`/api/progress/${idPath(mangaId)}`),
+  trackerBindings: (mangaId: string) =>
+    request<Binding[]>(`/api/manga/${idPath(mangaId)}/trackers/`),
   trackers: () => request<TrackerInfo[]>("/api/trackers"),
   trackerSearch: (type: string, query: string) =>
     request<TrackerSearchResult[]>(
@@ -134,33 +115,30 @@ export const api = {
     request<{ authorizationUrl: string; redirectUri: string }>(
       `/api/trackers/${encodeURIComponent(type)}/auth/start`,
     ),
-  bindTracker: (sourceId: string, mangaId: string, type: string, value: Partial<Binding>) =>
-    request<Binding>(
-      `/api/manga/${mangaPath(sourceId, mangaId)}/trackers/${encodeURIComponent(type)}/bind`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          remoteId: value.remoteId,
-          remoteTitle: value.remoteTitle,
-          remoteScore: value.remoteScore,
-          remoteStatus: value.remoteStatus,
-          totalRemoteChapters: value.totalRemoteChapters,
-        }),
-      },
-    ),
-  unbindTracker: (sourceId: string, mangaId: string, type: string) =>
-    request(`/api/manga/${mangaPath(sourceId, mangaId)}/trackers/${encodeURIComponent(type)}`, {
+  bindTracker: (mangaId: string, type: string, value: Partial<Binding>) =>
+    request<Binding>(`/api/manga/${idPath(mangaId)}/trackers/${encodeURIComponent(type)}/bind`, {
+      method: "POST",
+      body: JSON.stringify({
+        remoteId: value.remoteId,
+        remoteTitle: value.remoteTitle,
+        remoteScore: value.remoteScore,
+        remoteStatus: value.remoteStatus,
+        totalRemoteChapters: value.totalRemoteChapters,
+      }),
+    }),
+  unbindTracker: (mangaId: string, type: string) =>
+    request(`/api/manga/${idPath(mangaId)}/trackers/${encodeURIComponent(type)}`, {
       method: "DELETE",
     }),
-  trackerStatuses: (sourceId: string, mangaId: string) =>
-    request<TrackerStatus[]>(`/api/manga/${mangaPath(sourceId, mangaId)}/trackers/status`),
+  trackerStatuses: (mangaId: string) =>
+    request<TrackerStatus[]>(`/api/manga/${idPath(mangaId)}/trackers/status`),
   syncJobs: () => request<TrackerSyncJob[]>("/api/tracker-sync"),
-  migrationCandidates: (sourceId: string, mangaId: string, query?: string) =>
+  migrationCandidates: (mangaId: string, query?: string) =>
     request<MigrationCandidate[]>(
-      `/api/manga/${mangaPath(sourceId, mangaId)}/migration/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`,
+      `/api/manga/${idPath(mangaId)}/migration/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`,
     ),
-  applyMigration: (sourceId: string, mangaId: string, replacementSourceId: string, replacementMangaId: string) =>
-    request<MigrationResponse>(`/api/manga/${mangaPath(sourceId, mangaId)}/migration/apply`, {
+  applyMigration: (mangaId: string, replacementSourceId: string, replacementMangaId: string) =>
+    request<MigrationResponse>(`/api/manga/${idPath(mangaId)}/migration/apply`, {
       method: "POST",
       body: JSON.stringify({ sourceId: replacementSourceId, mangaId: replacementMangaId }),
     }),
@@ -170,8 +148,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: file,
     }),
-  readerImage: (source: string, page: Page) =>
-    `/api/reader/image?source=${encodeURIComponent(source)}&url=${encodeURIComponent(page.url)}&headers=${encodeURIComponent(JSON.stringify(page.headers || {}))}${page.isScrambled ? "&scrambled=1" : ""}`,
+  readerImage: (page: Page) => `/api/pages/${idPath(page.id)}/image`,
 };
 
 export type Api = typeof api;

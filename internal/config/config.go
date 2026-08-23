@@ -24,6 +24,12 @@ type Config struct {
 	DownloadDir     string
 	DownloadWorkers int
 	PageInterval    time.Duration
+	// ImageCacheMaxBytes caps the total size of the processed image cache.
+	// Zero disables the size limit.
+	ImageCacheMaxBytes int64
+	// ImageCacheMaxAge bounds how long a cached image may remain untouched.
+	// Zero disables the age limit.
+	ImageCacheMaxAge time.Duration
 }
 
 // DefaultDataDir returns the default directory for makidoku.db, wasm cache,
@@ -113,4 +119,32 @@ func DefaultChallengeWait() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// DefaultImageCacheMaxBytes returns the processed image cache size budget
+// from the environment. The default budget is 512 MiB.
+func DefaultImageCacheMaxBytes() int64 {
+	v := os.Getenv("MAKIDOKU_IMAGE_CACHE_MAX_BYTES")
+	if v == "" {
+		return 512 << 20
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || parsed < 0 {
+		return 512 << 20
+	}
+	return parsed
+}
+
+// DefaultImageCacheMaxAge returns the processed image cache retention age
+// from the environment. The default retention is 30 days.
+func DefaultImageCacheMaxAge() time.Duration {
+	v := os.Getenv("MAKIDOKU_IMAGE_CACHE_MAX_AGE")
+	if v == "" {
+		return 30 * 24 * time.Hour
+	}
+	parsed, err := time.ParseDuration(v)
+	if err != nil || parsed < 0 {
+		return 30 * 24 * time.Hour
+	}
+	return parsed
 }

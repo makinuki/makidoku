@@ -2,7 +2,6 @@ export type Category = { id: number; name: string; sortOrder: number };
 export type Manga = {
   id: string;
   sourceId: string;
-  sourceMangaId: string;
   title: string;
   altTitles?: string;
   description?: string;
@@ -19,7 +18,6 @@ export type Manga = {
 export type Chapter = {
   id: string;
   mangaId: string;
-  sourceChapterId: string;
   chapterNumber?: number;
   title?: string;
   language?: string;
@@ -109,9 +107,9 @@ export type SearchResult = {
   url?: string;
 };
 export type Page = {
+  id: string;
+  chapterId: string;
   index: number;
-  url: string;
-  headers?: Record<string, string>;
   isScrambled: boolean;
 };
 export type PageResult = { page: number; hasNextPage: boolean; items: SearchResult[] };

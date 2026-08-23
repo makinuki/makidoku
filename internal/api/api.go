@@ -11,6 +11,7 @@ import (
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/internal/imagecache"
 	"github.com/makinuki/makidoku/internal/tracker"
 )
 
@@ -26,11 +27,12 @@ type downloadQueue interface {
 
 // Server holds the dependencies shared by the REST handlers.
 type Server struct {
-	repo      *db.Repository
-	engine    *engine.Engine
-	downloads downloadQueue
-	trackers  *tracker.Registry
-	syncer    *tracker.SyncWorker
+	repo       *db.Repository
+	engine     *engine.Engine
+	downloads  downloadQueue
+	trackers   *tracker.Registry
+	syncer     *tracker.SyncWorker
+	imageCache *imagecache.Cache
 }
 
 func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQueue) *Server {
@@ -39,6 +41,12 @@ func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQue
 		server.downloads = downloads[0]
 	}
 	return server
+}
+
+// SetImageCache attaches the bounded retention policy for processed page
+// images. Without it the cache directory grows without limits.
+func (s *Server) SetImageCache(cache *imagecache.Cache) {
+	s.imageCache = cache
 }
 
 func NewTrackerServer(repo *db.Repository, eng *engine.Engine, downloads downloadQueue, trackers *tracker.Registry) *Server {
@@ -55,6 +63,8 @@ func (s *Server) Mount(r chi.Router) {
 		s.mountLibrary(api)
 		s.mountBackup(api)
 		s.mountSources(api)
+		api.Get("/chapters/{chapterID}/pages", s.materializePages)
+		api.Get("/pages/{pageID}/image", s.pageImage)
 		s.mountMigration(api)
 		if s.downloads != nil {
 			s.mountDownloads(api)

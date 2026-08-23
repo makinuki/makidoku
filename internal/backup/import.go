@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -29,7 +30,7 @@ func Import(db *sqlx.DB, data []byte) error {
 	categoryIDs := map[int64]int64{}
 	for _, raw := range doc.Sources {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,wasm_path=excluded.wasm_path`, stringValue(m["id"]), stringValue(m["name"]), stringValue(m["version"]), intValue(m["abi_version"]), stringValue(m["lang"]), stringValue(m["base_url"]), nullableString(m["icon_url"]), stringValue(m["wasm_path"]), int64Value(m["installed_at"])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,wasm_path=excluded.wasm_path`, stringValue(m["id"]), nullableString(m["plugin_key"]), stringValue(m["name"]), stringValue(m["version"]), intValue(m["abi_version"]), stringValue(m["lang"]), stringValue(m["base_url"]), nullableString(m["icon_url"]), stringValue(m["wasm_path"]), int64Value(m["installed_at"])); err != nil {
 			return fmt.Errorf("import source %q: %w", stringValue(m["id"]), err)
 		}
 	}
@@ -58,12 +59,69 @@ func Import(db *sqlx.DB, data []byte) error {
 			return fmt.Errorf("import manga %q: %w", stringValue(m["id"]), err)
 		}
 	}
+	for _, raw := range doc.MangaSources {
+		m, _ := raw.(map[string]any)
+		firstSeen := int64Value(m["first_seen_at"])
+		lastSeen := int64Value(m["last_seen_at"])
+		if firstSeen == 0 || lastSeen == 0 {
+			now := time.Now().Unix()
+			if firstSeen == 0 {
+				firstSeen = now
+			}
+			if lastSeen == 0 {
+				lastSeen = now
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,is_primary,first_seen_at,last_seen_at)
+			VALUES(?,?,?,?,?,?) ON CONFLICT(source_id,source_manga_id) DO UPDATE SET
+			manga_id=excluded.manga_id,is_primary=excluded.is_primary,last_seen_at=excluded.last_seen_at`,
+			stringValue(m["manga_id"]), stringValue(m["source_id"]), stringValue(m["source_manga_id"]), boolValue(m["is_primary"]), firstSeen, lastSeen); err != nil {
+			return fmt.Errorf("import manga source link %q: %w", stringValue(m["manga_id"]), err)
+		}
+	}
 	for _, raw := range doc.Chapters {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO chapters(id,manga_id,source_chapter_id,chapter_number,title,language,uploaded_at,scanlator,downloaded,download_path)
-			VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET chapter_number=excluded.chapter_number,title=excluded.title,language=excluded.language,uploaded_at=excluded.uploaded_at,scanlator=excluded.scanlator,downloaded=excluded.downloaded,download_path=excluded.download_path`,
-			stringValue(m["id"]), stringValue(m["manga_id"]), stringValue(m["source_chapter_id"]), nullableFloat(m["chapter_number"]), nullableString(m["title"]), nullableString(m["language"]), nullableInt(m["uploaded_at"]), nullableString(m["scanlator"]), boolValue(m["downloaded"]), nullableString(m["download_path"])); err != nil {
-			return fmt.Errorf("import chapter %q: %w", stringValue(m["id"]), err)
+		chapterID := stringValue(m["id"])
+		mangaID := stringValue(m["manga_id"])
+		sourceID := stringValue(m["source_id"])
+		if sourceID == "" {
+			if err := tx.Get(&sourceID, `SELECT source_id FROM manga WHERE id=?`, mangaID); err != nil {
+				return fmt.Errorf("resolve source for chapter %q: %w", chapterID, err)
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO chapters(id,manga_id,source_id,chapter_number,title,language,uploaded_at,scanlator,downloaded,download_path)
+			VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET manga_id=excluded.manga_id,chapter_number=excluded.chapter_number,title=excluded.title,language=excluded.language,uploaded_at=excluded.uploaded_at,scanlator=excluded.scanlator,downloaded=excluded.downloaded,download_path=excluded.download_path`,
+			chapterID, mangaID, sourceID, nullableFloat(m["chapter_number"]), nullableString(m["title"]), nullableString(m["language"]), nullableInt(m["uploaded_at"]), nullableString(m["scanlator"]), boolValue(m["downloaded"]), nullableString(m["download_path"])); err != nil {
+			return fmt.Errorf("import chapter %q: %w", chapterID, err)
+		}
+		// Backups taken before the normalized schema carried the external
+		// chapter id on the chapter row itself; restore it as a link row.
+		if legacyExternal := stringValue(m["source_chapter_id"]); legacyExternal != "" && len(doc.ChapterSources) == 0 {
+			now := time.Now().Unix()
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO chapter_sources(chapter_id,source_id,source_chapter_id,first_seen_at,last_seen_at)
+				VALUES(?,?,?,?,?)`, chapterID, sourceID, legacyExternal, now, now); err != nil {
+				return fmt.Errorf("import chapter source link %q: %w", chapterID, err)
+			}
+		}
+	}
+	for _, raw := range doc.ChapterSources {
+		m, _ := raw.(map[string]any)
+		firstSeen := int64Value(m["first_seen_at"])
+		lastSeen := int64Value(m["last_seen_at"])
+		if firstSeen == 0 || lastSeen == 0 {
+			now := time.Now().Unix()
+			if firstSeen == 0 {
+				firstSeen = now
+			}
+			if lastSeen == 0 {
+				lastSeen = now
+			}
+		}
+		if _, err := tx.Exec(`INSERT INTO chapter_sources(chapter_id,source_id,source_chapter_id,first_seen_at,last_seen_at)
+			VALUES(?,?,?,?,?) ON CONFLICT(chapter_id,source_id) DO UPDATE SET
+			source_chapter_id=excluded.source_chapter_id,last_seen_at=excluded.last_seen_at`,
+			stringValue(m["chapter_id"]), stringValue(m["source_id"]), stringValue(m["source_chapter_id"]), firstSeen, lastSeen); err != nil {
+			return fmt.Errorf("import chapter source link %q: %w", stringValue(m["chapter_id"]), err)
 		}
 	}
 	for _, raw := range doc.MangaCategories {

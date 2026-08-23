@@ -27,8 +27,8 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
   ] as const;
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 lg:flex">
-      <aside className="border-b border-zinc-800 bg-zinc-900/80 lg:min-h-screen lg:w-64 lg:border-b-0 lg:border-r">
-        <div className="flex h-16 items-center gap-3 border-b border-zinc-800 px-5">
+      <aside className="border-b border-zinc-800 bg-zinc-900/80 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:flex-col lg:border-b-0 lg:border-r">
+        <div className="flex h-16 shrink-0 items-center gap-3 border-b border-zinc-800 px-5">
           <span className="grid size-8 place-items-center rounded-lg bg-amber-400 font-bold text-zinc-950">
             巻
           </span>
@@ -36,7 +36,7 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
             MakiDoku
           </Link>
         </div>
-        <nav className="flex gap-1 overflow-x-auto p-3 lg:flex-col">
+        <nav className="flex gap-1 overflow-x-auto p-3 lg:flex-1 lg:flex-col lg:overflow-y-auto">
           {links.map(([to, label, Icon]) => (
             <NavLink
               key={to}
@@ -49,7 +49,7 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-zinc-800 p-3 lg:mt-[calc(100vh-232px)]">
+        <div className="border-t border-zinc-800 p-3 lg:shrink-0">
           <NavLink
             to="/settings"
             className={({ isActive }) =>

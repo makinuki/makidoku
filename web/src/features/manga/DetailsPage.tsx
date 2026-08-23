@@ -12,19 +12,9 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../../api";
-import type {
-  Aggregate,
-  Binding,
-  Category,
-  MigrationCandidate,
-  TrackerInfo,
-} from "../../types";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  PageHeader,
-} from "../../components/States";
+import type { Aggregate, Binding, Category, MigrationCandidate, TrackerInfo } from "../../types";
+import { CoverImg } from "../../components/CoverImg";
+import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 
 export function DetailsPage() {
   const { mangaId = "" } = useParams();
@@ -85,13 +75,7 @@ export function DetailsPage() {
       </button>
       <section className="grid gap-6 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 md:grid-cols-[180px_1fr] md:p-7">
         <div className="aspect-3/4 overflow-hidden rounded-xl bg-zinc-800">
-          {manga.coverUrl && (
-            <img
-              src={manga.coverUrl}
-              alt=""
-              className="size-full object-cover"
-            />
-          )}
+          <CoverImg src={manga.coverUrl} className="size-full object-cover" />
         </div>
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-amber-400">
@@ -128,8 +112,7 @@ export function DetailsPage() {
               }}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
             >
-              <Bookmark size={15} />{" "}
-              {manga.inLibrary ? "In library" : "Add to library"}
+              <Bookmark size={15} /> {manga.inLibrary ? "In library" : "Add to library"}
             </button>
             <button
               onClick={() => setModal("tracker")}
@@ -151,9 +134,7 @@ export function DetailsPage() {
           <PageHeader title="Categories" />{" "}
           <div className="flex flex-wrap gap-2">
             {categories.map((category) => {
-              const active = data.categories.some(
-                (item) => item.id === category.id,
-              );
+              const active = data.categories.some((item) => item.id === category.id);
               return (
                 <button
                   key={category.id}
@@ -196,10 +177,7 @@ export function DetailsPage() {
         {chapters.length ? (
           <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
             {chapters.map((chapter) => (
-              <label
-                key={chapter.id}
-                className="flex items-center gap-3 p-4 hover:bg-zinc-900"
-              >
+              <label key={chapter.id} className="flex items-center gap-3 p-4 hover:bg-zinc-900">
                 <input
                   type="checkbox"
                   checked={selected.includes(chapter.id)}
@@ -211,16 +189,14 @@ export function DetailsPage() {
                   className="min-w-0 flex-1"
                 >
                   <b className="block text-sm">
-                    {formatChapter(chapter.chapterNumber, chapter.title)}
+                    {formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}
                   </b>
                   <span className="text-xs text-zinc-500">
                     {chapter.language || "Unknown language"}
                     {chapter.scanlator ? ` · ${chapter.scanlator}` : ""}
                   </span>
                 </Link>
-                {chapter.downloaded && (
-                  <Check size={16} className="text-emerald-400" />
-                )}
+                {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
               </label>
             ))}
           </div>
@@ -248,17 +224,16 @@ export function DetailsPage() {
         <MigrationModal
           manga={manga}
           onClose={() => setModal(undefined)}
-          onApplied={(nextMangaId) =>
-            navigate(`/manga/${encodeURIComponent(nextMangaId)}`)
-          }
+          onApplied={(nextMangaId) => navigate(`/manga/${encodeURIComponent(nextMangaId)}`)}
         />
       )}
     </div>
   );
 }
 
-function formatChapter(number?: number, title?: string) {
-  return number == null ? title || "Special" : `Chapter ${number}`;
+function formatChapter(volume?: number, number?: number, title?: string) {
+  const label = number == null ? title || "Special" : `Chapter ${number}`;
+  return volume == null ? label : `Vol. ${volume} · ${label}`;
 }
 function parseList(value?: string) {
   if (!value) return [];
@@ -328,29 +303,25 @@ function TrackerModal({
           </button>
         ))}
       </div>
-      {active &&
-        !trackers.find((item) => item.name === active)?.capabilities.search && (
-          <p className="mt-4 text-sm text-zinc-400">
-            This provider does not support title search.
-          </p>
-        )}
-      {active &&
-        trackers.find((item) => item.name === active)?.capabilities.search && (
-          <div className="mt-4 flex gap-2">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search provider"
-              className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-            />
-            <button
-              onClick={() => void search()}
-              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
-            >
-              Search
-            </button>
-          </div>
-        )}
+      {active && !trackers.find((item) => item.name === active)?.capabilities.search && (
+        <p className="mt-4 text-sm text-zinc-400">This provider does not support title search.</p>
+      )}
+      {active && trackers.find((item) => item.name === active)?.capabilities.search && (
+        <div className="mt-4 flex gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search provider"
+            className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          />
+          <button
+            onClick={() => void search()}
+            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+          >
+            Search
+          </button>
+        </div>
+      )}
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
       {binding && (
         <button
@@ -408,8 +379,8 @@ function MigrationModal({
   return (
     <Modal title="Migrate source" onClose={onClose}>
       <p className="text-sm text-zinc-400">
-        Select a matching title from another installed source. Reading state and
-        tracker bindings are preserved.
+        Select a matching title from another installed source. Reading state and tracker bindings
+        are preserved.
       </p>
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
       <div className="mt-4 grid gap-2">
@@ -429,16 +400,11 @@ function MigrationModal({
           </button>
         ))}
         {!items.length && !error && (
-          <p className="text-sm text-zinc-500">
-            No replacement candidates found.
-          </p>
+          <p className="text-sm text-zinc-500">No replacement candidates found.</p>
         )}
       </div>
       <div className="mt-5 flex justify-end gap-2">
-        <button
-          onClick={onClose}
-          className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
-        >
+        <button onClick={onClose} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm">
           Cancel
         </button>
         <button

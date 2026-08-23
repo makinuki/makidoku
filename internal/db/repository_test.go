@@ -152,6 +152,109 @@ func TestQueueStateMachine(t *testing.T) {
 	}
 }
 
+func TestUpsertChapterPersistsVolume(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Yosuga no Sora",
+		Status: "completed", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 10.5
+	volume := int64(3)
+	chapter, err := repo.UpsertChapter(Chapter{
+		MangaID: manga.ID, SourceChapterID: "ch-10-5",
+		ChapterNumber: &number, Volume: &volume,
+	})
+	if err != nil {
+		t.Fatalf("upsert chapter: %v", err)
+	}
+	stored, err := repo.GetChapter(chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Volume == nil || *stored.Volume != 3 {
+		t.Fatalf("stored volume = %+v, want 3", stored.Volume)
+	}
+
+	if _, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "ch-10-5", ChapterNumber: &number}); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := repo.GetChapter(chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Volume != nil {
+		t.Fatalf("refreshed volume = %+v, want absent after a refresh without one", cleared.Volume)
+	}
+}
+
+func TestQueueItemsCarryVolume(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	volume := int64(2)
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "chapter-id", Volume: &volume})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnqueueChapter(chapter.ID); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	items, err := repo.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Volume == nil || *items[0].Volume != 2 {
+		t.Fatalf("queue items = %+v, want volume 2", items)
+	}
+}
+
+func TestUpsertMangaCoverChangeInvalidatesCache(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title",
+		Status: "ongoing", CoverURL: "https://covers.test/old.jpg", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetMangaCover(manga.ID, "covers/1.img", "image/jpeg", 100); err != nil {
+		t.Fatal(err)
+	}
+
+	same, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title",
+		Status: "ongoing", CoverURL: "https://covers.test/old.jpg", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.CoverCachePath == nil || *same.CoverCachePath != "covers/1.img" {
+		t.Fatalf("cache was dropped although the URL is unchanged: %+v", same)
+	}
+
+	changed, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title",
+		Status: "ongoing", CoverURL: "https://covers.test/new.512.jpg", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.CoverURL != "https://covers.test/new.512.jpg" {
+		t.Fatalf("cover url = %q", changed.CoverURL)
+	}
+	if changed.CoverCachePath != nil || changed.CoverContentType != nil || changed.CoverFetchedAt != nil {
+		t.Fatalf("stale cache survived a cover url change: %+v", changed)
+	}
+}
+
 func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
 	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})

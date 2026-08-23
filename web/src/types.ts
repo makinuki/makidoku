@@ -19,6 +19,7 @@ export type Chapter = {
   id: string;
   mangaId: string;
   chapterNumber?: number;
+  volume?: number;
   title?: string;
   language?: string;
   uploadedAt?: number;
@@ -125,6 +126,7 @@ export type FilterSchema =
     }
   | { id: string; title: string; type: "checkbox"; default: boolean }
   | { id: string; title: string; type: "text"; placeholder?: string; default?: string };
+export type CoverVariant = { url: string; width?: number; height?: number };
 export type Details = {
   id: string;
   title: string;
@@ -134,10 +136,12 @@ export type Details = {
   artists?: string[];
   genres?: string[];
   status: string;
-  coverUrl: string;
+  coverUrl?: string;
+  covers?: CoverVariant[];
   chapters: Array<{
     id: string;
     number?: number;
+    volume?: number;
     language?: string;
     title?: string;
     uploadedAt?: number;

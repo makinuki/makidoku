@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -74,6 +74,56 @@ describe("MakiDoku app shell", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Migrate" }));
     expect(screen.getByRole("heading", { name: "Migrate source" })).toBeInTheDocument();
+  });
+
+  it("labels chapter volumes and falls back when the cover fails to load", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") return Response.json([]);
+        if (path.includes("/migration/candidates")) return Response.json([]);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [
+              {
+                id: chapterId,
+                mangaId,
+                chapterNumber: 10.5,
+                volume: 3,
+                language: "en",
+                downloaded: false,
+              },
+            ],
+            trackers: [],
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Vol. 3 · Chapter 10.5")).toBeInTheDocument();
+
+    const cover = screen.getAllByAltText("")[0];
+    fireEvent.error(cover);
+    expect(await screen.findByLabelText("No cover available")).toBeInTheDocument();
   });
 
   it("uploads a selected backup from settings", async () => {

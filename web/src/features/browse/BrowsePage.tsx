@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
 import { api } from "../../api";
 import type { FilterSchema, SearchResult, Source } from "../../types";
+import { CoverImg } from "../../components/CoverImg";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 
 export function BrowsePage() {
@@ -280,9 +281,7 @@ function SourceResult({ item }: { item: SearchResult & { source: Source } }) {
   return (
     <article className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
       <div className="aspect-3/4 bg-zinc-800">
-        {item.coverUrl && (
-          <img src={item.coverUrl} alt="" className="size-full object-cover" loading="lazy" />
-        )}
+        <CoverImg src={item.coverUrl} className="size-full object-cover" />
       </div>
       <div className="space-y-2 p-4">
         <p className="text-xs uppercase tracking-wide text-amber-400">{item.source.name}</p>

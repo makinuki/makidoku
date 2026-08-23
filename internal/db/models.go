@@ -109,6 +109,7 @@ type Chapter struct {
 	SourceID        string   `db:"source_id" json:"sourceId"`
 	SourceChapterID string   `db:"source_chapter_id" json:"-"`
 	ChapterNumber   *float64 `db:"chapter_number" json:"chapterNumber"`
+	Volume          *int64   `db:"volume" json:"volume,omitempty"`
 	Title           *string  `db:"title" json:"title"`
 	Language        *string  `db:"language" json:"language"`
 	UploadedAt      *int64   `db:"uploaded_at" json:"uploadedAt"`
@@ -222,6 +223,7 @@ type DownloadQueueItem struct {
 	SourceName       string   `db:"source_name" json:"sourceName"`
 	SourceChapterID  string   `db:"source_chapter_id" json:"-"`
 	ChapterNumber    *float64 `db:"chapter_number" json:"chapterNumber,omitempty"`
+	Volume           *int64   `db:"volume" json:"volume,omitempty"`
 	ChapterTitle     *string  `db:"chapter_title" json:"chapterTitle,omitempty"`
 	Language         *string  `db:"language" json:"language,omitempty"`
 	Scanlator        *string  `db:"scanlator" json:"scanlator,omitempty"`

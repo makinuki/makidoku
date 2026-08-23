@@ -60,7 +60,7 @@ func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, result := range page.Items {
-			materialized, materializeErr := s.repo.UpsertManga(db.Manga{SourceID: source.ID, SourceMangaID: result.ID, Title: result.Title, CoverURL: result.CoverURL, Status: "unknown"})
+			materialized, materializeErr := s.repo.UpsertManga(db.Manga{SourceID: source.ID, SourceMangaID: result.ID, Title: result.Title, CoverURL: engine.SelectCover(result.CoverURL, result.Covers, engine.PreferredCoverWidth), Status: "unknown"})
 			if materializeErr != nil {
 				continue
 			}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ChevronRight, Search, X } from "lucide-react";
 import { api } from "../../api";
 import type { LibraryManga } from "../../types";
+import { CoverImg } from "../../components/CoverImg";
 
 export function GlobalSearch({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
@@ -50,9 +51,7 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
               className="flex items-center gap-3 rounded-lg p-2 hover:bg-zinc-800"
             >
               <div className="size-10 overflow-hidden rounded bg-zinc-800">
-                {item.coverUrl && (
-                  <img src={item.coverUrl} alt="" className="size-full object-cover" />
-                )}
+                <CoverImg src={item.coverUrl} className="size-full object-cover" />
               </div>
               <span className="min-w-0 flex-1">
                 <b className="block truncate text-sm">{item.title}</b>

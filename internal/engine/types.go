@@ -84,32 +84,44 @@ type PageResult struct {
 
 // MangaItem is a search result entry.
 type MangaItem struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	CoverURL      string `json:"coverUrl"`
-	LatestChapter string `json:"latestChapter,omitempty"`
-	URL           string `json:"url,omitempty"`
+	ID            string         `json:"id"`
+	Title         string         `json:"title"`
+	CoverURL      string         `json:"coverUrl,omitempty"`
+	LatestChapter string         `json:"latestChapter,omitempty"`
+	URL           string         `json:"url,omitempty"`
+	Covers        []CoverVariant `json:"covers,omitempty"`
+}
+
+// CoverVariant describes one rendition of the cover artwork. Width and
+// height carry the served pixel size when the source declares it.
+type CoverVariant struct {
+	URL    string `json:"url"`
+	Width  *int   `json:"width,omitempty"`
+	Height *int   `json:"height,omitempty"`
 }
 
 // MangaDetails is the get_details payload.
 type MangaDetails struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
-	AltTitles   []string      `json:"altTitles,omitempty"`
-	Description string        `json:"description,omitempty"`
-	Authors     []string      `json:"authors,omitempty"`
-	Artists     []string      `json:"artists,omitempty"`
-	Genres      []string      `json:"genres,omitempty"`
-	Status      string        `json:"status"`
-	CoverURL    string        `json:"coverUrl"`
-	Chapters    []ChapterItem `json:"chapters"`
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	AltTitles   []string       `json:"altTitles,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Authors     []string       `json:"authors,omitempty"`
+	Artists     []string       `json:"artists,omitempty"`
+	Genres      []string       `json:"genres,omitempty"`
+	Status      string         `json:"status"`
+	CoverURL    string         `json:"coverUrl,omitempty"`
+	Chapters    []ChapterItem  `json:"chapters"`
+	Covers      []CoverVariant `json:"covers,omitempty"`
 }
 
 // ChapterItem is a chapter listing entry. Number is nil for oneshots, extras,
-// and unnumbered specials.
+// and unnumbered specials; Volume carries the source-declared volume grouping
+// when present.
 type ChapterItem struct {
 	ID         string   `json:"id"`
 	Number     *float64 `json:"number"`
+	Volume     *int64   `json:"volume,omitempty"`
 	Language   string   `json:"language,omitempty"`
 	Title      string   `json:"title,omitempty"`
 	UploadedAt *int64   `json:"uploadedAt,omitempty"`

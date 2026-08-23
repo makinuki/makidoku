@@ -43,3 +43,29 @@ func TestComicInfoXMLFields(t *testing.T) {
 		t.Fatalf("reader fields = %+v", info)
 	}
 }
+
+func TestComicInfoWritesOptionalVolume(t *testing.T) {
+	raw, err := BuildComicInfo(ComicInfo{Series: "Yosuga no Sora", Number: "10.5", Volume: 3, PageCount: 24})
+	if err != nil {
+		t.Fatalf("build ComicInfo.xml: %v", err)
+	}
+	if !strings.Contains(string(raw), "<Volume>3</Volume>") {
+		t.Fatalf("missing volume element: %s", raw)
+	}
+
+	var info comicInfoXML
+	if err := xml.Unmarshal(raw, &info); err != nil {
+		t.Fatalf("parse ComicInfo.xml: %v", err)
+	}
+	if info.Volume != 3 {
+		t.Fatalf("volume = %d, want 3", info.Volume)
+	}
+
+	withoutVolume, err := BuildComicInfo(ComicInfo{Series: "Yosuga no Sora", Number: "1", PageCount: 24})
+	if err != nil {
+		t.Fatalf("build ComicInfo.xml without volume: %v", err)
+	}
+	if strings.Contains(string(withoutVolume), "Volume") {
+		t.Fatalf("volume element must be omitted when unset: %s", withoutVolume)
+	}
+}

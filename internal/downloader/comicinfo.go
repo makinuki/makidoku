@@ -10,6 +10,7 @@ type ComicInfo struct {
 	Title       string
 	Series      string
 	Number      string
+	Volume      int
 	Summary     string
 	Writers     []string
 	Pencillers  []string
@@ -26,6 +27,7 @@ type comicInfoXML struct {
 	Title           string   `xml:"Title,omitempty"`
 	Series          string   `xml:"Series,omitempty"`
 	Number          string   `xml:"Number,omitempty"`
+	Volume          int      `xml:"Volume,omitempty"`
 	Summary         string   `xml:"Summary,omitempty"`
 	Writer          string   `xml:"Writer,omitempty"`
 	Penciller       string   `xml:"Penciller,omitempty"`
@@ -45,6 +47,7 @@ func BuildComicInfo(info ComicInfo) ([]byte, error) {
 		Title:           info.Title,
 		Series:          info.Series,
 		Number:          info.Number,
+		Volume:          info.Volume,
 		Summary:         info.Summary,
 		Writer:          strings.Join(info.Writers, ", "),
 		Penciller:       strings.Join(info.Pencillers, ", "),

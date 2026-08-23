@@ -89,9 +89,9 @@ func Import(db *sqlx.DB, data []byte) error {
 				return fmt.Errorf("resolve source for chapter %q: %w", chapterID, err)
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO chapters(id,manga_id,source_id,chapter_number,title,language,uploaded_at,scanlator,downloaded,download_path)
-			VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET manga_id=excluded.manga_id,chapter_number=excluded.chapter_number,title=excluded.title,language=excluded.language,uploaded_at=excluded.uploaded_at,scanlator=excluded.scanlator,downloaded=excluded.downloaded,download_path=excluded.download_path`,
-			chapterID, mangaID, sourceID, nullableFloat(m["chapter_number"]), nullableString(m["title"]), nullableString(m["language"]), nullableInt(m["uploaded_at"]), nullableString(m["scanlator"]), boolValue(m["downloaded"]), nullableString(m["download_path"])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO chapters(id,manga_id,source_id,chapter_number,volume,title,language,uploaded_at,scanlator,downloaded,download_path)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET manga_id=excluded.manga_id,chapter_number=excluded.chapter_number,volume=excluded.volume,title=excluded.title,language=excluded.language,uploaded_at=excluded.uploaded_at,scanlator=excluded.scanlator,downloaded=excluded.downloaded,download_path=excluded.download_path`,
+			chapterID, mangaID, sourceID, nullableFloat(m["chapter_number"]), nullableInt(m["volume"]), nullableString(m["title"]), nullableString(m["language"]), nullableInt(m["uploaded_at"]), nullableString(m["scanlator"]), boolValue(m["downloaded"]), nullableString(m["download_path"])); err != nil {
 			return fmt.Errorf("import chapter %q: %w", chapterID, err)
 		}
 		// Backups taken before the normalized schema carried the external

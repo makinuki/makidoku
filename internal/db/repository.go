@@ -356,10 +356,14 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 	}
 	manga.SourceID = sourceID
 	var existingID string
+	var previousCoverURL string
 	if err := r.db.Get(&existingID, `SELECT manga_id FROM manga_sources WHERE source_id=? AND source_manga_id=?`, sourceID, manga.SourceMangaID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Manga{}, err
 	} else if err == nil {
 		manga.ID = existingID
+		if err := r.db.Get(&previousCoverURL, `SELECT cover_url FROM manga WHERE id=?`, existingID); err != nil {
+			return Manga{}, err
+		}
 	}
 	if manga.ID == "" {
 		manga.ID, err = identity.New()
@@ -403,6 +407,15 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 		manga.DownloadFormat, manga.CreatedAt, manga.UpdatedAt)
 	if err != nil {
 		return Manga{}, fmt.Errorf("upsert manga %s: %w", manga.ID, err)
+	}
+	if previousCoverURL != "" && previousCoverURL != manga.CoverURL {
+		// A changed locator invalidates the cached rendition so the next
+		// cover request refetches from the new URL.
+		if _, err := r.db.Exec(`UPDATE manga SET
+			cover_cache_path=NULL, cover_content_type=NULL, cover_fetched_at=NULL
+			WHERE id=?`, manga.ID); err != nil {
+			return Manga{}, fmt.Errorf("invalidate cover cache %s: %w", manga.ID, err)
+		}
 	}
 	_, err = r.db.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,is_primary,first_seen_at,last_seen_at)
 		VALUES(?,?,?,?,?,?)
@@ -459,11 +472,11 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 			return Chapter{}, err
 		}
 		_, err = r.db.Exec(`INSERT INTO chapters(
-			id, manga_id, source_id, chapter_number, title, language,
+			id, manga_id, source_id, chapter_number, volume, title, language,
 			uploaded_at, scanlator, downloaded, download_path
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			chapter.ID, chapter.MangaID, chapter.SourceID,
-			chapter.ChapterNumber, chapter.Title, chapter.Language,
+			chapter.ChapterNumber, chapter.Volume, chapter.Title, chapter.Language,
 			chapter.UploadedAt, chapter.Scanlator, chapter.Downloaded,
 			chapter.DownloadPath)
 		if err != nil {
@@ -476,9 +489,9 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 		}
 	} else {
 		_, err = r.db.Exec(`UPDATE chapters SET
-			chapter_number=?, title=?, language=?, uploaded_at=?, scanlator=?
+			chapter_number=?, volume=?, title=?, language=?, uploaded_at=?, scanlator=?
 			WHERE id=?`,
-			chapter.ChapterNumber, chapter.Title,
+			chapter.ChapterNumber, chapter.Volume, chapter.Title,
 			chapter.Language, chapter.UploadedAt, chapter.Scanlator, chapter.ID)
 		if err != nil {
 			return Chapter{}, fmt.Errorf("update chapter %s: %w", chapter.ID, err)
@@ -498,7 +511,7 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 // representation alongside the canonical record. The owning representation is
 // authoritative; a missing row leaves the external id empty.
 const chapterSelect = `SELECT c.id, c.manga_id, c.source_id,
-		cs.source_chapter_id, c.chapter_number, c.title, c.language,
+		cs.source_chapter_id, c.chapter_number, c.volume, c.title, c.language,
 		c.uploaded_at, c.scanlator, c.downloaded, c.download_path
 	FROM chapters c
 	LEFT JOIN chapter_sources cs ON cs.chapter_id = c.id AND cs.source_id = c.source_id`
@@ -919,7 +932,7 @@ func (r *Repository) ListQueue() ([]DownloadQueueItem, error) {
 const queueSelect = `SELECT
 	q.id, q.chapter_id, q.status, q.progress, q.total_pages,
 	q.downloaded_pages, q.error_message, q.queued_at,
-	c.manga_id, cs.source_chapter_id, c.chapter_number,
+	c.manga_id, cs.source_chapter_id, c.chapter_number, c.volume,
 	c.title AS chapter_title, c.language, c.scanlator,
 	c.source_id, m.source_manga_id, m.title AS manga_title,
 	m.description AS manga_description, m.authors AS manga_authors,

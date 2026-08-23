@@ -141,7 +141,7 @@ func (q *Queue) EnqueueManga(ctx context.Context, mangaID string, selection Chap
 		Artists:        jsonString(details.Artists),
 		Genres:         jsonString(details.Genres),
 		Status:         details.Status,
-		CoverURL:       details.CoverURL,
+		CoverURL:       engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth),
 		DownloadFormat: format,
 	})
 	if err != nil {
@@ -155,6 +155,7 @@ func (q *Queue) EnqueueManga(ctx context.Context, mangaID string, selection Chap
 			SourceID:        source.SourceID,
 			SourceChapterID: item.ID,
 			ChapterNumber:   item.Number,
+			Volume:          item.Volume,
 			Title:           stringPointer(item.Title),
 			Language:        stringPointer(item.Language),
 			UploadedAt:      item.UploadedAt,
@@ -339,6 +340,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 			Title:       valueOr(item.ChapterTitle, chapterName(item)),
 			Series:      item.MangaTitle,
 			Number:      formatChapterNumber(item.ChapterNumber),
+			Volume:      volumeOrZero(item.Volume),
 			Summary:     valueOr(item.MangaDescription, ""),
 			Writers:     decodeStrings(item.MangaAuthors),
 			Pencillers:  decodeStrings(item.MangaArtists),
@@ -528,6 +530,13 @@ func formatChapterNumber(number *float64) string {
 		return ""
 	}
 	return strconv.FormatFloat(*number, 'f', -1, 64)
+}
+
+func volumeOrZero(volume *int64) int {
+	if volume == nil {
+		return 0
+	}
+	return int(*volume)
 }
 
 func jsonString(values []string) *string {

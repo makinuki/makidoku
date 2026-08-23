@@ -171,7 +171,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		manga, upsertErr := s.repo.UpsertManga(db.Manga{SourceID: chi.URLParam(r, "sourceID"), SourceMangaID: item.ID, Title: item.Title, CoverURL: item.CoverURL, Status: "unknown"})
+		manga, upsertErr := s.repo.UpsertManga(db.Manga{SourceID: chi.URLParam(r, "sourceID"), SourceMangaID: item.ID, Title: item.Title, CoverURL: engine.SelectCover(item.CoverURL, item.Covers, engine.PreferredCoverWidth), Status: "unknown"})
 		if upsertErr != nil {
 			writeLocalError(w, http.StatusConflict, upsertErr)
 			return

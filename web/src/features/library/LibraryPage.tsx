@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { api } from "../../api";
 import type { Category, LibraryManga } from "../../types";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  PageHeader,
-} from "../../components/States";
+import { CoverImg } from "../../components/CoverImg";
+import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 
 export function LibraryPage() {
   const [items, setItems] = useState<LibraryManga[]>([]);
@@ -36,9 +32,7 @@ export function LibraryPage() {
   const visible = useMemo(
     () =>
       [...items].sort((a, b) =>
-        sort === "title"
-          ? a.title.localeCompare(b.title)
-          : b.updatedAt - a.updatedAt,
+        sort === "title" ? a.title.localeCompare(b.title) : b.updatedAt - a.updatedAt,
       ),
     [items, sort],
   );
@@ -110,28 +104,15 @@ export function LibraryPage() {
 function LibraryCard({ item }: { item: LibraryManga }) {
   const progress =
     item.progress && item.progress.totalPages
-      ? Math.round(
-          (item.progress.lastReadPage / item.progress.totalPages) * 100,
-        )
+      ? Math.round((item.progress.lastReadPage / item.progress.totalPages) * 100)
       : 0;
   return (
-    <Link
-      to={`/manga/${encodeURIComponent(item.id)}`}
-      className="group min-w-0"
-    >
+    <Link to={`/manga/${encodeURIComponent(item.id)}`} className="group min-w-0">
       <div className="aspect-3/4 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-        {item.coverUrl ? (
-          <img
-            src={item.coverUrl}
-            alt=""
-            className="size-full object-cover transition duration-200 group-hover:scale-105"
-            loading="lazy"
-          />
-        ) : (
-          <div className="grid size-full place-items-center text-zinc-600">
-            <BookOpen size={30} />
-          </div>
-        )}
+        <CoverImg
+          src={item.coverUrl}
+          className="size-full object-cover transition duration-200 group-hover:scale-105"
+        />
       </div>
       <h2 className="mt-2 truncate text-sm font-semibold group-hover:text-amber-300">
         {item.title}

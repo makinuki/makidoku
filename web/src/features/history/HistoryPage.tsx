@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import { api } from "../../api";
 import type { Chapter, LibraryManga, Progress } from "../../types";
+import { CoverImg } from "../../components/CoverImg";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 
 export function HistoryPage() {
@@ -33,9 +34,7 @@ export function HistoryPage() {
               className="flex items-center gap-4 p-4 hover:bg-zinc-900"
             >
               <div className="size-14 overflow-hidden rounded-lg bg-zinc-800">
-                {item.manga.coverUrl && (
-                  <img src={item.manga.coverUrl} alt="" className="size-full object-cover" />
-                )}
+                <CoverImg src={item.manga.coverUrl} className="size-full object-cover" />
               </div>
               <span className="min-w-0 flex-1">
                 <b className="block truncate">{item.manga.title}</b>

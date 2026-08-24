@@ -185,6 +185,47 @@ func TestSyncWorkerRunStopsCleanlyOnCancellation(t *testing.T) {
 	}
 }
 
+// Bindings on providers without scrobble support must not create sync jobs:
+// every reading session would otherwise queue a guaranteed failure.
+func TestProgressSkipsNonScrobbleTrackers(t *testing.T) {
+	repo := trackerRepo(t)
+	now := time.Now().Unix()
+	_, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('sk','S','1',1,'en','https://x','x',?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "sk", SourceMangaID: "m", Title: "M", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapterNumber := 2.0
+	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: "c", ChapterNumber: &chapterNumber})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kitsu, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "kitsu", RemoteID: "9", RemoteTitle: "M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anilist, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "8", RemoteTitle: "M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := &SyncWorker{Repo: repo, Registry: NewRegistry(repo)}
+	if err := w.EnqueueForProgress(manga.ID, chapter.ID, true, 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := repo.ListTrackerSyncJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].BindingID != anilist.ID {
+		t.Fatalf("jobs = %+v, want exactly the anilist binding %d", jobs, anilist.ID)
+	}
+	_ = kitsu
+}
+
 // A storage failure while claiming work must not end the sync loop: the
 // daemon keeps running and polling until it is cancelled.
 func TestSyncWorkerSurvivesClaimFailures(t *testing.T) {

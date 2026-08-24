@@ -134,6 +134,11 @@ func (w *SyncWorker) EnqueueForProgress(mangaID, chapterID string, completed boo
 		return err
 	}
 	for _, binding := range bindings {
+		// Providers without scrobble support would fail every job; skip them
+		// instead of queueing guaranteed failures.
+		if provider, ok := w.Registry.Get(binding.TrackerType); ok && !provider.Capabilities().Scrobble {
+			continue
+		}
 		if _, err := w.Repo.EnqueueTrackerSync(mangaID, binding.ID, *chapter.ChapterNumber); err != nil {
 			return err
 		}

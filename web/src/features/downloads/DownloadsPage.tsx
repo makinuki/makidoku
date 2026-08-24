@@ -61,7 +61,7 @@ export function DownloadsPage() {
       ) : (
         <EmptyState
           title="Download queue is empty"
-          text="Select chapters from a title to create an archive."
+          text="Select chapters from a title to start a download."
         />
       )}
     </div>

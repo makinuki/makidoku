@@ -253,7 +253,9 @@ func (e *Engine) Uninstall(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	e.unload(ctx, id)
+	// The cache is keyed by the canonical id, so the raw request reference
+	// must be resolved first.
+	e.unload(ctx, row.ID)
 
 	if _, err := e.db.Exec(`UPDATE sources SET installed=0, wasm_path=NULL WHERE id = ?`, row.ID); err != nil {
 		return fmt.Errorf("remove source %s: %w", id, err)
@@ -407,8 +409,13 @@ func (e *Engine) SubmitClearance(sourceID, cookie, userAgent string) error {
 }
 
 // plugin returns the loaded plugin for sourceID, compiling it on first use.
-// Concurrent callers for the same source share one compilation.
+// Concurrent callers for the same source share one compilation. A source only
+// serves while its installation record exists: a removed source stops
+// answering even when an instance is still cached.
 func (e *Engine) plugin(ctx context.Context, sourceID string) (*loadedPlugin, error) {
+	if _, err := e.row(sourceID); err != nil {
+		return nil, err
+	}
 	for {
 		e.mu.Lock()
 		if p, ok := e.plugins[sourceID]; ok {

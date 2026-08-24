@@ -223,6 +223,9 @@ func (p *loadedPlugin) discard(instance *extism.Plugin) {
 
 // close releases every instance and the compiled module.
 func (p *loadedPlugin) close(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -236,6 +239,9 @@ func (p *loadedPlugin) close(ctx context.Context) error {
 		case instance := <-p.idle:
 			p.discard(instance)
 		default:
+			if p.compiled == nil {
+				return nil
+			}
 			return p.compiled.Close(ctx)
 		}
 	}

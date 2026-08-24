@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
 )
 
@@ -239,6 +240,20 @@ func (s *Server) materializePages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Chapters downloaded before page lists were persisted at completion get
+	// their list synthesized from the artifact instead of the source.
+	if chapter.Downloaded && chapter.DownloadPath != nil && *chapter.DownloadPath != "" {
+		if names, listErr := downloader.ArtifactImageEntries(*chapter.DownloadPath); listErr == nil && len(names) > 0 {
+			rows := make([]db.Page, 0, len(names))
+			for index := range names {
+				rows = append(rows, db.Page{ChapterID: chapter.ID, PageIndex: index})
+			}
+			if pages, upsertErr := s.repo.UpsertPages(chapter.ID, chapter.SourceID, rows); upsertErr == nil && len(pages) > 0 {
+				writeJSON(w, http.StatusOK, pages)
+				return
+			}
+		}
+	}
 	pageItems, err := s.engine.Pages(r.Context(), chapter.SourceID, chapter.SourceChapterID)
 	if err != nil {
 		writeError(w, err)
@@ -271,6 +286,20 @@ func (s *Server) pageImage(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
+	chapter, err := s.repo.GetChapter(page.ChapterID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	// Downloaded artifacts hold the already-processed bytes, so they win over
+	// the caches and the source and keep downloaded chapters readable offline.
+	if chapter.Downloaded && chapter.DownloadPath != nil && *chapter.DownloadPath != "" {
+		if data, readErr := downloader.ReadArtifactPage(*chapter.DownloadPath, page.PageIndex); readErr == nil && len(data) > 0 {
+			writeCoverBytes(w, http.DetectContentType(data), data)
+			return
+		}
+		// The artifact vanished or no longer matches; fall through.
+	}
 	cacheRoot := filepath.Join(s.engine.DataDir(), "image-cache")
 	if cache, err := s.repo.GetPageCache(page.ID); err == nil {
 		if data, readErr := os.ReadFile(cache.BytePath); readErr == nil {
@@ -279,11 +308,6 @@ func (s *Server) pageImage(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(data)
 			return
 		}
-	}
-	chapter, err := s.repo.GetChapter(page.ChapterID)
-	if err != nil {
-		writeLocalError(w, http.StatusNotFound, err)
-		return
 	}
 	var headers map[string]string
 	if page.HeadersJSON != nil && *page.HeadersJSON != "" {

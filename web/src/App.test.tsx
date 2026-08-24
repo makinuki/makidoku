@@ -944,4 +944,104 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByText("2 / 2")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Webtoon" })).not.toHaveClass("bg-amber-400");
   });
+
+  // A transient failure while opening the chapter offers a direct retry
+  // instead of forcing the reader back out.
+  it("retries a failed chapter load", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
+    let pageRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false }],
+            trackers: [],
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
+          pageRequests++;
+          if (pageRequests === 1) {
+            return Response.json({ error: { message: "source unreachable" } }, { status: 503 });
+          }
+          return Response.json([
+            { id: pageOne, chapterId, index: 0, isScrambled: false },
+            { id: pageTwo, chapterId, index: 1, isScrambled: false },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("source unreachable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Retry/i }));
+    expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
+    expect(screen.queryByAltText("Page 2")).not.toBeInTheDocument();
+  });
+
+  // A broken page image degrades into an inline retry instead of a permanent
+  // broken image for the session.
+  it("offers a retry when a page image fails to load", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false }],
+            trackers: [],
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
+          return Response.json([
+            { id: pageOne, chapterId, index: 0, isScrambled: false },
+            { id: pageTwo, chapterId, index: 1, isScrambled: false },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const image = await screen.findByAltText("Page 1");
+    fireEvent.error(image);
+    fireEvent.click(screen.getByRole("button", { name: "Retry page" }));
+    expect(await screen.findByAltText("Page 1")).toHaveAttribute(
+      "src",
+      `/api/pages/${pageOne}/image?retry=1`,
+    );
+  });
 });

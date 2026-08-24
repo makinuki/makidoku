@@ -30,9 +30,12 @@ export function ReaderPage() {
   const [index, setIndex] = useState(0);
   const [menu, setMenu] = useState(true);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!mangaId || !chapterId) return;
     let active = true;
+    setError("");
+    setPages([]);
     (async () => {
       try {
         const data = await api.manga(mangaId);
@@ -54,7 +57,7 @@ export function ReaderPage() {
     return () => {
       active = false;
     };
-  }, [mangaId, chapterId]);
+  }, [mangaId, chapterId, attempt]);
   const saver = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!pages.length || !aggregate) return;
@@ -112,12 +115,20 @@ export function ReaderPage() {
       <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
         <div className="max-w-lg">
           <ErrorState message={error} />
-          <button
-            onClick={() => navigate(-1)}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
-          >
-            <ArrowLeft size={15} /> Back
-          </button>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => navigate(-1)}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+            >
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button
+              onClick={() => setAttempt((value) => value + 1)}
+              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -230,12 +241,7 @@ function Paged({
   return (
     <div className="relative flex min-h-0 flex-1 items-center justify-center gap-2 overflow-hidden bg-black p-2 sm:p-6">
       {pages.slice(index, index + count).map((page, offset) => (
-        <img
-          key={page.index}
-          src={api.readerImage(page)}
-          alt={`Page ${index + offset + 1}`}
-          className="max-h-full max-w-[calc(50%-0.5rem)] object-contain"
-        />
+        <PageImage key={page.index} page={page} alt={`Page ${index + offset + 1}`} />
       ))}
       <button
         aria-label="Previous page"
@@ -314,15 +320,40 @@ function Webtoon({
             className="absolute left-0 w-full px-2 pb-2"
             style={{ transform: `translateY(${item.start}px)` }}
           >
-            <img
-              src={api.readerImage(pages[item.index])}
-              alt={`Page ${item.index + 1}`}
-              className="w-full rounded-sm"
-            />
+            <PageImage page={pages[item.index]} alt={`Page ${item.index + 1}`} />
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+// PageImage degrades a failed delivery into an inline retry. The retry
+// re-requests the image with a cache-busting parameter so an intermediary
+// cache cannot serve the failed response again.
+function PageImage({ page, alt }: { page: Page; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  if (failed)
+    return (
+      <button
+        onClick={() => {
+          setFailed(false);
+          setAttempt((value) => value + 1);
+        }}
+        className="grid h-64 w-full place-items-center rounded-sm border border-zinc-800 bg-zinc-900 text-sm text-zinc-300"
+      >
+        Retry page
+      </button>
+    );
+  return (
+    <img
+      src={`/api/pages/${encodeURIComponent(page.id)}/image${attempt ? `?retry=${attempt}` : ""}`}
+      alt={alt}
+      onError={() => setFailed(true)}
+      className="w-full rounded-sm"
+      loading="lazy"
+    />
   );
 }
 function chapterLabel(data: Aggregate, chapterID: string) {

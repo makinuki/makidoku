@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 
 	"github.com/makinuki/makidoku/internal/db"
@@ -111,13 +112,21 @@ func (a *AniList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Cr
 	}
 	return status, nil
 }
+// scrobbleProgress converts a fractional chapter number into AniList's
+// integer progress. It floors the value so a partially read next chapter is
+// never reported as finished, and keeps the reported number deterministic
+// across retries for the same job.
+func scrobbleProgress(ch float64) int {
+	return int(math.Floor(ch))
+}
+
 func (a *AniList) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
 	const q = `mutation($mediaId:Int!,$progress:Int!){SaveMediaListEntry(mediaId:$mediaId,progress:$progress){id progress}}`
 	var id int
 	if _, err := fmt.Sscan(b.RemoteID, &id); err != nil {
 		return err
 	}
-	progress := int(ch)
+	progress := scrobbleProgress(ch)
 	var out struct{ Data json.RawMessage }
 	return a.query(ctx, q, map[string]any{"mediaId": id, "progress": progress}, &out, true)
 }

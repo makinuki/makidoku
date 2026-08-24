@@ -209,6 +209,24 @@ func TestCredentialFailureClassification(t *testing.T) {
 	}
 }
 
+// AniList progress floors fractional chapter numbers so a partially read
+// next chapter is never reported as finished.
+func TestScrobbleProgressFloorsFractionalChapters(t *testing.T) {
+	cases := []struct {
+		chapter float64
+		want    int
+	}{
+		{chapter: 5, want: 5},
+		{chapter: 5.5, want: 5},
+		{chapter: 0.5, want: 0},
+	}
+	for _, tc := range cases {
+		if got := scrobbleProgress(tc.chapter); got != tc.want {
+			t.Fatalf("scrobbleProgress(%v) = %d, want %d", tc.chapter, got, tc.want)
+		}
+	}
+}
+
 func TestRetryableTrackerErrorClassifiesTransientFailures(t *testing.T) {
 	cases := []struct {
 		name string

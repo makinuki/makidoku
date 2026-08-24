@@ -50,11 +50,14 @@ export function ReaderPage() {
         if (!active) return;
         setAggregate(data);
         setPages(loaded);
-        const saved =
+        const saved = resumeIndex(
           data.progress?.lastReadChapterId === chapterId
-            ? (data.progress?.lastReadPage ?? 1) - 1
-            : 0;
-        setIndex(Math.max(0, Math.min(saved, loaded.length - 1)));
+            ? (data.progress?.lastReadPage ?? null)
+            : null,
+          loaded.length,
+          mode,
+        );
+        setIndex(saved);
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : "Unable to open chapter");
       } finally {
@@ -398,4 +401,13 @@ function PageImage({ page, alt }: { page: Page; alt: string }) {
 function chapterLabel(data: Aggregate, chapterID: string) {
   const item = data.chapters.find((chapter) => chapter.id === chapterID);
   return item?.chapterNumber == null ? item?.title || "Special" : `Chapter ${item.chapterNumber}`;
+}
+
+// resumeIndex converts a stored 1-based last-read page into the 0-based page
+// index a reader session opens on. A double-page spread opens on the pair
+// containing that page, and a missing or out-of-range value clamps to the
+// available pages.
+export function resumeIndex(lastReadPage: number | null, pageCount: number, mode: Mode): number {
+  const zeroBased = Math.min(Math.max(0, (lastReadPage ?? 1) - 1), Math.max(0, pageCount - 1));
+  return mode === "double" ? zeroBased - (zeroBased % 2) : zeroBased;
 }

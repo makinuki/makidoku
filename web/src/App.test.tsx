@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import App from "./App";
+import { resumeIndex } from "./features/reader/ReaderPage";
 
 describe("MakiDoku app shell", () => {
   afterEach(() => {
@@ -1097,5 +1098,16 @@ describe("MakiDoku app shell", () => {
     );
     expect(await screen.findByText("This chapter has no pages")).toBeInTheDocument();
     expect(screen.queryByText("Loading reader")).not.toBeInTheDocument();
+  });
+});
+
+describe("reader resume position", () => {
+  it("aligns the restored page with the double-page spread", () => {
+    // Page 4 was the last read page; a double spread must open on its pair.
+    expect(resumeIndex(4, 10, "double")).toBe(2);
+    expect(resumeIndex(null, 10, "double")).toBe(0);
+    expect(resumeIndex(3, 10, "single")).toBe(2);
+    expect(resumeIndex(99, 10, "single")).toBe(9);
+    expect(resumeIndex(99, 10, "double")).toBe(8);
   });
 });

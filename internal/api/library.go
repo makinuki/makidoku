@@ -25,6 +25,7 @@ func (s *Server) mountLibrary(r chi.Router) {
 	r.Get("/manga/{mangaID}/cover", s.mangaCover)
 	r.Post("/manga/{mangaID}/library", s.addMangaByID)
 	r.Delete("/manga/{mangaID}/library", s.removeMangaByID)
+	r.Post("/manga/{mangaID}/refresh", s.refreshManga)
 	r.Get("/manga/{mangaID}/chapters", s.getMangaChapters)
 	r.Post("/manga/{mangaID}/categories/{categoryID}", s.addMangaCategoryByID)
 	r.Delete("/manga/{mangaID}/categories/{categoryID}", s.removeMangaCategoryByID)
@@ -35,40 +36,77 @@ func (s *Server) mountLibrary(r chi.Router) {
 	r.Delete("/categories/{categoryID}", s.deleteCategory)
 }
 
+// getManga is local-first: stored details serve the read directly so the
+// library works without connectivity. Only records that never completed a
+// details fetch resolve the plugin once to materialize chapters.
 func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
-		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
+	mangaID := chi.URLParam(r, "mangaID")
+	aggregate, err := s.repo.GetMangaAggregate(mangaID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
+	if aggregate.Manga.DetailsFetchedAt == nil {
+		source, err := s.repo.GetMangaSource(mangaID)
+		if err != nil {
+			writeLocalError(w, http.StatusNotFound, err)
+			return
+		}
+		if s.engine == nil {
+			writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
+			return
+		}
+		if aggregate, err = s.fetchAndStoreDetails(r, source); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
+	writeJSON(w, http.StatusOK, aggregate)
+}
+
+// refreshManga re-pulls details for a stored title on demand. A failure keeps
+// the previously stored aggregate intact for the next cache read.
+func (s *Server) refreshManga(w http.ResponseWriter, r *http.Request) {
 	mangaID := chi.URLParam(r, "mangaID")
 	source, err := s.repo.GetMangaSource(mangaID)
 	if err != nil {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
-	details, err := s.engine.Details(r.Context(), source.SourceID, source.SourceMangaID)
+	if s.engine == nil {
+		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
+		return
+	}
+	aggregate, err := s.fetchAndStoreDetails(r, source)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	updated, err := s.repo.UpsertManga(db.Manga{ID: mangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
+	writeJSON(w, http.StatusOK, aggregate)
+}
+
+// fetchAndStoreDetails pulls full details through the plugin, persists manga
+// and chapters, and stamps the freshness marker.
+func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (db.MangaAggregate, error) {
+	details, err := s.engine.Details(r.Context(), source.SourceID, source.SourceMangaID)
 	if err != nil {
-		writeLocalError(w, http.StatusConflict, err)
-		return
+		return db.MangaAggregate{}, err
+	}
+	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	if err != nil {
+		return db.MangaAggregate{}, err
 	}
 	for _, item := range details.Chapters {
 		if _, err := s.repo.UpsertChapter(db.Chapter{MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
-			writeLocalError(w, http.StatusConflict, err)
-			return
+			return db.MangaAggregate{}, err
 		}
 	}
-	aggregate, err := s.repo.GetMangaAggregate(updated.ID)
-	if err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
+	if err := s.repo.SetMangaDetailsFetched(updated.ID, time.Now().Unix()); err != nil {
+		return db.MangaAggregate{}, err
 	}
-	aggregate.SourceName = s.sourceName(source.SourceID)
-	writeJSON(w, http.StatusOK, aggregate)
+	return s.repo.GetMangaAggregate(updated.ID)
 }
 
 // mangaCover streams a canonical manga cover. Source URLs and request details

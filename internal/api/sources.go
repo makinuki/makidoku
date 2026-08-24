@@ -223,12 +223,21 @@ func (s *Server) pages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pages)
 }
 
+// materializePages is local-first: a persisted page list serves the read so
+// opened chapters stay readable offline. Pass refresh=1 to force the plugin
+// round-trip, for example after a source renumbers its pages.
 func (s *Server) materializePages(w http.ResponseWriter, r *http.Request) {
 	chapterID := chi.URLParam(r, "chapterID")
 	chapter, err := s.repo.GetChapter(chapterID)
 	if err != nil {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
+	}
+	if r.URL.Query().Get("refresh") != "1" {
+		if pages, listErr := s.repo.ListPages(chapter.ID); listErr == nil && len(pages) > 0 {
+			writeJSON(w, http.StatusOK, pages)
+			return
+		}
 	}
 	pageItems, err := s.engine.Pages(r.Context(), chapter.SourceID, chapter.SourceChapterID)
 	if err != nil {

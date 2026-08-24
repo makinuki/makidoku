@@ -9,7 +9,7 @@ import type {
   Source,
   Binding,
   CatalogEntry,
-  MigrationCandidate,
+  MigrationCandidates,
   MigrationResponse,
   TrackerInfo,
   TrackerSearchResult,
@@ -139,7 +139,7 @@ export const api = {
     request<TrackerStatus[]>(`/api/manga/${idPath(mangaId)}/trackers/status`),
   syncJobs: () => request<TrackerSyncJob[]>("/api/tracker-sync"),
   migrationCandidates: (mangaId: string, query?: string) =>
-    request<MigrationCandidate[]>(
+    request<MigrationCandidates>(
       `/api/manga/${idPath(mangaId)}/migration/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`,
     ),
   applyMigration: (mangaId: string, replacementSourceId: string, replacementMangaId: string) =>

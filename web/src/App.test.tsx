@@ -47,7 +47,9 @@ describe("MakiDoku app shell", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) return Response.json([]);
+        if (path.includes("/migration/candidates")) {
+          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
+        }
         if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
@@ -91,7 +93,9 @@ describe("MakiDoku app shell", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) return Response.json([]);
+        if (path.includes("/migration/candidates")) {
+          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
+        }
         if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
@@ -188,7 +192,9 @@ describe("MakiDoku app shell", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) return Response.json([]);
+        if (path.includes("/migration/candidates")) {
+          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
+        }
         if (path.includes(`/api/manga/${mangaId}/refresh`)) {
           if (init?.method === "POST") {
             return Response.json({
@@ -566,29 +572,33 @@ describe("MakiDoku app shell", () => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
         if (path.includes("/migration/candidates")) {
-          return Response.json([
-            {
-              source: {
-                id: "asurascans",
-                name: "Asura Scans",
-                version: "1",
-                abiVersion: 1,
-                lang: "en",
-                baseUrl: "https://asurascans.test",
-                iconUrl: "",
-                nsfw: false,
-                installedAt: 1,
-                loaded: true,
-                hasClearance: false,
+          return Response.json({
+            candidates: [
+              {
+                source: {
+                  id: "asurascans",
+                  name: "Asura Scans",
+                  version: "1",
+                  abiVersion: 1,
+                  lang: "en",
+                  baseUrl: "https://asurascans.test",
+                  iconUrl: "",
+                  nsfw: false,
+                  installedAt: 1,
+                  loaded: true,
+                  hasClearance: false,
+                },
+                result: {
+                  id: "discovered-1",
+                  sourceId: "asurascans",
+                  title: "Yosuga no Sora",
+                  coverUrl: "https://example.test/cover.jpg",
+                },
               },
-              result: {
-                id: "discovered-1",
-                sourceId: "asurascans",
-                title: "Yosuga no Sora",
-                coverUrl: "https://example.test/cover.jpg",
-              },
-            },
-          ]);
+            ],
+            failedSources: 0,
+            searched: 1,
+          });
         }
         if (path.includes("/migration/apply") && init?.method === "POST") {
           return await applyGate;

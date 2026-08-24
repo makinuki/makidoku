@@ -653,13 +653,17 @@ function MigrationModal({
   onApplied: (mangaId: string) => void;
 }) {
   const [items, setItems] = useState<MigrationCandidate[]>([]);
+  const [failedSources, setFailedSources] = useState(0);
   const [selected, setSelected] = useState<MigrationCandidate>();
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     void api
       .migrationCandidates(manga.id)
-      .then(setItems)
+      .then((payload) => {
+        setItems(payload.candidates);
+        setFailedSources(payload.failedSources);
+      })
       .catch((e) => setError(e.message));
   }, [manga.id]);
   return (
@@ -669,6 +673,11 @@ function MigrationModal({
         are preserved.
       </p>
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
+      {failedSources > 0 && !error && (
+        <p className="mt-3 text-sm text-red-300">
+          {failedSources} plugin{failedSources === 1 ? "" : "s"} failed to respond.
+        </p>
+      )}
       <div className="mt-4 grid gap-2">
         {items.map((item) => (
           <button

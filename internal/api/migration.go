@@ -20,6 +20,15 @@ type migrationCandidate struct {
 	Result engine.MangaItem       `json:"result"`
 }
 
+// migrationCandidatesResponse separates the usable candidates from the
+// plugins that could not be searched, so a partial failure is visible
+// instead of looking like an empty catalog.
+type migrationCandidatesResponse struct {
+	Candidates    []migrationCandidate `json:"candidates"`
+	FailedSources int                  `json:"failedSources"`
+	Searched      int                  `json:"searched"`
+}
+
 type migrationResponse struct {
 	Manga      db.MangaAggregate `json:"manga"`
 	Source     string            `json:"source"`
@@ -53,12 +62,15 @@ func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
 		query = manga.Title
 	}
 	results := make([]migrationCandidate, 0)
+	failed := 0
 	for _, source := range sources {
 		if source.ID == manga.SourceID {
 			continue
 		}
 		page, searchErr := s.engine.Search(r.Context(), source.ID, engine.SearchQuery{Query: query, Page: 1})
 		if searchErr != nil {
+			log.Printf("migration: candidate search for %s failed: %v", source.Name, searchErr)
+			failed++
 			continue
 		}
 		for _, result := range page.Items {
@@ -70,7 +82,11 @@ func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
 			results = append(results, migrationCandidate{Source: source, Result: result})
 		}
 	}
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(w, http.StatusOK, migrationCandidatesResponse{
+		Candidates:    results,
+		FailedSources: failed,
+		Searched:      len(results) + failed,
+	})
 }
 
 func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {

@@ -122,8 +122,11 @@ func (s *CredentialStore) Load(trackerType string) (Credential, error) {
 	}
 	if len(r.Metadata) > 0 {
 		raw, err := openValue(key, r.Metadata)
-		if err == nil {
-			_ = json.Unmarshal(raw, &cred.Metadata)
+		if err != nil {
+			return Credential{}, fmt.Errorf("decrypt credential metadata: %w", err)
+		}
+		if err := json.Unmarshal(raw, &cred.Metadata); err != nil {
+			return Credential{}, fmt.Errorf("decode credential metadata: %w", err)
 		}
 	}
 	if r.ExpiresAt != nil {

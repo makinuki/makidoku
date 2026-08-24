@@ -737,6 +737,10 @@ func (b *eventBroker) publish(event Event) {
 		select {
 		case channel <- event:
 		default:
+			// A slow subscriber's buffer is full; the event is dropped so the
+			// download pipeline never blocks on a stalled reader. The
+			// subscriber reconciles through its periodic snapshot refetch.
+			log.Printf("events: subscriber buffer full, dropping %s event", event.Type)
 		}
 	}
 }

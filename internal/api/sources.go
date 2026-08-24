@@ -2,7 +2,9 @@ package api
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -247,13 +249,19 @@ func (s *Server) pageImage(w http.ResponseWriter, r *http.Request) {
 		// The artifact vanished or no longer matches; fall through.
 	}
 	cacheRoot := filepath.Join(s.engine.DataDir(), "image-cache")
-	if cache, err := s.repo.GetPageCache(page.ID); err == nil {
+	cache, cacheErr := s.repo.GetPageCache(page.ID)
+	switch {
+	case cacheErr == nil:
 		if data, readErr := os.ReadFile(cache.BytePath); readErr == nil {
 			w.Header().Set("Content-Type", cache.ContentType)
 			w.Header().Set("Cache-Control", "private, max-age=86400")
 			_, _ = w.Write(data)
 			return
 		}
+		// The cached bytes vanished; fall through to the source.
+	case !errors.Is(cacheErr, sql.ErrNoRows):
+		writeLocalError(w, http.StatusInternalServerError, cacheErr)
+		return
 	}
 	var headers map[string]string
 	if page.HeadersJSON != nil && *page.HeadersJSON != "" {

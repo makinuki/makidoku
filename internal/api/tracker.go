@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -260,7 +261,11 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request, complete bool)
 		return
 	}
 	if s.syncer != nil {
-		_ = s.syncer.EnqueueForProgress(body.MangaID, body.LastReadChapterID, body.IsCompleted, body.LastReadPage, body.TotalPages)
+		// Tracker enqueue failures must not fail the progress write, but they
+		// stay visible in the logs instead of vanishing.
+		if err := s.syncer.EnqueueForProgress(body.MangaID, body.LastReadChapterID, body.IsCompleted, body.LastReadPage, body.TotalPages); err != nil {
+			log.Printf("tracker: enqueueing sync jobs failed: %v", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, p)
 }

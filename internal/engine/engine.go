@@ -140,10 +140,12 @@ func (e *Engine) Catalog(ctx context.Context, refresh bool) ([]CatalogEntry, err
 		return nil, err
 	}
 	installed := map[string]string{}
-	if rows, err := e.rows(); err == nil {
-		for _, row := range rows {
-			installed[row.PluginKey] = row.Version
-		}
+	rows, err := e.rows()
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		installed[row.PluginKey] = row.Version
 	}
 
 	out := make([]CatalogEntry, 0, len(index.Sources))

@@ -469,6 +469,31 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 	return r.GetManga(manga.ID)
 }
 
+// UpsertMangaStub records a bare listing entry for a search result without
+// overwriting any stored detail of an existing entry. Listing flows must use
+// it instead of UpsertManga so a search pass cannot degrade previously
+// fetched metadata.
+func (r *Repository) UpsertMangaStub(manga Manga) (Manga, error) {
+	manga.SourceID = strings.TrimSpace(manga.SourceID)
+	manga.SourceMangaID = strings.TrimSpace(manga.SourceMangaID)
+	if manga.SourceID == "" || manga.SourceMangaID == "" {
+		return Manga{}, errors.New("source id and source manga id are required")
+	}
+	sourceID, err := r.resolveSource(manga.SourceID)
+	if err != nil {
+		return Manga{}, fmt.Errorf("resolve source %s: %w", manga.SourceID, err)
+	}
+	var existingID string
+	err = r.db.Get(&existingID, `SELECT manga_id FROM manga_sources WHERE source_id=? AND source_manga_id=?`, sourceID, manga.SourceMangaID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r.UpsertManga(manga)
+	}
+	if err != nil {
+		return Manga{}, err
+	}
+	return r.GetManga(existingID)
+}
+
 // SetMangaCover records where the processed cover bytes of a manga live on
 // disk. The byte path is a backend-owned detail.
 func (r *Repository) SetMangaCover(id, path, contentType string, fetchedAt int64) error {

@@ -351,3 +351,68 @@ func TestRebindingTrackerClearsOldSyncHistory(t *testing.T) {
 		t.Fatalf("queued status = %q", queued.Status)
 	}
 }
+
+func TestUpsertMangaStubCreatesBareEntry(t *testing.T) {
+	repo := testRepository(t)
+	stub, err := repo.UpsertMangaStub(Manga{
+		SourceID: "mangadex", SourceMangaID: "remote-1",
+		Title: "Search Hit", CoverURL: "cover", Status: "unknown",
+	})
+	if err != nil {
+		t.Fatalf("stub upsert: %v", err)
+	}
+	stored, err := repo.GetManga(stub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "Search Hit" || stored.Status != "unknown" || stored.CoverURL != "cover" {
+		t.Fatalf("bare entry = %+v", stored)
+	}
+}
+
+func TestUpsertMangaStubKeepsStoredDetails(t *testing.T) {
+	repo := testRepository(t)
+	description := "A long synopsis"
+	authors := "[\"Author\"]"
+	genres := "[\"Drama\"]"
+	full, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "remote-1",
+		Title: "Stored Title", Status: "ongoing", CoverURL: "stored-cover",
+		Description: &description, Authors: &authors, Genres: &genres,
+		InLibrary: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stub, err := repo.UpsertMangaStub(Manga{
+		SourceID: "mangadex", SourceMangaID: "remote-1",
+		Title: "Search Title", CoverURL: "search-cover", Status: "unknown",
+	})
+	if err != nil {
+		t.Fatalf("stub upsert: %v", err)
+	}
+	if stub.ID != full.ID {
+		t.Fatalf("stub id = %q, want %q", stub.ID, full.ID)
+	}
+	stored, err := repo.GetManga(full.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Title != "Stored Title" || stored.Status != "ongoing" || stored.CoverURL != "stored-cover" ||
+		stored.Description == nil || *stored.Description != description ||
+		stored.Authors == nil || *stored.Authors != authors ||
+		stored.Genres == nil || *stored.Genres != genres || !stored.InLibrary {
+		t.Fatalf("listing upsert degraded stored details: %+v", stored)
+	}
+}
+
+func TestUpsertMangaStubRejectsMissingSourceReference(t *testing.T) {
+	repo := testRepository(t)
+	if _, err := repo.UpsertMangaStub(Manga{SourceID: "nope", SourceMangaID: "remote-1", Title: "X"}); err == nil {
+		t.Fatal("accepted an unknown source reference")
+	}
+	if _, err := repo.UpsertMangaStub(Manga{SourceID: "mangadex", SourceMangaID: "  ", Title: "X"}); err == nil {
+		t.Fatal("accepted an empty source manga id")
+	}
+}

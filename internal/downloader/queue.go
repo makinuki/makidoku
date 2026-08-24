@@ -353,6 +353,28 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 	if err != nil {
 		return q.fail(item, err)
 	}
+	// The fetched page list is persisted with the artifact so the reader can
+	// open the chapter without contacting the source again.
+	pageRows := make([]db.Page, 0, len(pages))
+	for _, page := range pages {
+		headersJSON := ""
+		if len(page.Headers) > 0 {
+			if raw, err := json.Marshal(page.Headers); err == nil {
+				headersJSON = string(raw)
+			}
+		}
+		headersCopy := headersJSON
+		pageRows = append(pageRows, db.Page{
+			ChapterID:   item.ChapterID,
+			PageIndex:   page.Index,
+			RemoteURL:   page.URL,
+			HeadersJSON: &headersCopy,
+			IsScrambled: page.IsScrambled,
+		})
+	}
+	if _, err := q.repo.UpsertPages(item.ChapterID, item.SourceID, pageRows); err != nil {
+		return q.fail(item, err)
+	}
 	if err := q.repo.MarkChapterDownloaded(item.ChapterID, archivePath); err != nil {
 		return q.fail(item, err)
 	}

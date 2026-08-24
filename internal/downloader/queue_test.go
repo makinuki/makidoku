@@ -135,6 +135,41 @@ func TestQueueDownloadsChapterAndMarksArtifact(t *testing.T) {
 	}
 }
 
+// A completed download persists the page list it fetched, so the reader can
+// open the chapter from the database without another source round-trip.
+func TestQueuePersistsPageListOnCompletion(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{Range: "1-1"}, FormatCBZ)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	stored, err := repo.GetQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := repo.ListPages(stored.ChapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("persisted pages = %d, want 2", len(pages))
+	}
+	if pages[0].PageIndex != 0 || pages[0].RemoteURL != "https://uploads.example/1.jpg" || pages[0].IsScrambled {
+		t.Fatalf("page 0 = %+v", pages[0])
+	}
+	if pages[1].PageIndex != 1 || pages[1].RemoteURL != "https://uploads.example/2.jpg" || !pages[1].IsScrambled {
+		t.Fatalf("page 1 = %+v", pages[1])
+	}
+}
+
 func TestQueueStopsBetweenPagesWhenPaused(t *testing.T) {
 	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()

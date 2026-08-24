@@ -1111,3 +1111,164 @@ describe("reader resume position", () => {
     expect(resumeIndex(99, 10, "double")).toBe(8);
   });
 });
+
+describe("tracker binding feedback", () => {
+  const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+  it("requires confirmation to unbind and surfaces failures", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let unbindCalls = 0;
+    let mangaGets = 0;
+    const aggregate = () => ({
+      manga: {
+        id: mangaId,
+        sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+        title: "Yosuga no Sora",
+        status: "completed",
+        coverUrl: "/api/manga/" + mangaId + "/cover",
+        inLibrary: true,
+        downloadFormat: "cbz",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      categories: [],
+      chapters: [],
+      trackers: [
+        {
+          id: 1,
+          mangaId,
+          trackerType: "AniList",
+          remoteId: "42",
+          remoteTitle: "Yosuga no Sora",
+          lastSyncedChapter: 0,
+        },
+      ],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers")
+          return Response.json([
+            {
+              name: "AniList",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: true,
+            },
+          ]);
+        if (path === `/api/manga/${mangaId}`) {
+          mangaGets++;
+          return Response.json(aggregate());
+        }
+        if (path === `/api/manga/${mangaId}/trackers/AniList`) {
+          unbindCalls++;
+          if (unbindCalls === 1) {
+            return Response.json(
+              { error: { message: "tracker session expired" } },
+              { status: 500 },
+            );
+          }
+          return new Response(null, { status: 204 });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    await user.click(await screen.findByRole("button", { name: /Unbind/ }));
+    // The destructive step asks first.
+    expect(unbindCalls).toBe(0);
+    await user.click(screen.getByRole("button", { name: "Confirm unbind" }));
+    expect(await screen.findByText("tracker session expired")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm unbind" }));
+    await waitFor(() => expect(unbindCalls).toBe(2));
+    expect(mangaGets).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("tracker session expired")).not.toBeInTheDocument();
+  });
+
+  it("disables bind results while a bind runs and reports failures", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let resolveBind!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers")
+          return Promise.resolve(
+            Response.json([
+              {
+                name: "AniList",
+                capabilities: {
+                  search: true,
+                  status: true,
+                  scrobble: true,
+                  oauth: true,
+                  token: true,
+                },
+                credential: true,
+              },
+            ]),
+          );
+        if (path.includes(`/api/manga/${mangaId}`) && !path.includes("/trackers")) {
+          return Promise.resolve(
+            Response.json({
+              manga: {
+                id: mangaId,
+                sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+                title: "Yosuga no Sora",
+                status: "completed",
+                coverUrl: "/api/manga/" + mangaId + "/cover",
+                inLibrary: true,
+                downloadFormat: "cbz",
+                createdAt: 1,
+                updatedAt: 1,
+              },
+              categories: [],
+              chapters: [],
+              trackers: [],
+            }),
+          );
+        }
+        if (path.startsWith("/api/trackers/AniList/search")) {
+          return Promise.resolve(Response.json([{ remoteId: "42", title: "Yosuga no Sora" }]));
+        }
+        if (path.endsWith("/trackers/AniList/bind")) {
+          return new Promise<Response>((resolve) => {
+            resolveBind = resolve;
+          });
+        }
+        return Promise.resolve(Response.json([]));
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    await user.type(await screen.findByPlaceholderText("Search provider"), "Yosuga");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    const result = await screen.findByRole("button", { name: /Yosuga no Sora 42/ });
+    await user.click(result);
+    expect(screen.getByRole("button", { name: /Binding/ })).toBeDisabled();
+    await act(async () => {
+      resolveBind(Response.json({ error: { message: "no session" } }, { status: 500 }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("no session")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Yosuga no Sora 42/ })).toBeEnabled();
+  });
+});

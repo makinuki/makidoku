@@ -430,6 +430,9 @@ function TrackerModal({
     Array<{ remoteId: string; title: string; status?: string }>
   >([]);
   const [error, setError] = useState("");
+  const [unbinding, setUnbinding] = useState(false);
+  const [confirmUnbind, setConfirmUnbind] = useState(false);
+  const [bindingRemote, setBindingRemote] = useState<string>();
   useEffect(() => {
     void api
       .trackers()
@@ -445,6 +448,38 @@ function TrackerModal({
       setResults(await api.trackerSearch(active, query));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Tracker search failed");
+    }
+  };
+  // Unbinding severs the tracker link and stops syncing, so it asks for
+  // confirmation and reports its outcome inline.
+  const unbind = async () => {
+    setUnbinding(true);
+    setError("");
+    try {
+      await api.unbindTracker(mangaId, active);
+      setConfirmUnbind(false);
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to unbind tracker");
+    } finally {
+      setUnbinding(false);
+    }
+  };
+  const bind = async (item: { remoteId: string; title: string; status?: string }) => {
+    setBindingRemote(item.remoteId);
+    setError("");
+    try {
+      await api.bindTracker(mangaId, active, {
+        remoteId: item.remoteId,
+        remoteTitle: item.title,
+        remoteStatus: item.status,
+      });
+      await onChanged();
+      setResults([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to bind tracker");
+    } finally {
+      setBindingRemote(undefined);
     }
   };
   return (
@@ -487,34 +522,50 @@ function TrackerModal({
         </div>
       )}
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-      {binding && (
+      {binding && !confirmUnbind && (
         <button
-          onClick={async () => {
-            await api.unbindTracker(mangaId, active);
-            await onChanged();
-          }}
+          onClick={() => setConfirmUnbind(true)}
+          disabled={unbinding}
           className="mt-4 inline-flex items-center gap-2 rounded-lg border border-red-900 px-3 py-2 text-sm text-red-300"
         >
           <X size={14} /> Unbind
         </button>
       )}
+      {binding && confirmUnbind && (
+        <div className="mt-4 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
+          <p className="text-sm text-zinc-300">
+            Unbind {active}? Reading progress stops syncing to it.
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              onClick={() => setConfirmUnbind(false)}
+              disabled={unbinding}
+              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void unbind()}
+              disabled={unbinding}
+              className="rounded-lg bg-red-500 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {unbinding ? "Unbinding…" : "Confirm unbind"}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="mt-4 grid gap-2">
         {results.map((item) => (
           <button
             key={item.remoteId}
-            onClick={async () => {
-              await api.bindTracker(mangaId, active, {
-                remoteId: item.remoteId,
-                remoteTitle: item.title,
-                remoteStatus: item.status,
-              });
-              await onChanged();
-              setResults([]);
-            }}
-            className="rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400"
+            onClick={() => void bind(item)}
+            disabled={bindingRemote !== undefined}
+            className="rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400 disabled:opacity-50"
           >
             <b>{item.title}</b>
-            <small className="ml-2 text-zinc-500">{item.remoteId}</small>
+            <small className="ml-2 text-zinc-500">
+              {bindingRemote === item.remoteId ? "Binding…" : item.remoteId}
+            </small>
           </button>
         ))}
       </div>

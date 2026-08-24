@@ -92,7 +92,8 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldID := chi.URLParam(r, "mangaID")
-	if _, err := s.repo.GetManga(oldID); err != nil {
+	currentSource, err := s.repo.GetMangaSource(oldID)
+	if err != nil {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
@@ -108,6 +109,23 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 	}
 	if discoveredSource.SourceID != body.SourceID {
 		writeBadRequest(w, "the replacement manga does not belong to the claimed source")
+		return
+	}
+	// A same-plugin migration would merge duplicate chapter sets while
+	// retiring nothing.
+	if discoveredSource.SourceID == currentSource.SourceID {
+		writeBadRequest(w, "choose a replacement from another plugin")
+		return
+	}
+	// A replacement that is itself in the library would survive the attach as
+	// an empty ghost entry; refuse until it is removed.
+	replacement, err := s.repo.GetManga(body.MangaID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	if replacement.InLibrary {
+		writeBadRequest(w, "the replacement title is already in your library; remove it before migrating")
 		return
 	}
 

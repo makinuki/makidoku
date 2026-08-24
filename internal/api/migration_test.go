@@ -128,6 +128,60 @@ func TestApplyMigrationRejectsSourceMismatch(t *testing.T) {
 	}
 }
 
+// Migrating within the same plugin would merge duplicate chapter sets while
+// deleting nothing, so it is rejected outright.
+func TestApplyMigrationRejectsSameSource(t *testing.T) {
+	repo, router, oldSource, _ := migrationTestRouter(t)
+	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-b", Title: "Demo", Status: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{"sourceId": oldSource, "mangaId": discovered.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/migration/apply", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s, want a bad request for a same-source replacement", rec.Code, rec.Body.String())
+	}
+}
+
+// A replacement that is itself in the library would survive the attach step
+// as an empty ghost entry, so the migration refuses until it is removed.
+func TestApplyMigrationRejectsInLibraryReplacement(t *testing.T) {
+	repo, router, oldSource, newSource := migrationTestRouter(t)
+	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := repo.UpsertManga(db.Manga{SourceID: newSource, SourceMangaID: "remote-b", Title: "Demo", Status: "unknown", InLibrary: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	if _, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceID: oldSource, SourceChapterID: "chapter-a", ChapterNumber: &number}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{"sourceId": newSource, "mangaId": discovered.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/migration/apply", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s, want a bad request for an in-library replacement", rec.Code, rec.Body.String())
+	}
+	chapters, err := repo.ListChapters(manga.ID)
+	if err != nil || len(chapters) != 1 {
+		t.Fatalf("chapters = %+v, err = %v, want the original list untouched", chapters, err)
+	}
+}
+
 // Reading progress carries over when the replacement source has a chapter
 // with the same number.
 func TestRemapProgressMatchesByChapterNumber(t *testing.T) {

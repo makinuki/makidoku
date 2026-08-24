@@ -25,6 +25,8 @@ export function SettingsPage() {
   const [confirmRemoval, setConfirmRemoval] = useState<Source>();
   const [confirmImport, setConfirmImport] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [savingToken, setSavingToken] = useState(false);
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(""), 4000);
@@ -106,6 +108,42 @@ export function SettingsPage() {
       setName("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to create category");
+    }
+  };
+  // Clearance and credential writes report their outcome in the same banner
+  // and status line as the rest of the page; a rejected submission keeps the
+  // entered values so they can be corrected.
+  const submitClearance = async () => {
+    setClearing(true);
+    setError("");
+    try {
+      await api.submitClearance(cookieSource, cookie, userAgent);
+      setCookie("");
+      setUserAgent("");
+      setStatus("Clearance submitted.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to submit clearance");
+    } finally {
+      setClearing(false);
+    }
+  };
+  const saveToken = async () => {
+    if (!tokenType) return;
+    setSavingToken(true);
+    setError("");
+    try {
+      await api.saveTrackerToken(
+        tokenType,
+        token,
+        tokenType === "mangabaka" && pat ? { auth: "pat" } : undefined,
+      );
+      setToken("");
+      setStatus(`${tokenType} credentials saved.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save credentials");
+    } finally {
+      setSavingToken(false);
     }
   };
   return (
@@ -190,6 +228,7 @@ export function SettingsPage() {
             <select
               value={cookieSource}
               onChange={(e) => setCookieSource(e.target.value)}
+              aria-label="Plugin"
               className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
             >
               <option value="">Plugin</option>
@@ -213,16 +252,11 @@ export function SettingsPage() {
             />
           </div>
           <button
-            onClick={async () => {
-              await api.submitClearance(cookieSource, cookie, userAgent);
-              setCookie("");
-              setUserAgent("");
-              setStatus("Clearance submitted.");
-            }}
-            disabled={!cookieSource || !cookie || !userAgent}
+            onClick={() => void submitClearance()}
+            disabled={!cookieSource || !cookie || !userAgent || clearing}
             className="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
           >
-            Submit clearance
+            {clearing ? "Submitting…" : "Submit clearance"}
           </button>
         </div>
         {confirmRemoval && (
@@ -302,20 +336,12 @@ export function SettingsPage() {
               className="min-w-55 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
             />
             <button
-              onClick={async () => {
-                await api.saveTrackerToken(
-                  tokenType,
-                  token,
-                  tokenType === "mangabaka" && pat ? { auth: "pat" } : undefined,
-                );
-                setToken("");
-                setStatus(`${tokenType} credentials saved.`);
-                await refresh();
-              }}
-              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+              onClick={() => void saveToken()}
+              disabled={savingToken || !token}
+              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
             >
               <Check size={14} className="mr-1 inline" />
-              Save
+              {savingToken ? "Saving…" : "Save"}
             </button>
             {tokenType === "mangabaka" && (
               <label className="flex items-center gap-2 text-xs text-zinc-400">

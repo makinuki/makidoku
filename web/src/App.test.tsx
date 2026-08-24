@@ -1272,3 +1272,118 @@ describe("tracker binding feedback", () => {
     expect(screen.getByRole("button", { name: /Yosuga no Sora 42/ })).toBeEnabled();
   });
 });
+
+describe("settings credential feedback", () => {
+  it("surfaces clearance failures and clears inputs on success", async () => {
+    window.history.pushState({}, "", "/settings");
+    let clearanceCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return Response.json([
+            {
+              id: "0198c0de-7a00-7000-8000-00000000abcd",
+              name: "MangaDex",
+              version: "1",
+              abiVersion: 1,
+              lang: "en",
+              baseUrl: "",
+              iconUrl: "",
+              nsfw: false,
+              installedAt: 1,
+              loaded: false,
+              hasClearance: false,
+            },
+          ]);
+        }
+        if (path === "/api/sources/0198c0de-7a00-7000-8000-00000000abcd/clearance") {
+          clearanceCalls++;
+          if (clearanceCalls === 1) {
+            return Response.json({ error: { message: "clearance rejected" } }, { status: 400 });
+          }
+          return Response.json({});
+        }
+        if (path === "/api/catalog" || path === "/api/categories" || path === "/api/trackers") {
+          return Response.json([]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByRole("combobox", { name: /plugin/i }), "MangaDex");
+    await user.type(screen.getByPlaceholderText("cf_clearance cookie"), "cf-token");
+    await user.type(screen.getByPlaceholderText("Browser user agent"), "Mozilla/test");
+    fireEvent.click(screen.getByRole("button", { name: "Submit clearance" }));
+    expect(await screen.findByText("clearance rejected")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit clearance" }));
+    expect(await screen.findByText("Clearance submitted.")).toBeInTheDocument();
+    expect(clearanceCalls).toBe(2);
+    expect(screen.getByPlaceholderText("cf_clearance cookie")).toHaveValue("");
+  });
+
+  it("reports tracker token save failures", async () => {
+    window.history.pushState({}, "", "/settings");
+    let tokenCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "AniList",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: false,
+            },
+          ]);
+        }
+        if (path === "/api/trackers/AniList/token") {
+          tokenCalls++;
+          if (tokenCalls === 1) {
+            return Response.json(
+              { error: { message: "credential storage unavailable" } },
+              { status: 500 },
+            );
+          }
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/api/sources" || path === "/api/categories") return Response.json([]);
+        if (path === "/api/catalog") return Response.json([]);
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /AniList/ }));
+    const tokenInput = await screen.findByPlaceholderText("AniList access token");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    // A rejected save surfaces the server's reason and keeps the input.
+    await user.type(tokenInput, "secret");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("credential storage unavailable")).toBeInTheDocument();
+    expect(tokenInput).toHaveValue("secret");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("AniList credentials saved.")).toBeInTheDocument();
+    expect(tokenInput).toHaveValue("");
+  });
+});

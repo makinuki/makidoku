@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,6 +103,9 @@ func (s *CredentialStore) Load(trackerType string) (Credential, error) {
 	}
 	r, err := s.Repo.LoadTrackerCredential(trackerType)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Credential{}, ErrCredentialMissing
+		}
 		return Credential{}, err
 	}
 	a, err := openValue(key, r.AccessToken)

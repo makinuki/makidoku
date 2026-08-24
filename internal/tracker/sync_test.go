@@ -3,6 +3,7 @@ package tracker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -164,9 +165,10 @@ func TestRegistryHTTPClientHasTimeout(t *testing.T) {
 	}
 }
 
-// A transient credential-refresh failure must leave the job retryable
-// instead of permanently failing it.
-func TestCredentialFailureIsRetryable(t *testing.T) {
+// Missing credentials are permanent: the job fails without retry until the
+// user connects the tracker. A failing token endpoint, however, must leave
+// the job retryable.
+func TestCredentialFailureClassification(t *testing.T) {
 	repo := trackerRepo(t)
 	now := time.Now().Unix()
 	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s6','S','1',1,'en','https://x','x',?)`, now); err != nil {
@@ -193,12 +195,22 @@ func TestCredentialFailureIsRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if jobs[0].Status != db.SyncPending || jobs[0].Attempts != 1 {
-		t.Fatalf("job after credential failure = %+v, want a pending retry", jobs[0])
+	if jobs[0].Status != db.SyncFailed || jobs[0].Attempts != 1 {
+		t.Fatalf("job after missing credential = %+v, want a permanent failure", jobs[0])
+	}
+
+	// Transient refresh failures classify as retryable.
+	err = fmt.Errorf("OAuth token exchange failed: 503 Service Unavailable: %w", &HTTPError{Status: 503})
+	if !retryableTrackerError(err) {
+		t.Fatal("a failing token endpoint must count as retryable")
+	}
+	if retryableTrackerError(ErrCredentialMissing) {
+		t.Fatal("missing credentials must never be retryable")
 	}
 }
 
-func TestRetryableTrackerErrorClassifiesTransientFailures(t *testing.T) {	cases := []struct {
+func TestRetryableTrackerErrorClassifiesTransientFailures(t *testing.T) {
+	cases := []struct {
 		name string
 		err  error
 		want bool

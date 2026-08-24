@@ -29,6 +29,11 @@ type Registry struct {
 	oauth        map[string]oauthState
 }
 
+// ErrCredentialMissing reports that no credential is stored for a tracker.
+// Unlike a failed refresh it is permanent: retrying cannot succeed until the
+// user connects the tracker.
+var ErrCredentialMissing = errors.New("no credentials stored for this tracker")
+
 type oauthState struct {
 	State, Verifier, Redirect string
 	Expires                   time.Time
@@ -125,7 +130,9 @@ func postToken(ctx context.Context, client *http.Client, endpoint string, form u
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("OAuth token exchange failed: %s", resp.Status)
+		// Classified through HTTPError so rate limits and upstream outages
+		// count as transient by the standard retry rules.
+		return fmt.Errorf("OAuth token exchange failed: %s: %w", resp.Status, &HTTPError{Status: resp.StatusCode})
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

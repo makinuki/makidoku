@@ -1554,7 +1554,13 @@ describe("settings credential feedback", () => {
       progress: 40,
       errorMessage: "connection reset",
     };
-    const doneItem = { ...failedItem, id: 6, status: "COMPLETED", progress: 100, errorMessage: null };
+    const doneItem = {
+      ...failedItem,
+      id: 6,
+      status: "COMPLETED",
+      progress: 100,
+      errorMessage: null,
+    };
     let items: Array<Record<string, unknown>> = [failedItem, doneItem];
     vi.stubGlobal(
       "fetch",

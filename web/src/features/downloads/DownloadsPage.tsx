@@ -58,12 +58,13 @@ export function DownloadsPage() {
           <div className="text-right text-xs text-zinc-500">
             <p>{snapshot.stats.downloadedPages} pages saved</p>
             <p>
-              {snapshot.stats.retriedRequests} retries ·{" "}
-              {snapshot.stats.throttledRequests} throttled
+              {snapshot.stats.retriedRequests} retries · {snapshot.stats.throttledRequests}{" "}
+              throttled
             </p>
           </div>
           {snapshot.items.some(
-            (item) => item.status === "COMPLETED" || item.status === "CANCELED" || item.status === "FAILED",
+            (item) =>
+              item.status === "COMPLETED" || item.status === "CANCELED" || item.status === "FAILED",
           ) && (
             <button
               onClick={() => void clearFinished()}

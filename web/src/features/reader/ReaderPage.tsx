@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowLeft, ChevronLeft, ChevronRight, Maximize, Menu } from "lucide-react";
@@ -236,16 +236,45 @@ function Webtoon({
   setIndex: (value: number) => void;
 }) {
   const parent = useRef<HTMLDivElement>(null);
+  const initialIndex = useRef(index);
+  const interacted = useRef(false);
   const virtualizer = useVirtualizer({
     count: pages.length,
     getScrollElement: () => parent.current,
     estimateSize: () => 720,
     overscan: 2,
   });
+  // Entering webtoon mode aligns the scroll position with the restored page
+  // before the reader interacts. The visible page is adopted only afterwards:
+  // a programmatic alignment must never overwrite the reading position with
+  // page one.
+  useLayoutEffect(() => {
+    virtualizer.scrollToIndex(initialIndex.current);
+    // Alignment runs once per mount; later index changes come from scrolling.
+  }, []);
   useEffect(() => {
+    if (!interacted.current) return;
     const first = virtualizer.getVirtualItems()[0];
     if (first && first.index !== index) setIndex(first.index);
   }, [virtualizer, index, setIndex]);
+  useEffect(() => {
+    const el = parent.current;
+    if (!el) return;
+    const mark = () => {
+      interacted.current = true;
+    };
+    // Scroll events also fire for the programmatic alignment above, so the
+    // interaction latch listens to input events instead. A scrollbar drag is
+    // covered by its pointerdown.
+    el.addEventListener("wheel", mark, { passive: true });
+    el.addEventListener("touchmove", mark, { passive: true });
+    el.addEventListener("pointerdown", mark);
+    return () => {
+      el.removeEventListener("wheel", mark);
+      el.removeEventListener("touchmove", mark);
+      el.removeEventListener("pointerdown", mark);
+    };
+  }, []);
   return (
     <div ref={parent} className="min-h-0 flex-1 overflow-y-auto bg-black">
       <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>

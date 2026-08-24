@@ -81,6 +81,18 @@ export function ReaderPage() {
   }, [mangaId, chapterId]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Shortcuts must not fire while a form control has focus: typing into
+      // another field or stepping the page slider must stay local to it.
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
       if (event.key.toLowerCase() === "m") setMenu((value) => !value);
       if (event.key.toLowerCase() === "w")
         setMode((value) =>

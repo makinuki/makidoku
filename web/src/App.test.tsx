@@ -889,4 +889,59 @@ describe("MakiDoku app shell", () => {
       lastReadPage: 2,
     });
   });
+
+  // Reader shortcuts must not fire while the user operates a form control,
+  // for example the page slider or an open search field.
+  it("ignores reader shortcuts while a form control has focus", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false }],
+            trackers: [],
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
+          return Response.json([
+            { id: pageOne, chapterId, index: 0, isScrambled: false },
+            { id: pageTwo, chapterId, index: 1, isScrambled: false },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    const position = () => screen.getByText("1 / 2");
+    expect(position()).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+
+    const slider = screen.getByRole("slider");
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    fireEvent.keyDown(slider, { key: "ArrowLeft" });
+    fireEvent.keyDown(slider, { key: "w" });
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Webtoon" })).not.toHaveClass("bg-amber-400");
+  });
 });

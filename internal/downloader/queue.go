@@ -479,7 +479,7 @@ func selectChapters(chapters []db.Chapter, selection ChapterSelection) ([]db.Cha
 	}
 	selected := make([]db.Chapter, 0, len(chapters))
 	for _, chapter := range chapters {
-		include := len(wanted) == 0 && !hasRange
+		include := false
 		if _, ok := wanted[chapter.ID]; ok {
 			include = true
 		}
@@ -494,6 +494,9 @@ func selectChapters(chapters []db.Chapter, selection ChapterSelection) ([]db.Cha
 		}
 	}
 	if len(selected) == 0 {
+		if len(wanted) == 0 && !hasRange {
+			return nil, errors.New("no chapters selected")
+		}
 		return nil, errors.New("chapter selection matched no chapters")
 	}
 	sort.SliceStable(selected, func(i, j int) bool {

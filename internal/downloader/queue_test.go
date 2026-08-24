@@ -198,7 +198,7 @@ func TestQueueStopsBetweenPagesWhenPaused(t *testing.T) {
 		Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
 	})
 	mangaID := seedLibrary(t, repo)
-	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, FormatCBZ)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +231,11 @@ func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {
 	eng := queueFixture()
 	queue := NewQueue(repo, eng, Options{Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads")})
 	mangaID := seedLibrary(t, repo)
-	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, FormatFolder); err != nil {
+	all := ChapterSelection{IDs: []string{"chapter-id"}}
+	if _, err := queue.EnqueueManga(context.Background(), mangaID, all, FormatFolder); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, ""); err != nil {
+	if _, err := queue.EnqueueManga(context.Background(), mangaID, all, ""); err != nil {
 		t.Fatal(err)
 	}
 	manga, err := repo.GetManga(mangaID)
@@ -243,5 +244,16 @@ func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {
 	}
 	if manga.DownloadFormat != FormatFolder {
 		t.Fatalf("download format = %q", manga.DownloadFormat)
+	}
+}
+
+// An empty selection must be rejected instead of silently queueing every
+// chapter of the title.
+func TestEnqueueMangaRejectsEmptySelection(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	queue := NewQueue(repo, queueFixture(), Options{Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads")})
+	mangaID := seedLibrary(t, repo)
+	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, FormatCBZ); err == nil {
+		t.Fatal("accepted an empty chapter selection")
 	}
 }

@@ -258,7 +258,8 @@ export function DetailsPage() {
             </button>
             <button
               onClick={() => void enqueue()}
-              disabled={enqueueing}
+              disabled={enqueueing || selected.length === 0}
+              title="Select chapters to download"
               className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50"
             >
               <Download size={14} /> {enqueueing ? "Queueing…" : "Download"}

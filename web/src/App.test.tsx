@@ -1634,7 +1634,11 @@ describe("details page action feedback", () => {
     const user = userEvent.setup();
     expect(await screen.findByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
 
+    // Nothing is selected yet, so queueing is blocked at the button.
+    expect(screen.getByRole("button", { name: /Download/ })).toBeDisabled();
     await user.click(screen.getByRole("checkbox"));
+    expect(screen.getByRole("button", { name: /Download/ })).toBeEnabled();
+
     await user.click(screen.getByRole("button", { name: /Download/ }));
     expect(screen.getByRole("button", { name: /Queueing/ })).toBeDisabled();
 

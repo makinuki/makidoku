@@ -1633,6 +1633,78 @@ describe("settings credential feedback", () => {
     expect(deleteCalls).toBe(1);
   });
 
+  // The event stream must survive malformed frames and reconcile after a
+  // reconnect instead of drifting from the daemon.
+  it("recovers the download snapshot after websocket hiccups", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+    const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+    const sockets: Array<{
+      onmessage: ((event: { data: string }) => void) | null;
+      onopen: (() => void) | null;
+      onclose: (() => void) | null;
+      onerror: (() => void) | null;
+    }> = [];
+    class FakeWebSocket {
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onopen: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(_url: string) {
+        sockets.push(this);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    window.history.pushState({}, "", "/downloads");
+    let downloads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/download" && !init?.method) {
+          downloads++;
+          return Response.json({
+            items: [
+              {
+                id: 5,
+                mangaId,
+                chapterId,
+                mangaTitle: "Yosuga no Sora",
+                chapterTitle: "Chapter 1",
+                chapterNumber: 1,
+                sourceName: "MangaDex",
+                status: "DOWNLOADING",
+                progress: 10,
+              },
+            ],
+            stats: { downloadedPages: downloads, retriedRequests: 0, throttledRequests: 0 },
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    await screen.findByText("Yosuga no Sora · Chapter 1");
+    expect(downloads).toBe(1);
+
+    // A malformed frame is ignored without tearing the page down.
+    act(() => {
+      sockets[0].onmessage?.({ data: "{not json" });
+    });
+    expect(screen.getByText("Yosuga no Sora · Chapter 1")).toBeInTheDocument();
+
+    // Reconnecting refetches the snapshot so missed events are recovered.
+    act(() => {
+      sockets[0].onopen?.();
+    });
+    await waitFor(() => expect(downloads).toBe(2));
+    expect(screen.getByText("Yosuga no Sora · Chapter 1")).toBeInTheDocument();
+  });
+
   it("retries failed downloads and clears finished rows", async () => {
     const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
     const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";

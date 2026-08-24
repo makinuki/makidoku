@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pause, Play, RotateCw, X } from "lucide-react";
 import { api } from "../../api";
 import type { DownloadEvent, DownloadSnapshot, QueueItem } from "../../types";
@@ -11,7 +11,6 @@ export function DownloadsPage() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const socket = useRef<WebSocket | undefined>(undefined);
   const [clearing, setClearing] = useState(false);
   const refresh = () =>
     api
@@ -32,24 +31,43 @@ export function DownloadsPage() {
   };
   useEffect(() => {
     void refresh();
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${location.host}/api/download/events`);
-    socket.current = ws;
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data) as DownloadEvent;
-      setSnapshot((current) => ({
-        ...current,
-        items: current.items.some((item) => item.id === message.item.id)
-          ? current.items.map((item) => (item.id === message.item.id ? message.item : item))
-          : [...current.items, message.item],
-        stats: message.stats,
-      }));
+    let socket: WebSocket | undefined;
+    let reconnectTimer: number | undefined;
+    let disposed = false;
+    const applyMessage = (data: unknown) => {
+      try {
+        const message = JSON.parse(String(data)) as DownloadEvent;
+        setSnapshot((current) => ({
+          ...current,
+          items: current.items.some((item) => item.id === message.item.id)
+            ? current.items.map((item) => (item.id === message.item.id ? message.item : item))
+            : [...current.items, message.item],
+          stats: message.stats,
+        }));
+      } catch {
+        // A malformed frame is skipped; the next refetch reconciles state.
+      }
     };
-    ws.onerror = () => {
-      const timer = window.setInterval(() => void refresh(), 5000);
-      ws.onclose = () => window.clearInterval(timer);
+    const connect = () => {
+      if (disposed) return;
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const next = new WebSocket(`${protocol}//${location.host}/api/download/events`);
+      socket = next;
+      next.onmessage = (event) => applyMessage(event.data);
+      // Every successful connection refetches the snapshot so events missed
+      // while offline are recovered.
+      next.onopen = () => void refresh();
+      next.onclose = () => {
+        if (disposed) return;
+        reconnectTimer = window.setTimeout(connect, 2000);
+      };
     };
-    return () => ws.close();
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
   }, []);
   return (
     <div className="mx-auto max-w-5xl p-5 sm:p-8">

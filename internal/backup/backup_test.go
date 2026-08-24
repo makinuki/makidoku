@@ -78,3 +78,70 @@ func TestExportImportRestoresLibraryGraph(t *testing.T) {
 }
 
 func floatPtr(v float64) *float64 { return &v }
+
+// Restoring a backup must not resurrect uninstalled plugins or re-point
+// healthy local installs at artifact paths recorded on another machine.
+// Source metadata still follows the document; install state stays local.
+func TestImportKeepsLocalSourceInstallState(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "dest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	now := time.Now().Unix()
+	if _, err := handle.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed_at,installed) VALUES('local','local','Local','1',1,'en','https://local.test','local-local.wasm',?,1)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed_at,installed) VALUES('gone','gone','Gone','1',1,'en','https://gone.test',NULL,?,0)`, now); err != nil {
+		t.Fatal(err)
+	}
+
+	document := map[string]any{
+		"version": float64(1),
+		"sources": []any{
+			map[string]any{"id": "local", "plugin_key": "local", "name": "Renamed", "version": "9", "abi_version": float64(1), "lang": "en", "base_url": "https://other.test", "icon_url": nil, "wasm_path": "/other/machine/local.wasm", "installed_at": float64(now)},
+			map[string]any{"id": "gone", "plugin_key": "gone", "name": "Gone", "version": "2", "abi_version": float64(1), "lang": "en", "base_url": "https://gone.test", "icon_url": nil, "wasm_path": "/other/machine/gone.wasm", "installed_at": float64(now)},
+			map[string]any{"id": "fresh", "plugin_key": "fresh", "name": "Fresh", "version": "1", "abi_version": float64(1), "lang": "en", "base_url": "https://fresh.test", "icon_url": nil, "wasm_path": "/other/machine/fresh.wasm", "installed_at": float64(now)},
+		},
+	}
+	payload, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Import(handle, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	var name, wasmPath string
+	var installed int
+	if err := handle.Get(&name, `SELECT name FROM sources WHERE id='local'`); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Renamed" {
+		t.Fatalf("source metadata not updated: name = %q", name)
+	}
+	if err := handle.Get(&wasmPath, `SELECT wasm_path FROM sources WHERE id='local'`); err != nil {
+		t.Fatal(err)
+	}
+	if wasmPath != "local-local.wasm" {
+		t.Fatalf("local install re-pointed at %q", wasmPath)
+	}
+	if err := handle.Get(&installed, `SELECT installed FROM sources WHERE id='gone'`); err != nil {
+		t.Fatal(err)
+	}
+	if installed != 0 {
+		t.Fatal("import resurrected an uninstalled source")
+	}
+	if err := handle.Get(&installed, `SELECT installed FROM sources WHERE id='fresh'`); err != nil {
+		t.Fatal(err)
+	}
+	if installed != 0 {
+		t.Fatal("unknown backup source imported as installed")
+	}
+	if err := handle.Get(&wasmPath, `SELECT COALESCE(wasm_path,'') FROM sources WHERE id='fresh'`); err != nil {
+		t.Fatal(err)
+	}
+	if wasmPath != "" {
+		t.Fatalf("unknown source imported with wasm path %q", wasmPath)
+	}
+}

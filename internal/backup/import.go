@@ -11,7 +11,10 @@ import (
 
 // Import restores a document produced by Export. It runs inside a transaction
 // and is idempotent for categories (upsert by name); manga/chapters use
-// INSERT OR REPLACE so re-importing is safe.
+// INSERT OR REPLACE so re-importing is safe. Source rows carry metadata from
+// the document, but install state stays local: existing installs keep their
+// binary path and unknown sources land uninstalled so no plugin is reported
+// as installed without its binary.
 func Import(db *sqlx.DB, data []byte) error {
 	var doc Document
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -30,7 +33,7 @@ func Import(db *sqlx.DB, data []byte) error {
 	categoryIDs := map[int64]int64{}
 	for _, raw := range doc.Sources {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,wasm_path=excluded.wasm_path`, stringValue(m["id"]), nullableString(m["plugin_key"]), stringValue(m["name"]), stringValue(m["version"]), intValue(m["abi_version"]), stringValue(m["lang"]), stringValue(m["base_url"]), nullableString(m["icon_url"]), stringValue(m["wasm_path"]), int64Value(m["installed_at"])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at,installed) VALUES(?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url`, stringValue(m["id"]), nullableString(m["plugin_key"]), stringValue(m["name"]), stringValue(m["version"]), intValue(m["abi_version"]), stringValue(m["lang"]), stringValue(m["base_url"]), nullableString(m["icon_url"]), nil, int64Value(m["installed_at"])); err != nil {
 			return fmt.Errorf("import source %q: %w", stringValue(m["id"]), err)
 		}
 	}

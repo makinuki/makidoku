@@ -137,6 +137,56 @@ describe("MakiDoku app shell", () => {
     expect(await screen.findByLabelText("No cover available")).toBeInTheDocument();
   });
 
+  it("refreshes details from the title actions and keeps stale content on failure", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    const aggregate = {
+      manga: {
+        id: mangaId,
+        sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+        title: "Yosuga no Sora",
+        status: "completed",
+        coverUrl: "/api/manga/" + mangaId + "/cover",
+        inLibrary: true,
+        downloadFormat: "cbz",
+        createdAt: 1,
+        updatedAt: 1,
+        detailsFetchedAt: 1700000000,
+      },
+      categories: [],
+      chapters: [],
+      trackers: [],
+      sourceName: "MangaDex",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/trackers") return Response.json([]);
+        if (path.includes("/migration/candidates")) return Response.json([]);
+        if (path.includes(`/api/manga/${mangaId}/refresh`)) {
+          if (init?.method === "POST") {
+            return Response.json({
+              ...aggregate,
+              manga: { ...aggregate.manga, status: "hiatus" },
+            });
+          }
+        }
+        if (path.includes(`/api/manga/${mangaId}`)) return Response.json(aggregate);
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("MangaDex · completed")).toBeInTheDocument();
+    expect(screen.getByText(/Updated /)).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Refresh details" }));
+    expect(await screen.findByText("MangaDex · hiatus")).toBeInTheDocument();
+  });
+
   it("uploads a selected backup from settings", async () => {
     window.history.pushState({}, "", "/settings");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

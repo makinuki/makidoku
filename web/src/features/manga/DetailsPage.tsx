@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Play,
   RefreshCw,
+  RotateCw,
   Tag,
   X,
 } from "lucide-react";
@@ -34,6 +35,8 @@ export function DetailsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<"tracker" | "migration">();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
   const load = async () => {
     setLoading(true);
     setError("");
@@ -43,6 +46,19 @@ export function DetailsPage() {
       setError(e instanceof Error ? e.message : "Unable to load title");
     } finally {
       setLoading(false);
+    }
+  };
+  // The read is local-first, so a failed refresh only reports; the stale
+  // content stays on screen for the next attempt.
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshError("");
+    try {
+      setData(await api.refreshManga(decodedManga));
+    } catch (e) {
+      setRefreshError(e instanceof Error ? e.message : "Unable to refresh");
+    } finally {
+      setRefreshing(false);
     }
   };
   useEffect(() => {
@@ -133,7 +149,21 @@ export function DetailsPage() {
             >
               <RefreshCw size={15} /> Migrate
             </button>
+            <button
+              aria-label="Refresh details"
+              disabled={refreshing}
+              onClick={() => void refresh()}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm disabled:opacity-50"
+            >
+              <RotateCw size={15} className={refreshing ? "animate-spin" : ""} /> Refresh
+            </button>
+            {manga.detailsFetchedAt && (
+              <small className="self-center text-xs text-zinc-500">
+                Updated {relativeTime(manga.detailsFetchedAt)}
+              </small>
+            )}
           </div>
+          {refreshError && <p className="mt-3 text-xs text-red-300">{refreshError}</p>}
         </div>
       </section>
       {categories.length > 0 && (
@@ -238,6 +268,18 @@ export function DetailsPage() {
 function formatChapter(volume?: number, number?: number, title?: string) {
   const label = number == null ? title || "Special" : `Chapter ${number}`;
   return volume == null ? label : `Vol. ${volume} · ${label}`;
+}
+
+function relativeTime(unix: number) {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - unix);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 365) return `${days}d ago`;
+  return `${Math.floor(days / 365)}y ago`;
 }
 
 const LANGUAGE_NAMES: Record<string, string> = {

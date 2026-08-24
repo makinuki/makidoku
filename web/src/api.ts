@@ -43,6 +43,8 @@ export const api = {
       `/api/library?q=${encodeURIComponent(query)}${category ? `&category=${category}` : ""}`,
     ),
   manga: (mangaId: string) => request<Aggregate>(`/api/manga/${idPath(mangaId)}`),
+  refreshManga: (mangaId: string) =>
+    request<Aggregate>(`/api/manga/${idPath(mangaId)}/refresh`, { method: "POST" }),
   saveManga: (mangaId: string) =>
     request<Aggregate>(`/api/manga/${idPath(mangaId)}/library`, { method: "POST" }),
   setLibrary: (mangaId: string, enabled: boolean) =>

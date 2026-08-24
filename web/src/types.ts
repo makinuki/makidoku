@@ -14,6 +14,7 @@ export type Manga = {
   downloadFormat: string;
   createdAt: number;
   updatedAt: number;
+  detailsFetchedAt?: number;
 };
 export type Chapter = {
   id: string;

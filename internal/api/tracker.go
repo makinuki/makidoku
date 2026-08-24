@@ -176,7 +176,14 @@ func (s *Server) bindTracker(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, "remoteId and remoteTitle are required")
 		return
 	}
-	b, err := s.trackers.Repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: chi.URLParam(r, "mangaID"), TrackerType: typ, RemoteID: strings.TrimSpace(body.RemoteID), RemoteTitle: body.RemoteTitle, RemoteScore: body.RemoteScore, RemoteStatus: body.RemoteStatus, TotalRemoteChapters: body.TotalRemoteChapters})
+	// Validate the title reference up front so a typo cannot surface as a raw
+	// foreign key error.
+	mangaID := chi.URLParam(r, "mangaID")
+	if _, err := s.repo.GetManga(mangaID); err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	b, err := s.trackers.Repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: mangaID, TrackerType: typ, RemoteID: strings.TrimSpace(body.RemoteID), RemoteTitle: body.RemoteTitle, RemoteScore: body.RemoteScore, RemoteStatus: body.RemoteStatus, TotalRemoteChapters: body.TotalRemoteChapters})
 	if err != nil {
 		writeLocalError(w, http.StatusBadRequest, err)
 		return
@@ -184,13 +191,13 @@ func (s *Server) bindTracker(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, b)
 }
 func (s *Server) deleteBinding(w http.ResponseWriter, r *http.Request) {
-	if err := s.trackers.Repo.DeleteTrackerBinding(chi.URLParam(r, "mangaID"), chi.URLParam(r, "trackerType")); err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
+	if err := s.trackers.Repo.DeleteTrackerBinding(chi.URLParam(r, "mangaID"),
+		chi.URLParam(r, "trackerType")); err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
 func (s *Server) trackerStatuses(w http.ResponseWriter, r *http.Request) {
 	bindings, err := s.trackers.Repo.ListTrackerBindings(chi.URLParam(r, "mangaID"))
 	if err != nil {

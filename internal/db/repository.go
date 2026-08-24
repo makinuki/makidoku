@@ -279,8 +279,11 @@ func (r *Repository) DeleteCategory(id int64) error {
 	if id < 1 {
 		return errors.New("category id must be positive")
 	}
-	_, err := r.db.Exec(`DELETE FROM categories WHERE id=?`, id)
-	return err
+	result, err := r.db.Exec(`DELETE FROM categories WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	return requireChange(result, "delete category")
 }
 
 func (r *Repository) SetMangaLibrary(id string, inLibrary bool) (Manga, error) {
@@ -805,10 +808,12 @@ func (r *Repository) ListTrackerBindings(mangaID string) ([]TrackerBinding, erro
 		remote_status, last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE manga_id=? ORDER BY tracker_type`, mangaID)
 	return out, err
 }
-
 func (r *Repository) DeleteTrackerBinding(mangaID, trackerType string) error {
-	_, err := r.db.Exec(`DELETE FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
-	return err
+	result, err := r.db.Exec(`DELETE FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
+	if err != nil {
+		return err
+	}
+	return requireChange(result, "delete tracker binding")
 }
 
 func (r *Repository) SaveTrackerCredential(trackerType string, accessToken, refreshToken []byte, expiresAt *int64, metadata []byte) error {

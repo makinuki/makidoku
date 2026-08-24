@@ -322,7 +322,7 @@ func (s *Server) deleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.repo.DeleteCategory(id); err != nil {
-		writeLocalError(w, http.StatusConflict, err)
+		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

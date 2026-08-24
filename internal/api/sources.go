@@ -107,10 +107,15 @@ func (s *Server) installSource(w http.ResponseWriter, r *http.Request) {
 		source engine.InstalledSource
 		err    error
 	)
+	hasID := strings.TrimSpace(body.ID) != ""
+	hasPath := strings.TrimSpace(body.Path) != ""
 	switch {
-	case strings.TrimSpace(body.ID) != "":
+	case hasID && hasPath:
+		writeBadRequest(w, "provide either a catalog id or a path, not both")
+		return
+	case hasID:
 		source, err = s.engine.Install(r.Context(), strings.TrimSpace(body.ID))
-	case strings.TrimSpace(body.Path) != "":
+	case hasPath:
 		source, err = s.engine.InstallFile(r.Context(), strings.TrimSpace(body.Path))
 	default:
 		writeBadRequest(w, "provide either a catalog id or a path to a plugin binary")

@@ -100,12 +100,3 @@ func (c *Cache) AfterWrite(keep func() (map[string]bool, error)) {
 	}
 	_ = c.Sweep(paths)
 }
-
-// InitialSweep performs the startup sweep and reports whether it ran.
-func (c *Cache) InitialSweep(keep func() (map[string]bool, error)) error {
-	paths, err := keep()
-	if err != nil {
-		return err
-	}
-	return c.Sweep(paths)
-}

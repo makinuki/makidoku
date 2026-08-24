@@ -52,7 +52,7 @@ func TestPageImageServesDownloadedArtifact(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeArtifact(t, repo, sourceID, chapter.ID, manga.Title, format)
-			pages, err := repo.UpsertPages(chapter.ID, sourceID, []db.Page{{PageIndex: 0}, {PageIndex: 1}})
+			pages, err := repo.UpsertPages(chapter.ID, []db.Page{{PageIndex: 0}, {PageIndex: 1}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +120,8 @@ func TestPageImageFallsThroughWhenArtifactMissing(t *testing.T) {
 	if err := repo.MarkChapterDownloaded(chapter.ID, filepath.Join(t.TempDir(), "gone", "Chapter 1.cbz")); err != nil {
 		t.Fatal(err)
 	}
-	pages, err := repo.UpsertPages(chapter.ID, sourceID, []db.Page{{PageIndex: 0, RemoteURL: "https://upstream.test/p1.png"}})
+	pages, err := repo.UpsertPages(chapter.ID, []db.Page{{PageIndex: 0,
+		RemoteURL: "https://upstream.test/p1.png"}})
 	if err != nil {
 		t.Fatal(err)
 	}

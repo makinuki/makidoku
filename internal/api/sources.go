@@ -194,7 +194,7 @@ func (s *Server) materializePages(w http.ResponseWriter, r *http.Request) {
 			for index := range names {
 				rows = append(rows, db.Page{ChapterID: chapter.ID, PageIndex: index})
 			}
-			if pages, upsertErr := s.repo.UpsertPages(chapter.ID, chapter.SourceID, rows); upsertErr == nil && len(pages) > 0 {
+			if pages, upsertErr := s.repo.UpsertPages(chapter.ID, rows); upsertErr == nil && len(pages) > 0 {
 				writeJSON(w, http.StatusOK, pages)
 				return
 			}
@@ -215,7 +215,7 @@ func (s *Server) materializePages(w http.ResponseWriter, r *http.Request) {
 		headersJSON := string(headers)
 		rows = append(rows, db.Page{ChapterID: chapter.ID, PageIndex: item.Index, RemoteURL: item.URL, HeadersJSON: &headersJSON, IsScrambled: item.IsScrambled})
 	}
-	pages, err := s.repo.UpsertPages(chapter.ID, chapter.SourceID, rows)
+	pages, err := s.repo.UpsertPages(chapter.ID, rows)
 	if err != nil {
 		writeLocalError(w, http.StatusConflict, err)
 		return

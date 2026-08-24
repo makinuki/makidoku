@@ -243,19 +243,19 @@ func TestStorageKeyAcceptsBothWireForms(t *testing.T) {
 }
 
 func TestIsChallengeDistinguishesOutageFromInterstitial(t *testing.T) {
-	if isChallenge(&HttpResponse{Status: http.StatusServiceUnavailable, Body: "upstream is down"}) {
-		t.Fatal("a plain 503 must reach the plugin as a response")
+	if isChallengeRaw(&rawHTTPResponse{Status: http.StatusServiceUnavailable, Body: []byte("upstream is down")}) {
+		t.Fatal("an ordinary outage must not count as a challenge")
 	}
-	if !isChallenge(&HttpResponse{Status: http.StatusServiceUnavailable, Body: challengeBody}) {
+	if !isChallengeRaw(&rawHTTPResponse{Status: http.StatusServiceUnavailable, Body: []byte(challengeBody)}) {
 		t.Fatal("a 503 carrying challenge markers is an interstitial")
 	}
-	if !isChallenge(&HttpResponse{
+	if !isChallengeRaw(&rawHTTPResponse{
 		Status:  http.StatusServiceUnavailable,
 		Headers: map[string]string{"cf-mitigated": "challenge"},
 	}) {
 		t.Fatal("a mitigation header marks an interstitial")
 	}
-	if !isChallenge(&HttpResponse{Status: http.StatusForbidden}) {
+	if !isChallengeRaw(&rawHTTPResponse{Status: http.StatusForbidden}) {
 		t.Fatal("a 403 is treated as a challenge")
 	}
 }

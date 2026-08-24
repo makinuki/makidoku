@@ -26,7 +26,6 @@ func (s *Server) mountLibrary(r chi.Router) {
 	r.Post("/manga/{mangaID}/library", s.addMangaByID)
 	r.Delete("/manga/{mangaID}/library", s.removeMangaByID)
 	r.Post("/manga/{mangaID}/refresh", s.refreshManga)
-	r.Get("/manga/{mangaID}/chapters", s.getMangaChapters)
 	r.Post("/manga/{mangaID}/categories/{categoryID}", s.addMangaCategoryByID)
 	r.Delete("/manga/{mangaID}/categories/{categoryID}", s.removeMangaCategoryByID)
 	r.Get("/history", s.listHistory)
@@ -198,18 +197,6 @@ func (s *Server) removeMangaByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, manga)
-}
-
-func (s *Server) getMangaChapters(w http.ResponseWriter, r *http.Request) {
-	chapters, err := s.repo.ListChapters(chi.URLParam(r, "mangaID"))
-	if err != nil {
-		writeLocalError(w, http.StatusNotFound, err)
-		return
-	}
-	if chapters == nil {
-		chapters = []db.Chapter{}
-	}
-	writeJSON(w, http.StatusOK, chapters)
 }
 
 func (s *Server) addMangaCategoryByID(w http.ResponseWriter, r *http.Request) {

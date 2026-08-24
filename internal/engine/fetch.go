@@ -249,16 +249,6 @@ func (f *Fetcher) clearance(sourceID string) (cookie, userAgent string) {
 	return cookie, userAgent
 }
 
-// isChallenge reports whether a response is an anti-bot interstitial rather
-// than source content. A 403 counts on its own; a 503 needs challenge markers
-// so ordinary upstream outages stay visible to the plugin as a 503.
-func isChallenge(resp *HttpResponse) bool {
-	if resp == nil {
-		return false
-	}
-	return isChallengeResponse(resp.Status, resp.Headers, []byte(resp.Body))
-}
-
 func isChallengeRaw(resp *rawHTTPResponse) bool {
 	if resp == nil {
 		return false

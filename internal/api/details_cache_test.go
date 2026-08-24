@@ -87,7 +87,7 @@ func TestMaterializePagesServesPersistedList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.UpsertPages(chapter.ID, sourceID, []db.Page{{PageIndex: 0, RemoteURL: "https://upstream.test/p1.png"}, {PageIndex: 1, RemoteURL: "https://upstream.test/p2.png"}}); err != nil {
+	if _, err := repo.UpsertPages(chapter.ID, []db.Page{{PageIndex: 0, RemoteURL: "https://upstream.test/p1.png"}, {PageIndex: 1, RemoteURL: "https://upstream.test/p2.png"}}); err != nil {
 		t.Fatal(err)
 	}
 

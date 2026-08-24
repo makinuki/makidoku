@@ -400,7 +400,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 			IsScrambled: page.IsScrambled,
 		})
 	}
-	if _, err := q.repo.UpsertPages(item.ChapterID, item.SourceID, pageRows); err != nil {
+	if _, err := q.repo.UpsertPages(item.ChapterID, pageRows); err != nil {
 		q.removeArtifact(archivePath)
 		return q.fail(item, err)
 	}

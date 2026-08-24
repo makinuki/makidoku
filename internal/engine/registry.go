@@ -145,21 +145,6 @@ func (r *Registry) Find(ctx context.Context, id string) (RegistryEntry, error) {
 	return RegistryEntry{}, CodedError(CodeNotFound, "registry has no source %q", id)
 }
 
-// Installable returns the catalog entries this host can execute.
-func (r *Registry) Installable(ctx context.Context, refresh bool) ([]RegistryEntry, error) {
-	index, err := r.Index(ctx, refresh)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]RegistryEntry, 0, len(index.Sources))
-	for _, entry := range index.Sources {
-		if entry.ABIVersion == ABIVersion && meetsRuntimeFloor(entry) == nil {
-			out = append(out, entry)
-		}
-	}
-	return out, nil
-}
-
 // Fetch materializes the verified binary for entry and returns its cache path
 // along with its bytes. A cached file is reused only when its digest still
 // matches the catalog.

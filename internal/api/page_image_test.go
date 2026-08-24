@@ -40,7 +40,9 @@ func TestPageImageHidesRemoteLocatorAndCachesProcessedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages, err := repo.UpsertPages(chapter.ID, sourceID, []db.Page{{PageIndex: 0, RemoteURL: sourceServer.URL + "/remote.png", IsScrambled: false}})
+	pages, err := repo.UpsertPages(chapter.ID, []db.Page{{PageIndex: 0,
+		RemoteURL:   sourceServer.URL + "/remote.png",
+		IsScrambled: false}})
 	if err != nil {
 		t.Fatal(err)
 	}

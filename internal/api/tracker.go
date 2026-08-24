@@ -26,7 +26,6 @@ func (s *Server) mountTrackers(r chi.Router) {
 		manga.Post("/{trackerType}/bind", s.bindTracker)
 		manga.Delete("/{trackerType}", s.deleteBinding)
 		manga.Get("/status", s.trackerStatuses)
-		manga.Post("/scrobble", s.manualScrobble)
 	})
 	r.Get("/tracker-sync", s.listSyncJobs)
 	r.Get("/progress/{mangaID}", s.getProgress)
@@ -220,37 +219,6 @@ func (s *Server) trackerStatuses(w http.ResponseWriter, r *http.Request) {
 		out = append(out, status)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-func (s *Server) manualScrobble(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ChapterNumber float64 `json:"chapterNumber"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	bindings, err := s.trackers.Repo.ListTrackerBindings(chi.URLParam(r, "mangaID"))
-	if err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
-	}
-	for _, b := range bindings {
-		provider, ok := s.trackers.Get(b.TrackerType)
-		if !ok {
-			writeBadRequest(w, "unknown tracker: "+b.TrackerType)
-			return
-		}
-		if !provider.Capabilities().Scrobble {
-			continue
-		}
-		if _, err := s.trackers.Repo.EnqueueTrackerSync(b.MangaID, b.ID, body.ChapterNumber); err != nil {
-			writeLocalError(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-	if s.syncer != nil {
-		_ = s.syncer.RunOnce(r.Context())
-	}
-	w.WriteHeader(http.StatusAccepted)
 }
 func (s *Server) listSyncJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := s.trackers.Repo.ListTrackerSyncJobs()

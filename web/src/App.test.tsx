@@ -1044,4 +1044,58 @@ describe("MakiDoku app shell", () => {
       `/api/pages/${pageOne}/image?retry=1`,
     );
   });
+
+  it("shows a clear state when the reader opens without a chapter", async () => {
+    window.history.pushState({}, "", "/reader");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json([])),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("No chapter selected")).toBeInTheDocument();
+    expect(screen.queryByText("Loading reader")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state for a chapter without pages", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false }],
+            trackers: [],
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
+          return Response.json([]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("This chapter has no pages")).toBeInTheDocument();
+    expect(screen.queryByText("Loading reader")).not.toBeInTheDocument();
+  });
 });

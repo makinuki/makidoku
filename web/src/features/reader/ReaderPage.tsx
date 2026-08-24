@@ -4,7 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowLeft, ChevronLeft, ChevronRight, Maximize, Menu } from "lucide-react";
 import { api } from "../../api";
 import type { Aggregate, Page } from "../../types";
-import { ErrorState, LoadingState } from "../../components/States";
+import { ErrorState, EmptyState, LoadingState } from "../../components/States";
 
 type Mode = "single" | "double" | "webtoon";
 export function ReaderPage() {
@@ -30,10 +30,15 @@ export function ReaderPage() {
   const [index, setIndex] = useState(0);
   const [menu, setMenu] = useState(true);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!mangaId || !chapterId) return;
+    if (!mangaId || !chapterId) {
+      setLoading(false);
+      return;
+    }
     let active = true;
+    setLoading(true);
     setError("");
     setPages([]);
     (async () => {
@@ -52,6 +57,8 @@ export function ReaderPage() {
         setIndex(Math.max(0, Math.min(saved, loaded.length - 1)));
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : "Unable to open chapter");
+      } finally {
+        if (active) setLoading(false);
       }
     })();
     return () => {
@@ -129,6 +136,38 @@ export function ReaderPage() {
               Retry
             </button>
           </div>
+        </div>
+      </div>
+    );
+  if (!mangaId || !chapterId)
+    return (
+      <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
+        <EmptyState
+          title="No chapter selected"
+          text="Open a chapter from a title's details page to start reading."
+        />
+      </div>
+    );
+  if (loading)
+    return (
+      <div className="grid min-h-screen place-items-center bg-zinc-950">
+        <LoadingState label="Loading reader" />
+      </div>
+    );
+  if (aggregate && !pages.length)
+    return (
+      <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
+        <div className="max-w-lg">
+          <EmptyState
+            title="This chapter has no pages"
+            text="The plugin returned an empty page list. Try refreshing the title from its details page."
+          />
+          <button
+            onClick={() => navigate(-1)}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+          >
+            <ArrowLeft size={15} /> Back
+          </button>
         </div>
       </div>
     );

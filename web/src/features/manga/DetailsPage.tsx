@@ -12,7 +12,14 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../../api";
-import type { Aggregate, Binding, Category, MigrationCandidate, TrackerInfo } from "../../types";
+import type {
+  Aggregate,
+  Binding,
+  Category,
+  Chapter,
+  MigrationCandidate,
+  TrackerInfo,
+} from "../../types";
 import { CoverImg } from "../../components/CoverImg";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 
@@ -79,7 +86,7 @@ export function DetailsPage() {
         </div>
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-amber-400">
-            {manga.sourceId} · {manga.status || "Unknown status"}
+            {data.sourceName || "Unknown plugin"} · {manga.status || "Unknown status"}
           </p>
           <h1 className="mt-2 text-3xl font-semibold">{manga.title}</h1>
           {manga.description && (
@@ -191,10 +198,7 @@ export function DetailsPage() {
                   <b className="block text-sm">
                     {formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}
                   </b>
-                  <span className="text-xs text-zinc-500">
-                    {chapter.language || "Unknown language"}
-                    {chapter.scanlator ? ` · ${chapter.scanlator}` : ""}
-                  </span>
+                  <span className="text-xs text-zinc-500">{chapterMeta(chapter)}</span>
                 </Link>
                 {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
               </label>
@@ -234,6 +238,59 @@ export function DetailsPage() {
 function formatChapter(volume?: number, number?: number, title?: string) {
   const label = number == null ? title || "Special" : `Chapter ${number}`;
   return volume == null ? label : `Vol. ${volume} · ${label}`;
+}
+
+const LANGUAGE_NAMES: Record<string, string> = {
+  ar: "Arabic",
+  bg: "Bulgarian",
+  bn: "Bengali",
+  ca: "Catalan",
+  cs: "Czech",
+  da: "Danish",
+  de: "German",
+  el: "Greek",
+  en: "English",
+  es: "Spanish",
+  "es-la": "Spanish (Latin America)",
+  fa: "Persian",
+  fi: "Finnish",
+  fr: "French",
+  he: "Hebrew",
+  hi: "Hindi",
+  hr: "Croatian",
+  hu: "Hungarian",
+  id: "Indonesian",
+  it: "Italian",
+  ja: "Japanese",
+  ko: "Korean",
+  ms: "Malay",
+  nl: "Dutch",
+  no: "Norwegian",
+  pl: "Polish",
+  pt: "Portuguese",
+  "pt-br": "Portuguese (Brazil)",
+  ro: "Romanian",
+  ru: "Russian",
+  sv: "Swedish",
+  ta: "Tamil",
+  th: "Thai",
+  tl: "Tagalog",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  vi: "Vietnamese",
+  zh: "Chinese",
+  "zh-cn": "Chinese (Simplified)",
+  "zh-tw": "Chinese (Traditional)",
+};
+
+function languageLabel(code: string) {
+  return LANGUAGE_NAMES[code.toLowerCase()] || code;
+}
+
+function chapterMeta(chapter: Chapter) {
+  return [chapter.language ? languageLabel(chapter.language) : "", chapter.scanlator || ""]
+    .filter(Boolean)
+    .join(" · ");
 }
 function parseList(value?: string) {
   if (!value) return [];

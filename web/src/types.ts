@@ -69,6 +69,7 @@ export type LibraryManga = Manga & {
   categories: Category[];
   progress?: Progress;
   unreadChapters: number;
+  sourceName?: string;
 };
 export type Aggregate = {
   manga: Manga;
@@ -76,6 +77,7 @@ export type Aggregate = {
   chapters: Chapter[];
   progress?: Progress;
   trackers: Binding[];
+  sourceName?: string;
 };
 export type Source = {
   id: string;

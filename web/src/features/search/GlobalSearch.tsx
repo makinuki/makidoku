@@ -55,7 +55,7 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
               </div>
               <span className="min-w-0 flex-1">
                 <b className="block truncate text-sm">{item.title}</b>
-                <small className="text-zinc-500">{item.sourceId}</small>
+                <small className="text-zinc-500">{item.sourceName || "Unknown plugin"}</small>
               </span>
               <ChevronRight size={16} className="text-zinc-600" />
             </Link>

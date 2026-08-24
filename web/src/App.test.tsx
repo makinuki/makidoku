@@ -58,6 +58,7 @@ describe("MakiDoku app shell", () => {
             categories: [],
             chapters: [],
             trackers: [],
+            sourceName: "MangaDex",
           });
         }
         return Response.json([]);
@@ -69,6 +70,7 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     const user = userEvent.setup();
+    expect(await screen.findByText("MangaDex · completed")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Tracking" }));
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
@@ -107,8 +109,15 @@ describe("MakiDoku app shell", () => {
                 language: "en",
                 downloaded: false,
               },
+              {
+                id: pageOne,
+                mangaId,
+                chapterNumber: 1,
+                downloaded: false,
+              },
             ],
             trackers: [],
+            sourceName: "MangaDex",
           });
         }
         return Response.json([]);
@@ -120,6 +129,8 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByText("Vol. 3 · Chapter 10.5")).toBeInTheDocument();
+    expect(screen.getByText("English")).toBeInTheDocument();
+    expect(screen.queryByText(/unknown language/i)).not.toBeInTheDocument();
 
     const cover = screen.getAllByAltText("")[0];
     fireEvent.error(cover);

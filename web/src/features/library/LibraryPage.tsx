@@ -118,7 +118,7 @@ function LibraryCard({ item }: { item: LibraryManga }) {
         {item.title}
       </h2>
       <p className="mt-1 truncate text-xs text-zinc-500">
-        {item.sourceId} · {item.status || "Unknown"}
+        {item.sourceName || "Unknown plugin"} · {item.status || "Unknown"}
       </p>
       {progress > 0 && (
         <div className="mt-2 h-1 rounded-full bg-zinc-800">

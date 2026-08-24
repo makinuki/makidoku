@@ -33,7 +33,9 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Your library is empty" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Your library is empty" }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Daemon status")).toHaveTextContent("Connected");
     expect(screen.queryByText("Local user")).not.toBeInTheDocument();
   });

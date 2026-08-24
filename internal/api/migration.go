@@ -111,16 +111,13 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retire the previous source's chapters and remember the reading state
-	// for remapping once the replacement's chapters are known.
+	// Retire the previous source's chapters and attach the replacement in one
+	// transaction, remembering the reading state for remapping once the
+	// replacement's chapters are known.
 	progress, progressErr := s.repo.GetReadingProgress(oldID)
 	hasProgress := progressErr == nil
-	retired, artifacts, err := s.repo.RetireMangaChapters(oldID, discoveredSource.SourceID)
+	retired, artifacts, err := s.repo.MigrateMangaSource(oldID, discoveredSource.SourceID, body.MangaID)
 	if err != nil {
-		writeLocalError(w, http.StatusConflict, err)
-		return
-	}
-	if _, err := s.repo.AttachMangaSource(oldID, body.MangaID); err != nil {
 		writeLocalError(w, http.StatusConflict, err)
 		return
 	}

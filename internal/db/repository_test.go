@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -442,5 +443,86 @@ func TestListLibraryExposesBackendCoverRoute(t *testing.T) {
 	}
 	if !strings.HasPrefix(item.CoverURL, "/api/manga/") || !strings.HasSuffix(item.CoverURL, "/cover") {
 		t.Fatalf("coverUrl = %q, want the backend route", item.CoverURL)
+	}
+}
+
+func TestMigrateMangaSourceRetiresAndAttaches(t *testing.T) {
+	repo := testRepository(t)
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('asura','Asura','1',1,'en','https://asura.test','x',?)`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "old", Title: "Old", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 4.0
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceID: "mangadex", SourceChapterID: "c-old", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "Chapter 4.cbz")
+	if err := os.WriteFile(artifact, []byte("pages"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkChapterDownloaded(chapter.ID, artifact); err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := repo.UpsertManga(Manga{SourceID: "asura", SourceMangaID: "new", Title: "New", Status: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep the replacement source and retire everything from mangadex.
+	retired, artifacts, err := repo.MigrateMangaSource(manga.ID, "asura", discovered.ID)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if len(retired) != 1 || retired[0].ID != chapter.ID {
+		t.Fatalf("retired = %+v", retired)
+	}
+	if len(artifacts) != 1 || artifacts[0] != artifact {
+		t.Fatalf("artifacts = %+v, want the downloaded path", artifacts)
+	}
+	chapters, err := repo.ListChapters(manga.ID)
+	if err != nil || len(chapters) != 0 {
+		t.Fatalf("chapters = %+v, err = %v", chapters, err)
+	}
+	source, err := repo.GetMangaSource(manga.ID)
+	if err != nil || source.SourceID != "asura" {
+		t.Fatalf("primary source = %+v, err = %v", source, err)
+	}
+}
+
+// A failed attach must roll the retirement back too: the title keeps its
+// previous source's chapter list instead of ending up empty.
+func TestMigrateMangaSourceRollsBackWhenAttachFails(t *testing.T) {
+	repo := testRepository(t)
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('asura','Asura','1',1,'en','https://asura.test','x',?)`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "old", Title: "Old", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	if _, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceID: "mangadex", SourceChapterID: "c-old", ChapterNumber: &number}); err != nil {
+		t.Fatal(err)
+	}
+	// The replacement has a manga row but no source link, so the attach step
+	// cannot resolve it.
+	discovered, err := repo.UpsertManga(Manga{SourceID: "asura", SourceMangaID: "new", Title: "New", Status: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB().Exec(`DELETE FROM manga_sources WHERE manga_id=?`, discovered.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := repo.MigrateMangaSource(manga.ID, "asura", discovered.ID); err == nil {
+		t.Fatal("expected the migration to fail without a replacement source link")
+	}
+	chapters, err := repo.ListChapters(manga.ID)
+	if err != nil || len(chapters) != 1 {
+		t.Fatalf("chapters = %+v, err = %v, want the old list intact", chapters, err)
 	}
 }

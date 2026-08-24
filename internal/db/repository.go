@@ -50,82 +50,97 @@ func (r *Repository) GetMangaSource(mangaID string) (MangaSource, error) {
 	return source, err
 }
 
-// AttachMangaSource moves a discovered source representation onto the target
-// canonical manga. The target Makidoku ID remains unchanged.
-func (r *Repository) AttachMangaSource(targetID, discoveredID string) (MangaAggregate, error) {
-	targetID = strings.TrimSpace(targetID)
-	discoveredID = strings.TrimSpace(discoveredID)
-	if targetID == "" || discoveredID == "" || targetID == discoveredID {
-		return MangaAggregate{}, errors.New("distinct target and discovered manga ids are required")
+// MigrateMangaSource atomically retires every chapter of a manga that does
+// not belong to the kept source and moves the discovered replacement onto
+// the canonical manga. Running both steps in one transaction means a failed
+// attach cannot leave the title without chapters. The call returns the
+// retired chapters (for progress remapping) and the artifact paths of
+// downloaded ones (for file cleanup).
+func (r *Repository) MigrateMangaSource(mangaID, keepSourceID, discoveredMangaID string) ([]Chapter, []string, error) {
+	mangaID = strings.TrimSpace(mangaID)
+	keepSourceID = strings.TrimSpace(keepSourceID)
+	discoveredMangaID = strings.TrimSpace(discoveredMangaID)
+	if mangaID == "" || discoveredMangaID == "" || mangaID == discoveredMangaID || keepSourceID == "" {
+		return nil, nil, errors.New("manga id, kept source id and a distinct replacement manga id are required")
 	}
-	tx, err := r.db.Beginx()
-	if err != nil {
-		return MangaAggregate{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var source struct {
-		SourceID      string `db:"source_id"`
-		SourceMangaID string `db:"source_manga_id"`
-	}
-	if err := tx.Get(&source, `SELECT source_id,source_manga_id FROM manga_sources WHERE manga_id=?`, discoveredID); err != nil {
-		return MangaAggregate{}, err
-	}
-	if _, err := tx.Exec(`UPDATE manga_sources SET manga_id=?,is_primary=1,last_seen_at=? WHERE manga_id=?`, targetID, time.Now().Unix(), discoveredID); err != nil {
-		return MangaAggregate{}, err
-	}
-	// The attached source becomes the only primary so plugin calls resolve to
-	// the replacement.
-	if _, err := tx.Exec(`UPDATE manga_sources SET is_primary=0 WHERE manga_id=? AND source_id<>?`, targetID, source.SourceID); err != nil {
-		return MangaAggregate{}, err
-	}
-	if _, err := tx.Exec(`UPDATE chapters SET manga_id=? WHERE manga_id=?`, targetID, discoveredID); err != nil {
-		return MangaAggregate{}, err
-	}
-	if _, err := tx.Exec(`DELETE FROM manga WHERE id=? AND in_library=0`, discoveredID); err != nil {
-		return MangaAggregate{}, err
-	}
-	if _, err := tx.Exec(`UPDATE manga_sources SET is_primary=CASE WHEN source_id=? THEN 1 ELSE is_primary END WHERE manga_id=?`, source.SourceID, targetID); err != nil {
-		return MangaAggregate{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return MangaAggregate{}, err
-	}
-	return r.GetMangaAggregate(targetID)
-}
-
-// RetireMangaChapters removes every chapter of a manga that does not belong
-// to the kept source, together with dependent rows (pages, caches and source
-// mappings cascade). Reading progress referencing retired chapters is dropped
-// because its chapter link has no cascade. The call returns the retired
-// chapters and the artifact paths of downloaded ones so callers can remap
-// progress and clean files.
-func (r *Repository) RetireMangaChapters(mangaID, keepSourceID string) ([]Chapter, []string, error) {
 	tx, err := r.db.Beginx()
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	retired, artifacts, err := r.retireChaptersInTx(tx, mangaID, keepSourceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := r.attachSourceInTx(tx, mangaID, discoveredMangaID); err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return retired, artifacts, nil
+}
+
+// attachSourceInTx moves a discovered source representation onto the target
+// canonical manga inside an open transaction. The target Makidoku ID remains
+// unchanged and the attached source becomes the only primary so plugin calls
+// resolve to the replacement.
+func (r *Repository) attachSourceInTx(tx *sqlx.Tx, targetID, discoveredID string) error {
+	var source struct {
+		SourceID      string `db:"source_id"`
+		SourceMangaID string `db:"source_manga_id"`
+	}
+	if err := tx.Get(&source, `SELECT source_id,source_manga_id FROM manga_sources WHERE manga_id=?`, discoveredID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE manga_sources SET manga_id=?,is_primary=1,last_seen_at=? WHERE manga_id=?`, targetID, time.Now().Unix(), discoveredID); err != nil {
+		return err
+	}
+	// The attached source becomes the only primary so plugin calls resolve to
+	// the replacement.
+	if _, err := tx.Exec(`UPDATE manga_sources SET is_primary=0 WHERE manga_id=? AND source_id<>?`, targetID, source.SourceID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE chapters SET manga_id=? WHERE manga_id=?`, targetID, discoveredID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM manga WHERE id=? AND in_library=0`, discoveredID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE manga_sources SET is_primary=CASE WHEN source_id=? THEN 1 ELSE is_primary END WHERE manga_id=?`, source.SourceID, targetID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// retireChaptersInTx removes every chapter of a manga that does not belong to
+// the kept source, together with dependent rows (pages, caches and source
+// mappings cascade). Reading progress referencing retired chapters is dropped
+// because its chapter link has no cascade. The call returns the retired
+// chapters and the artifact paths of downloaded ones so callers can remap
+// progress and clean files.
+func (r *Repository) retireChaptersInTx(tx *sqlx.Tx, mangaID, keepSourceID string) ([]Chapter, []string, error) {
 	var retired []Chapter
 	if err := tx.Select(&retired, chapterSelect+`
 		WHERE c.manga_id=? AND c.source_id<>?`, mangaID, keepSourceID); err != nil {
 		return nil, nil, err
 	}
 	if len(retired) == 0 {
-		return nil, nil, tx.Commit()
+		return nil, []string{}, nil
 	}
 	var artifacts []string
 	if err := tx.Select(&artifacts, `SELECT download_path FROM chapters
 		WHERE manga_id=? AND source_id<>? AND downloaded=1 AND download_path IS NOT NULL`, mangaID, keepSourceID); err != nil {
 		return nil, nil, err
 	}
+	if artifacts == nil {
+		artifacts = []string{}
+	}
 	if _, err := tx.Exec(`DELETE FROM reading_progress WHERE manga_id=? AND last_read_chapter_id IN
 		(SELECT id FROM chapters WHERE manga_id=? AND source_id<>?)`, mangaID, mangaID, keepSourceID); err != nil {
 		return nil, nil, err
 	}
 	if _, err := tx.Exec(`DELETE FROM chapters WHERE manga_id=? AND source_id<>?`, mangaID, keepSourceID); err != nil {
-		return nil, nil, err
-	}
-	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
 	return retired, artifacts, nil

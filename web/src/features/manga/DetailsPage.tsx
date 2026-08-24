@@ -6,6 +6,7 @@ import {
   Check,
   Download,
   ExternalLink,
+  LoaderCircle,
   Play,
   RefreshCw,
   RotateCw,
@@ -38,6 +39,7 @@ export function DetailsPage() {
   const [modal, setModal] = useState<"tracker" | "migration">();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [languageFilter, setLanguageFilter] = useState<string>();
   const load = async () => {
     setLoading(true);
     setError("");
@@ -77,6 +79,13 @@ export function DetailsPage() {
       </div>
     );
   const { manga, chapters } = data;
+  const languages = Array.from(
+    new Set(chapters.map((chapter) => chapter.language).filter(Boolean) as string[]),
+  ).sort();
+  const visible = languageFilter
+    ? chapters.filter((chapter) => chapter.language === languageFilter)
+    : chapters;
+  const groups = groupByVolume(visible);
   const toggle = (id: string) =>
     setSelected((items) =>
       items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
@@ -212,29 +221,55 @@ export function DetailsPage() {
             </button>
           </div>
         </PageHeader>
-        {chapters.length ? (
-          <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
-            {chapters.map((chapter) => (
-              <label key={chapter.id} className="flex items-center gap-3 p-4 hover:bg-zinc-900">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(chapter.id)}
-                  onChange={() => toggle(chapter.id)}
-                  className="accent-amber-400"
-                />
-                <Link
-                  to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(chapter.id)}`}
-                  className="min-w-0 flex-1"
-                >
-                  <b className="block text-sm">
-                    {formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}
-                  </b>
-                  <span className="text-xs text-zinc-500">{chapterMeta(chapter)}</span>
-                </Link>
-                {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
-              </label>
+        {languages.length > 1 && (
+          <div className="mb-5 flex flex-wrap gap-2">
+            <button
+              onClick={() => setLanguageFilter(undefined)}
+              className={`rounded-full border px-3 py-1.5 text-xs ${languageFilter === undefined ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
+            >
+              All languages
+            </button>
+            {languages.map((code) => (
+              <button
+                key={code}
+                onClick={() => setLanguageFilter(code)}
+                className={`rounded-full border px-3 py-1.5 text-xs ${languageFilter === code ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
+              >
+                {languageLabel(code)}
+              </button>
             ))}
           </div>
+        )}
+        {visible.length ? (
+          groups.map((group) => (
+            <section key={group.label} className="mt-5 first:mt-0">
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+                {group.label}
+              </h3>
+              <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
+                {group.chapters.map((chapter) => (
+                  <label key={chapter.id} className="flex items-center gap-3 p-4 hover:bg-zinc-900">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(chapter.id)}
+                      onChange={() => toggle(chapter.id)}
+                      className="accent-amber-400"
+                    />
+                    <Link
+                      to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(chapter.id)}`}
+                      className="min-w-0 flex-1"
+                    >
+                      <b className="block text-sm">
+                        {formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}
+                      </b>
+                      <span className="text-xs text-zinc-500">{chapterMeta(chapter)}</span>
+                    </Link>
+                    {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
+                  </label>
+                ))}
+              </div>
+            </section>
+          ))
         ) : (
           <EmptyState
             title="No chapters"
@@ -269,6 +304,35 @@ export function DetailsPage() {
 function formatChapter(volume?: number, number?: number, title?: string) {
   const label = number == null ? title || "Special" : `Chapter ${number}`;
   return volume == null ? label : `Vol. ${volume} · ${label}`;
+}
+
+// Groups chapters into volume sections in descending order, with chapters
+// numbered descending inside each group and specials at the end.
+function groupByVolume(chapters: Chapter[]) {
+  const byVolume = new Map<number | null, Chapter[]>();
+  for (const chapter of chapters) {
+    const key = chapter.volume ?? null;
+    const bucket = byVolume.get(key);
+    if (bucket) bucket.push(chapter);
+    else byVolume.set(key, [chapter]);
+  }
+  const keys = Array.from(byVolume.keys());
+  const volumes = keys.filter((key): key is number => key != null).sort((a, b) => b - a);
+  const ordered: Array<{ key: number | null; label: string }> = volumes.map((volume) => ({
+    key: volume as number | null,
+    label: `Volume ${volume}`,
+  }));
+  if (keys.includes(null)) ordered.push({ key: null, label: "No volume" });
+  return ordered.map(({ key, label }) => {
+    const bucket = byVolume.get(key) ?? [];
+    const sorted = [...bucket].sort((a, b) => {
+      if (a.chapterNumber == null && b.chapterNumber == null) return 0;
+      if (a.chapterNumber == null) return 1;
+      if (b.chapterNumber == null) return -1;
+      return b.chapterNumber - a.chapterNumber;
+    });
+    return { label, chapters: sorted };
+  });
 }
 
 function relativeTime(unix: number) {
@@ -469,6 +533,7 @@ function MigrationModal({
 }) {
   const [items, setItems] = useState<MigrationCandidate[]>([]);
   const [selected, setSelected] = useState<MigrationCandidate>();
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     void api
@@ -508,19 +573,30 @@ function MigrationModal({
           Cancel
         </button>
         <button
-          disabled={!selected}
+          disabled={!selected || applying}
           onClick={async () => {
-            if (!selected) return;
-            const result = await api.applyMigration(
-              manga.id,
-              selected.source.id,
-              selected.result.id,
-            );
-            onApplied(result.manga.manga.id);
+            if (!selected || applying) return;
+            setApplying(true);
+            setError("");
+            try {
+              // Applying re-fetches the replacement's chapters server-side,
+              // so the round-trip can take a while.
+              const result = await api.applyMigration(
+                manga.id,
+                selected.source.id,
+                selected.result.id,
+              );
+              onApplied(result.manga.manga.id);
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Unable to apply migration");
+            } finally {
+              setApplying(false);
+            }
           }}
-          className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
         >
-          Apply
+          {applying && <LoaderCircle size={14} className="animate-spin" />}
+          {applying ? "Migrating…" : "Apply"}
         </button>
       </div>
     </Modal>

@@ -115,7 +115,15 @@ describe("MakiDoku app shell", () => {
               {
                 id: pageOne,
                 mangaId,
+                chapterNumber: 2,
+                language: "en",
+                downloaded: false,
+              },
+              {
+                id: pageTwo,
+                mangaId,
                 chapterNumber: 1,
+                language: "ja",
                 downloaded: false,
               },
             ],
@@ -132,8 +140,20 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByText("Vol. 3 · Chapter 10.5")).toBeInTheDocument();
-    expect(screen.getByText("English")).toBeInTheDocument();
-    expect(screen.queryByText(/unknown language/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Volume 3" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No volume" })).toBeInTheDocument();
+    const noVolumeSection = screen.getByRole("heading", { name: "No volume" }).nextElementSibling;
+    expect(noVolumeSection).toHaveTextContent("Chapter 2");
+    expect(noVolumeSection).toHaveTextContent("Chapter 1");
+    expect(noVolumeSection?.textContent?.indexOf("Chapter 2")).toBeLessThan(
+      Number(noVolumeSection?.textContent?.indexOf("Chapter 1")),
+    );
+    expect(screen.getByRole("button", { name: "English" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Japanese" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Japanese" }));
+    expect(screen.queryByText("Vol. 3 · Chapter 10.5")).not.toBeInTheDocument();
+    expect(screen.getByText("Chapter 1")).toBeInTheDocument();
+    expect(screen.queryByText("Chapter 2")).not.toBeInTheDocument();
 
     const cover = screen.getAllByAltText("")[0];
     fireEvent.error(cover);
@@ -356,6 +376,73 @@ describe("MakiDoku app shell", () => {
     expect(screen.queryByText("MangaDex installed.")).not.toBeInTheDocument();
   });
 
+  it("saves search results in place and links the card to details", async () => {
+    window.history.pushState({}, "", "/browse");
+    const resultId = "0198c0de-7a33-7000-8000-00000000abcd";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/health") return Response.json({ ok: true });
+        if (path === "/api/sources") {
+          return Response.json([
+            {
+              id: "mangadex",
+              name: "MangaDex",
+              version: "1",
+              abiVersion: 1,
+              lang: "en",
+              baseUrl: "https://mangadex.org",
+              iconUrl: "",
+              nsfw: false,
+              installedAt: 1,
+              loaded: true,
+              hasClearance: false,
+            },
+          ]);
+        }
+        if (path.startsWith("/api/sources/mangadex/search")) {
+          return Response.json({
+            page: 1,
+            hasNextPage: false,
+            items: [
+              {
+                id: resultId,
+                sourceId: "mangadex",
+                title: "Yosuga no Sora",
+                coverUrl: "https://example.test/cover.jpg",
+              },
+            ],
+          });
+        }
+        if (path === `/api/manga/${resultId}/library` && init?.method === "POST") {
+          return Response.json({
+            manga: { id: resultId, inLibrary: true },
+            categories: [],
+            chapters: [],
+            trackers: [],
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByPlaceholderText("Search installed plugins"), "Yosuga");
+    const save = await screen.findByRole("button", { name: /Save title/ });
+    await user.click(save);
+    expect(await screen.findByRole("button", { name: /Added/ })).toBeDisabled();
+    expect(screen.getByRole("link", { name: /Yosuga no Sora/ })).toHaveAttribute(
+      "href",
+      `/manga/${resultId}`,
+    );
+    expect(window.location.pathname).toBe("/browse");
+  });
+
   it("reports failed plugin installs in the error banner", async () => {
     window.history.pushState({}, "", "/settings");
     vi.stubGlobal(
@@ -445,6 +532,80 @@ describe("MakiDoku app shell", () => {
       "/api/sources/mangadex/",
       expect.objectContaining({ method: "DELETE" }),
     );
+  });
+
+  it("shows progress while a migration applies", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    const aggregate = {
+      manga: {
+        id: mangaId,
+        sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+        title: "Yosuga no Sora",
+        status: "completed",
+        coverUrl: "/api/manga/" + mangaId + "/cover",
+        inLibrary: true,
+        downloadFormat: "cbz",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      categories: [],
+      chapters: [],
+      trackers: [],
+      sourceName: "MangaDex",
+    };
+    let resolveApply!: (value: Response) => void;
+    const applyGate = new Promise<Response>((resolve) => {
+      resolveApply = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/trackers") return Response.json([]);
+        if (path.includes("/migration/candidates")) {
+          return Response.json([
+            {
+              source: {
+                id: "asurascans",
+                name: "Asura Scans",
+                version: "1",
+                abiVersion: 1,
+                lang: "en",
+                baseUrl: "https://asurascans.test",
+                iconUrl: "",
+                nsfw: false,
+                installedAt: 1,
+                loaded: true,
+                hasClearance: false,
+              },
+              result: {
+                id: "discovered-1",
+                sourceId: "asurascans",
+                title: "Yosuga no Sora",
+                coverUrl: "https://example.test/cover.jpg",
+              },
+            },
+          ]);
+        }
+        if (path.includes("/migration/apply") && init?.method === "POST") {
+          return await applyGate;
+        }
+        if (path.includes(`/api/manga/${mangaId}`)) return Response.json(aggregate);
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Migrate" }));
+    await user.click(await screen.findByRole("button", { name: /Yosuga no Sora/ }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(screen.getByRole("button", { name: /Migrating/ })).toBeDisabled();
+    resolveApply(Response.json({ manga: aggregate, source: "asurascans", chapterMap: {} }));
+    expect(await screen.findByRole("button", { name: "Migrate" })).toBeInTheDocument();
   });
 
   it("uploads a selected backup from settings", async () => {

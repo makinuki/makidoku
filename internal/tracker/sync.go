@@ -83,7 +83,10 @@ func (w *SyncWorker) ProcessOne(ctx context.Context, trackerType string) (bool, 
 	}
 	cred, err := w.Registry.Credential(binding.TrackerType)
 	if err != nil {
-		w.failJob(job.ID, false, err.Error())
+		// A credential refresh can fail for transient reasons (token
+		// endpoint unreachable); classify it like any other provider error
+		// so a temporary outage does not permanently fail the job.
+		w.failJob(job.ID, retryableTrackerError(err), err.Error())
 		return true, nil
 	}
 	err = provider.ScrobbleProgress(ctx, binding, job.ChapterNumber, cred)

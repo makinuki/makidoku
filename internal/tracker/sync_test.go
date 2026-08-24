@@ -164,6 +164,40 @@ func TestRegistryHTTPClientHasTimeout(t *testing.T) {
 	}
 }
 
+// A transient credential-refresh failure must leave the job retryable
+// instead of permanently failing it.
+func TestCredentialFailureIsRetryable(t *testing.T) {
+	repo := trackerRepo(t)
+	now := time.Now().Unix()
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s6','S','1',1,'en','https://x','x',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s6", SourceMangaID: "m", Title: "M", Status: "ongoing", CoverURL: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "1", RemoteTitle: "M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnqueueTrackerSync(manga.ID, binding.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := &SyncWorker{Repo: repo, Registry: NewRegistry(repo)}
+	processed, err := worker.ProcessOne(context.Background(), "")
+	if err != nil || !processed {
+		t.Fatalf("processed = %v, err = %v", processed, err)
+	}
+	jobs, err := repo.ListTrackerSyncJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs[0].Status != db.SyncPending || jobs[0].Attempts != 1 {
+		t.Fatalf("job after credential failure = %+v, want a pending retry", jobs[0])
+	}
+}
+
 func TestRetryableTrackerErrorClassifiesTransientFailures(t *testing.T) {	cases := []struct {
 		name string
 		err  error

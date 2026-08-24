@@ -67,6 +67,7 @@ func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
+	aggregate.SourceName = s.sourceName(source.SourceID)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -148,6 +149,7 @@ func (s *Server) addMangaByID(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
+	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -215,6 +217,9 @@ func (s *Server) listLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 	if items == nil {
 		items = []db.LibraryManga{}
+	}
+	for i := range items {
+		items[i].SourceName = s.sourceName(items[i].SourceID)
 	}
 	writeJSON(w, http.StatusOK, items)
 }

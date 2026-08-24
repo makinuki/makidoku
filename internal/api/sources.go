@@ -55,6 +55,7 @@ func (s *Server) saveSourceManga(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
+	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
 	writeJSON(w, http.StatusCreated, aggregate)
 }
 
@@ -72,6 +73,19 @@ func stringPointer(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+// sourceName resolves the display name of an installed plugin. Unknown or
+// uninstalled ids resolve to an empty string.
+func (s *Server) sourceName(sourceID string) string {
+	if s.engine == nil {
+		return ""
+	}
+	source, err := s.engine.Get(sourceID)
+	if err != nil {
+		return ""
+	}
+	return source.Name
 }
 
 func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {

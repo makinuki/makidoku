@@ -71,21 +71,50 @@ func (m Manga) MarshalJSON() ([]byte, error) {
 }
 
 // LibraryManga is a library title with its user-facing reading metadata.
+// SourceName is resolved by the API layer from the installed plugin registry.
 type LibraryManga struct {
 	Manga
 	Categories     []Category       `json:"categories"`
 	Progress       *ReadingProgress `json:"progress,omitempty"`
 	UnreadChapters int              `json:"unreadChapters"`
+	SourceName     string           `json:"sourceName,omitempty"`
+}
+
+// MarshalJSON flattens the embedded manga, keeps the backend cover route, and
+// preserves the metadata fields that the promoted Manga.MarshalJSON drops.
+func (l LibraryManga) MarshalJSON() ([]byte, error) {
+	type mangaAlias Manga
+	categories := l.Categories
+	if categories == nil {
+		categories = []Category{}
+	}
+	return json.Marshal(struct {
+		mangaAlias
+		Categories     []Category       `json:"categories"`
+		Progress       *ReadingProgress `json:"progress,omitempty"`
+		UnreadChapters int              `json:"unreadChapters"`
+		SourceName     string           `json:"sourceName,omitempty"`
+		CoverURL       string           `json:"coverUrl"`
+	}{
+		mangaAlias:     mangaAlias(l.Manga),
+		Categories:     categories,
+		Progress:       l.Progress,
+		UnreadChapters: l.UnreadChapters,
+		SourceName:     l.SourceName,
+		CoverURL:       l.Manga.CoverURL,
+	})
 }
 
 // MangaAggregate contains all local state needed by the details and reader
 // views. The aggregate is assembled from normalized tables by the repository.
+// SourceName is resolved by the API layer from the installed plugin registry.
 type MangaAggregate struct {
 	Manga      Manga            `json:"manga"`
 	Categories []Category       `json:"categories"`
 	Chapters   []Chapter        `json:"chapters"`
 	Progress   *ReadingProgress `json:"progress,omitempty"`
 	Trackers   []TrackerBinding `json:"trackers"`
+	SourceName string           `json:"sourceName,omitempty"`
 }
 
 // MangaSource is an internal adapter record. It is never returned directly to

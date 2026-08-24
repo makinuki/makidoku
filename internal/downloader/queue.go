@@ -544,6 +544,10 @@ func (q *Queue) publish(eventType string, item db.DownloadQueueItem) {
 	q.events.publish(Event{Type: eventType, Item: item, Stats: q.Stats()})
 }
 
+func (q *Queue) List() ([]db.DownloadQueueItem, error) {
+	return q.repo.ListQueue()
+}
+
 func (q *Queue) notify() {
 	select {
 	case q.wake <- struct{}{}:

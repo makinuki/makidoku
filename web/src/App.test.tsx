@@ -187,6 +187,149 @@ describe("MakiDoku app shell", () => {
     expect(await screen.findByText("MangaDex · hiatus")).toBeInTheDocument();
   });
 
+  it("shows install progress and surfaces the outcome", async () => {
+    window.history.pushState({}, "", "/settings");
+    const source = {
+      id: "mangadex",
+      name: "MangaDex",
+      version: "1.1.1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "https://mangadex.org",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: true,
+      hasClearance: false,
+    };
+    let installed = false;
+    let resolveInstall!: (value: Response) => void;
+    const installGate = new Promise<Response>((resolve) => {
+      resolveInstall = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/sources") return Response.json(installed ? [source] : []);
+        if (path === "/api/sources/catalog") {
+          return Response.json(
+            installed ? [] : [{ ...source, installed: false, compatible: true }],
+          );
+        }
+        if (path === "/api/sources/install" && init?.method === "POST") {
+          const response = await installGate;
+          installed = true;
+          return response;
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    const installButton = await screen.findByRole("button", { name: "Install" });
+    await user.click(installButton);
+    expect(screen.getByRole("button", { name: /Installing/ })).toBeDisabled();
+    resolveInstall(Response.json(source));
+    expect(await screen.findByText("MangaDex installed.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Uninstall MangaDex/ })).toBeInTheDocument();
+  });
+
+  it("reports failed plugin installs in the error banner", async () => {
+    window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/sources") return Response.json([]);
+        if (path === "/api/sources/catalog") {
+          return Response.json([
+            {
+              id: "mangadex",
+              name: "MangaDex",
+              version: "1.1.1",
+              abiVersion: 1,
+              lang: "en",
+              baseUrl: "https://mangadex.org",
+              iconUrl: "",
+              nsfw: false,
+              installed: false,
+              compatible: true,
+            },
+          ]);
+        }
+        if (path === "/api/sources/install" && init?.method === "POST") {
+          return Response.json(
+            { error: { code: "REGISTRY_UNREACHABLE", message: "registry unreachable" } },
+            { status: 502 },
+          );
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Install" }));
+    expect(await screen.findByText("registry unreachable")).toBeInTheDocument();
+  });
+
+  it("confirms plugin removal before uninstalling", async () => {
+    window.history.pushState({}, "", "/settings");
+    const source = {
+      id: "mangadex",
+      name: "MangaDex",
+      version: "1.1.1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "https://mangadex.org",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: true,
+      hasClearance: false,
+    };
+    let removed = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/sources") return Response.json(removed ? [] : [source]);
+      if (path === "/api/sources/mangadex/" && init?.method === "DELETE") {
+        removed = true;
+        return new Response(null, { status: 204 });
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Uninstall MangaDex" }));
+    expect(screen.getByRole("heading", { name: "Remove plugin" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("heading", { name: "Remove plugin" })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/sources/mangadex/",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Uninstall MangaDex" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByText("MangaDex removed.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sources/mangadex/",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("uploads a selected backup from settings", async () => {
     window.history.pushState({}, "", "/settings");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

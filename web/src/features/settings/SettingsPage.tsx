@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Check, Download, FolderOpen, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Download, FolderOpen, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import type { CatalogEntry, Category, Source, TrackerInfo } from "../../types";
+import { Modal } from "../../components/Modal";
 import { ErrorState, PageHeader } from "../../components/States";
 
 export function SettingsPage() {
@@ -18,7 +19,11 @@ export function SettingsPage() {
   const [userAgent, setUserAgent] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [busyKey, setBusyKey] = useState<string>();
+  const [refreshing, setRefreshing] = useState(false);
+  const [confirmRemoval, setConfirmRemoval] = useState<Source>();
   const refresh = async () => {
+    setRefreshing(true);
     try {
       const [installed, entries, groups, services] = await Promise.all([
         api.sources(),
@@ -32,6 +37,38 @@ export function SettingsPage() {
       setTrackers(services);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load settings");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  // Install and removal surface their outcome immediately: the clicked action
+  // shows a busy state, failures land in the banner, successes in the status
+  // line at the top of the page.
+  const install = async (entry: CatalogEntry) => {
+    setBusyKey(`install:${entry.id}`);
+    setError("");
+    try {
+      await api.installSource(entry.id);
+      setStatus(`${entry.name} installed.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to install plugin");
+    } finally {
+      setBusyKey(undefined);
+    }
+  };
+  const uninstall = async (source: Source) => {
+    setBusyKey(`uninstall:${source.id}`);
+    setError("");
+    try {
+      await api.uninstallSource(source.id);
+      setStatus(`${source.name} removed.`);
+      setConfirmRemoval(undefined);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to remove plugin");
+    } finally {
+      setBusyKey(undefined);
     }
   };
   useEffect(() => {
@@ -50,15 +87,17 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-5 sm:p-8">
       <PageHeader eyebrow="Local configuration" title="Settings" />
+      {status && <p className="text-sm text-emerald-300">{status}</p>}
       {error && <ErrorState message={error} />}
       <section>
         <PageHeader title="Plugins">
           <button
             onClick={() => void refresh()}
             aria-label="Refresh plugins"
-            className="rounded-lg border border-zinc-700 p-2 text-zinc-300"
+            disabled={refreshing}
+            className="rounded-lg border border-zinc-700 p-2 text-zinc-300 disabled:opacity-50"
           >
-            <RefreshCw size={16} />
+            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
           </button>
         </PageHeader>
         <div className="grid gap-3 md:grid-cols-2">
@@ -75,12 +114,10 @@ export function SettingsPage() {
                   </small>
                 </span>
                 <button
-                  onClick={async () => {
-                    await api.uninstallSource(source.id);
-                    await refresh();
-                  }}
+                  onClick={() => setConfirmRemoval(source)}
                   aria-label={`Uninstall ${source.name}`}
-                  className="rounded-lg p-2 text-red-300 hover:bg-red-950/50"
+                  disabled={busyKey !== undefined}
+                  className="rounded-lg p-2 text-red-300 hover:bg-red-950/50 disabled:opacity-50"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -106,14 +143,14 @@ export function SettingsPage() {
                     </small>
                   </span>
                   <button
-                    disabled={!entry.compatible}
-                    onClick={async () => {
-                      await api.installSource(entry.id);
-                      await refresh();
-                    }}
-                    className="rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
+                    disabled={!entry.compatible || busyKey !== undefined}
+                    onClick={() => void install(entry)}
+                    className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
                   >
-                    Install
+                    {busyKey === `install:${entry.id}` && (
+                      <LoaderCircle size={13} className="animate-spin" />
+                    )}
+                    {busyKey === `install:${entry.id}` ? "Installing…" : "Install"}
                   </button>
                 </div>
               ))}
@@ -164,6 +201,28 @@ export function SettingsPage() {
             Submit clearance
           </button>
         </div>
+        {confirmRemoval && (
+          <Modal title="Remove plugin" onClose={() => setConfirmRemoval(undefined)}>
+            <p className="text-sm text-zinc-400">
+              Remove {confirmRemoval.name}? Downloaded chapters and reading progress stay on disk.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmRemoval(undefined)}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={busyKey !== undefined}
+                onClick={() => void uninstall(confirmRemoval)}
+                className="rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {busyKey === `uninstall:${confirmRemoval.id}` ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </Modal>
+        )}
       </section>
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
         <h2 className="font-semibold">Categories</h2>
@@ -216,7 +275,7 @@ export function SettingsPage() {
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder={`${tokenType} access token`}
-              className="min-w-[220px] flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+              className="min-w-55 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
             />
             <button
               onClick={async () => {
@@ -268,7 +327,6 @@ export function SettingsPage() {
           </label>
         </div>
       </section>
-      {status && <p className="text-sm text-emerald-300">{status}</p>}
     </div>
   );
 }

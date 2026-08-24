@@ -1,10 +1,13 @@
 import { act, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import App from "./App";
 
 describe("MakiDoku app shell", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
   const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
   const pageOne = "0198c0de-7a33-7000-8000-000000000001";
@@ -237,6 +240,120 @@ describe("MakiDoku app shell", () => {
     resolveInstall(Response.json(source));
     expect(await screen.findByText("MangaDex installed.")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Uninstall MangaDex/ })).toBeInTheDocument();
+  });
+
+  it("installs multiple plugins simultaneously", async () => {
+    window.history.pushState({}, "", "/settings");
+    const plugins = [
+      { id: "mangadex", name: "MangaDex" },
+      { id: "asurascans", name: "Asura Scans" },
+    ] as const;
+    const source = (plugin: (typeof plugins)[number]) => ({
+      id: plugin.id,
+      name: plugin.name,
+      version: "1.1.1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "https://example.test",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: true,
+      hasClearance: false,
+    });
+    const gates = new Map<string, (value: Response) => void>();
+    const installed = new Set<string>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return Response.json(plugins.filter((plugin) => installed.has(plugin.id)).map(source));
+        }
+        if (path === "/api/sources/catalog") {
+          return Response.json(
+            plugins
+              .filter((plugin) => !installed.has(plugin.id))
+              .map((plugin) => ({ ...source(plugin), installed: false, compatible: true })),
+          );
+        }
+        if (path === "/api/sources/install" && init?.method === "POST") {
+          const id = String(JSON.parse(String(init.body)).id);
+          const response = await new Promise<Response>((resolve) => {
+            gates.set(id, resolve);
+          });
+          installed.add(id);
+          return response;
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    const installButtons = await screen.findAllByRole("button", { name: "Install" });
+    expect(installButtons).toHaveLength(2);
+    await user.click(installButtons[0]);
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    expect(screen.getAllByRole("button", { name: /Installing/ })).toHaveLength(2);
+    gates.get("mangadex")!(Response.json(source(plugins[0])));
+    expect(await screen.findByText("MangaDex installed.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Installing/ })).toHaveLength(1);
+    gates.get("asurascans")!(Response.json(source(plugins[1])));
+    expect(await screen.findByText("Asura Scans installed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Installing/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Uninstall/ })).toHaveLength(2);
+  });
+
+  it("clears status messages after a timeout", async () => {
+    vi.useFakeTimers();
+    window.history.pushState({}, "", "/settings");
+    const source = {
+      id: "mangadex",
+      name: "MangaDex",
+      version: "1.1.1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "https://mangadex.org",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: true,
+      hasClearance: false,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/sources") return Response.json([]);
+        if (path === "/api/sources/catalog") {
+          return Response.json([{ ...source, installed: false, compatible: true }]);
+        }
+        if (path === "/api/sources/install" && init?.method === "POST") {
+          return Response.json(source);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const flush = async () => {
+      for (let tick = 0; tick < 5; tick++) await act(async () => {});
+    };
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    await flush();
+    expect(screen.getByText("MangaDex installed.")).toBeInTheDocument();
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(screen.queryByText("MangaDex installed.")).not.toBeInTheDocument();
   });
 
   it("reports failed plugin installs in the error banner", async () => {

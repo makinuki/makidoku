@@ -19,9 +19,15 @@ export function SettingsPage() {
   const [userAgent, setUserAgent] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState<string>();
+  const [installing, setInstalling] = useState<string[]>([]);
+  const [removing, setRemoving] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   const [confirmRemoval, setConfirmRemoval] = useState<Source>();
+  useEffect(() => {
+    if (!status) return;
+    const timer = window.setTimeout(() => setStatus(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [status]);
   const refresh = async () => {
     setRefreshing(true);
     try {
@@ -43,9 +49,9 @@ export function SettingsPage() {
   };
   // Install and removal surface their outcome immediately: the clicked action
   // shows a busy state, failures land in the banner, successes in the status
-  // line at the top of the page.
+  // line at the top of the page. Installs run concurrently per plugin.
   const install = async (entry: CatalogEntry) => {
-    setBusyKey(`install:${entry.id}`);
+    setInstalling((ids) => [...ids, entry.id]);
     setError("");
     try {
       await api.installSource(entry.id);
@@ -54,11 +60,11 @@ export function SettingsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to install plugin");
     } finally {
-      setBusyKey(undefined);
+      setInstalling((ids) => ids.filter((id) => id !== entry.id));
     }
   };
   const uninstall = async (source: Source) => {
-    setBusyKey(`uninstall:${source.id}`);
+    setRemoving(source.id);
     setError("");
     try {
       await api.uninstallSource(source.id);
@@ -68,7 +74,7 @@ export function SettingsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to remove plugin");
     } finally {
-      setBusyKey(undefined);
+      setRemoving(undefined);
     }
   };
   useEffect(() => {
@@ -116,7 +122,7 @@ export function SettingsPage() {
                 <button
                   onClick={() => setConfirmRemoval(source)}
                   aria-label={`Uninstall ${source.name}`}
-                  disabled={busyKey !== undefined}
+                  disabled={removing !== undefined}
                   className="rounded-lg p-2 text-red-300 hover:bg-red-950/50 disabled:opacity-50"
                 >
                   <Trash2 size={15} />
@@ -143,14 +149,14 @@ export function SettingsPage() {
                     </small>
                   </span>
                   <button
-                    disabled={!entry.compatible || busyKey !== undefined}
+                    disabled={!entry.compatible || installing.includes(entry.id)}
                     onClick={() => void install(entry)}
                     className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
                   >
-                    {busyKey === `install:${entry.id}` && (
+                    {installing.includes(entry.id) && (
                       <LoaderCircle size={13} className="animate-spin" />
                     )}
-                    {busyKey === `install:${entry.id}` ? "Installing…" : "Install"}
+                    {installing.includes(entry.id) ? "Installing…" : "Install"}
                   </button>
                 </div>
               ))}
@@ -214,11 +220,11 @@ export function SettingsPage() {
                 Cancel
               </button>
               <button
-                disabled={busyKey !== undefined}
+                disabled={removing !== undefined}
                 onClick={() => void uninstall(confirmRemoval)}
                 className="rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {busyKey === `uninstall:${confirmRemoval.id}` ? "Removing…" : "Remove"}
+                {removing === confirmRemoval.id ? "Removing…" : "Remove"}
               </button>
             </div>
           </Modal>

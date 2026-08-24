@@ -112,6 +112,7 @@ func (a *AniList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Cr
 	}
 	return status, nil
 }
+
 // scrobbleProgress converts a fractional chapter number into AniList's
 // integer progress. It floors the value so a partially read next chapter is
 // never reported as finished, and keeps the reported number deterministic

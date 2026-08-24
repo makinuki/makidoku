@@ -322,7 +322,8 @@ func TestResumeContinuesFromStagedPages(t *testing.T) {
 	}
 }
 
-func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {	repo, dataDir := downloaderRepository(t)
+func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()
 	queue := NewQueue(repo, eng, Options{Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads")})
 	mangaID := seedLibrary(t, repo)

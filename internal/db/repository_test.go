@@ -457,6 +457,7 @@ func TestListHistorySkipsOrphanedProgress(t *testing.T) {
 		t.Fatalf("items = %d, want the valid entry with the ghost skipped", len(items))
 	}
 }
+
 // When a source re-parents an external chapter to another series, the
 // canonical record must follow instead of staying on the stale entry.
 func TestUpsertChapterReParentsOnUpdate(t *testing.T) {
@@ -489,7 +490,8 @@ func TestUpsertChapterReParentsOnUpdate(t *testing.T) {
 	_ = original
 }
 
-func TestReadingProgressRequiresChapterFromManga(t *testing.T) {	repo := testRepository(t)
+func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
+	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})
 	if err != nil {
 		t.Fatal(err)

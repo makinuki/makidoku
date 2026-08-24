@@ -52,10 +52,10 @@ export function SettingsPage() {
       <PageHeader eyebrow="Local configuration" title="Settings" />
       {error && <ErrorState message={error} />}
       <section>
-        <PageHeader title="Sources">
+        <PageHeader title="Plugins">
           <button
             onClick={() => void refresh()}
-            aria-label="Refresh sources"
+            aria-label="Refresh plugins"
             className="rounded-lg border border-zinc-700 p-2 text-zinc-300"
           >
             <RefreshCw size={16} />
@@ -89,7 +89,7 @@ export function SettingsPage() {
           ))}
         </div>
         <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <h3 className="font-semibold">Available catalog entries</h3>
+          <h3 className="font-semibold">Available plugins</h3>
           <div className="mt-3 grid gap-2">
             {catalog
               .filter((entry) => !entry.installed)
@@ -122,8 +122,8 @@ export function SettingsPage() {
         <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
           <h3 className="font-semibold">Cloudflare clearance</h3>
           <p className="mt-1 text-xs text-zinc-500">
-            Submit browser clearance for a protected source. The daemon stores it; the UI never
-            reads it back.
+            Submit browser clearance for a protected plugin. MakiDoku stores it; the UI never reads
+            it back.
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <select
@@ -131,7 +131,7 @@ export function SettingsPage() {
               onChange={(e) => setCookieSource(e.target.value)}
               className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
             >
-              <option value="">Source</option>
+              <option value="">Plugin</option>
               {sources.map((source) => (
                 <option key={source.id} value={source.id}>
                   {source.name}

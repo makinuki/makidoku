@@ -203,7 +203,7 @@ export function DetailsPage() {
         ) : (
           <EmptyState
             title="No chapters"
-            text="This source returned no chapter metadata for the title."
+            text="This plugin returned no chapter metadata for the title."
           />
         )}
       </section>
@@ -377,9 +377,9 @@ function MigrationModal({
       .catch((e) => setError(e.message));
   }, [manga.id]);
   return (
-    <Modal title="Migrate source" onClose={onClose}>
+    <Modal title="Migrate plugin" onClose={onClose}>
       <p className="text-sm text-zinc-400">
-        Select a matching title from another installed source. Reading state and tracker bindings
+        Select a matching title from another installed plugin. Reading state and tracker bindings
         are preserved.
       </p>
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}

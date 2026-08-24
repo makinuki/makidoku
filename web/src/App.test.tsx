@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -73,7 +73,7 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Migrate" }));
-    expect(screen.getByRole("heading", { name: "Migrate source" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Migrate plugin" })).toBeInTheDocument();
   });
 
   it("labels chapter volumes and falls back when the cover fails to load", async () => {
@@ -250,7 +250,7 @@ describe("MakiDoku app shell", () => {
     await user.click(await screen.findByRole("button", { name: /MangaDex/ }));
     const status = await screen.findByRole("combobox", { name: "Status" });
     await user.selectOptions(status, "completed");
-    await user.type(screen.getByPlaceholderText("Search installed sources"), "Yosuga");
+    await user.type(screen.getByPlaceholderText("Search installed plugins"), "Yosuga");
     await waitFor(() => {
       const requestPaths = fetchMock.mock.calls.map(([input]) => String(input));
       expect(requestPaths).toEqual(
@@ -258,6 +258,38 @@ describe("MakiDoku app shell", () => {
           expect.stringContaining("filters=%7B%22status%22%3A%22completed%22%7D"),
         ]),
       );
+    });
+  });
+
+  it("prompts to install plugins when browse has none installed", async () => {
+    window.history.pushState({}, "", "/browse");
+    let resolveSources!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return new Promise<Response>((resolve) => {
+            resolveSources = resolve;
+          });
+        }
+        if (path === "/api/health") return Promise.resolve(Response.json({ ok: true }));
+        return Promise.resolve(Response.json([]));
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "No plugins installed" })).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "Install plugins" });
+    expect(link).toHaveAttribute("href", "/settings");
+    await act(async () => {
+      resolveSources(Response.json([]));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
   });
 });

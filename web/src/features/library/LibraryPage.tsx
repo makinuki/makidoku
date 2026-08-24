@@ -86,13 +86,13 @@ export function LibraryPage() {
       ) : (
         <EmptyState
           title="Your library is empty"
-          text="Browse an installed source and save a title to begin."
+          text="Browse an installed plugin and save a title to begin."
           action={
             <Link
               to="/browse"
               className="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
             >
-              Browse sources
+              Browse plugins
             </Link>
           }
         />

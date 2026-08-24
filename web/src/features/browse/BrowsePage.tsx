@@ -77,12 +77,12 @@ export function BrowsePage() {
   }, [query, selected, sources, filterValues]);
   return (
     <div className="mx-auto max-w-7xl p-5 sm:p-8">
-      <PageHeader eyebrow="Source explorer" title="Browse">
+      <PageHeader eyebrow="Plugin explorer" title="Browse">
         <Link
           to="/settings"
           className="rounded-lg border border-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-600"
         >
-          Manage sources
+          Manage plugins
         </Link>
       </PageHeader>
       <div className="mb-8 flex gap-3 overflow-x-auto pb-1">
@@ -94,7 +94,7 @@ export function BrowsePage() {
             <Search size={16} />
           </span>
           <span>
-            <b className="block text-sm">All sources</b>
+            <b className="block text-sm">All plugins</b>
             <small className="text-zinc-500">{sources.length} installed</small>
           </span>
         </button>
@@ -122,13 +122,13 @@ export function BrowsePage() {
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search installed sources"
+          placeholder="Search installed plugins"
           className="min-w-0 flex-1 bg-transparent outline-none"
         />
       </label>
       {selected !== "all" && filterSchemas.length > 0 && (
         <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <h2 className="text-sm font-semibold">Source filters</h2>
+          <h2 className="text-sm font-semibold">Plugin filters</h2>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {filterSchemas.map((schema) => (
               <FilterControl
@@ -145,20 +145,33 @@ export function BrowsePage() {
       )}
       {error && <ErrorState message={error} />}
       {loading ? (
-        <LoadingState label="Searching sources" />
+        <LoadingState label="Searching plugins" />
       ) : results.length ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {results.map((item) => (
             <SourceResult key={`${item.source.id}:${item.id}`} item={item} />
           ))}
         </div>
+      ) : !query && sources.length === 0 ? (
+        <EmptyState
+          title="No plugins installed"
+          text="MakiDoku reads through plugins that each connect to a website. Install one to start browsing."
+          action={
+            <Link
+              to="/settings"
+              className="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
+            >
+              Install plugins
+            </Link>
+          }
+        />
       ) : (
         <EmptyState
-          title={query ? "No matching titles" : "Search installed sources"}
+          title={query ? "No matching titles" : "Search installed plugins"}
           text={
             query
-              ? "Try another title or select a different source."
-              : "Search uses the installed source plugins and the daemon's shared HTTP stack."
+              ? "Try another title or select a different plugin."
+              : "Pick a plugin above and search to discover titles."
           }
         />
       )}

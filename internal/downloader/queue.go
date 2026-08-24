@@ -147,6 +147,11 @@ func (q *Queue) EnqueueManga(ctx context.Context, mangaID string, selection Chap
 	if err != nil {
 		return nil, err
 	}
+	// The details round-trip already happened, so record the freshness stamp:
+	// opening the title must not repeat it.
+	if err := q.repo.SetMangaDetailsFetched(manga.ID, time.Now().Unix()); err != nil {
+		return nil, err
+	}
 
 	chapters := make([]db.Chapter, 0, len(details.Chapters))
 	for _, item := range details.Chapters {

@@ -135,6 +135,27 @@ func TestQueueDownloadsChapterAndMarksArtifact(t *testing.T) {
 	}
 }
 
+// Enqueueing pulls full details server-side, so the freshness stamp must be
+// recorded: opening the title afterwards must not repeat the plugin
+// round-trip.
+func TestEnqueueMangaStampsDetailsFetched(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	queue := NewQueue(repo, queueFixture(), Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{Range: "1-1"}, FormatCBZ); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	stored, err := repo.GetManga(mangaID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.DetailsFetchedAt == nil {
+		t.Fatal("enqueue left the details freshness stamp unset")
+	}
+}
+
 // A completed download persists the page list it fetched, so the reader can
 // open the chapter from the database without another source round-trip.
 func TestQueuePersistsPageListOnCompletion(t *testing.T) {

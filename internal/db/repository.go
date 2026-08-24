@@ -268,7 +268,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.created_at,m.updated_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -438,9 +438,18 @@ func (r *Repository) GetManga(id string) (Manga, error) {
 	var manga Manga
 	err := r.db.Get(&manga, `SELECT id, source_id, source_manga_id, title,
 		alt_titles, description, authors, artists, genres, status, cover_url,
-		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, created_at, updated_at
+		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, created_at, updated_at,
+		details_fetched_at
 		FROM manga WHERE id = ?`, id)
 	return manga, err
+}
+
+// SetMangaDetailsFetched stamps the last successful full-details fetch.
+func (r *Repository) SetMangaDetailsFetched(id string, fetchedAt int64) error {
+	if _, err := r.db.Exec(`UPDATE manga SET details_fetched_at=? WHERE id=?`, fetchedAt, id); err != nil {
+		return fmt.Errorf("stamp details fetch %s: %w", id, err)
+	}
+	return nil
 }
 
 func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {

@@ -255,6 +255,40 @@ func TestUpsertMangaCoverChangeInvalidatesCache(t *testing.T) {
 	}
 }
 
+func TestMangaDetailsFetchedAtLifecycle(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Yosuga no Sora",
+		Status: "completed", CoverURL: "https://covers.test/cover.jpg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manga.DetailsFetchedAt != nil {
+		t.Fatalf("fresh upsert claims fetched details: %+v", manga.DetailsFetchedAt)
+	}
+
+	stamp := int64(1700000000)
+	if err := repo.SetMangaDetailsFetched(manga.ID, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Search-level upserts must not clobber the freshness marker.
+	if _, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "title-id", Title: "Yosuga no Sora",
+		Status: "completed", CoverURL: "https://covers.test/cover.jpg",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetManga(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.DetailsFetchedAt == nil || *stored.DetailsFetchedAt != stamp {
+		t.Fatalf("details fetched at = %+v, want %d", stored.DetailsFetchedAt, stamp)
+	}
+}
+
 func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
 	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})

@@ -59,6 +59,9 @@ type Manga struct {
 	DownloadFormat   string  `db:"download_format" json:"downloadFormat"`
 	CreatedAt        int64   `db:"created_at" json:"createdAt"`
 	UpdatedAt        int64   `db:"updated_at" json:"updatedAt"`
+	// DetailsFetchedAt records when full details were last pulled from the
+	// plugin. Search-level records stay NULL until the first details read.
+	DetailsFetchedAt *int64  `db:"details_fetched_at" json:"detailsFetchedAt,omitempty"`
 }
 
 // MarshalJSON exposes a backend-owned cover route instead of the source URL.

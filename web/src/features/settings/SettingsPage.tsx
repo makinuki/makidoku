@@ -31,6 +31,7 @@ export function SettingsPage() {
   const [creating, setCreating] = useState(false);
   const [confirmCategoryRemoval, setConfirmCategoryRemoval] = useState<Category>();
   const [removingCategory, setRemovingCategory] = useState(false);
+  const [disconnecting, setDisconnecting] = useState<string>();
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(""), 4000);
@@ -171,6 +172,31 @@ export function SettingsPage() {
       setError(e instanceof Error ? e.message : "Unable to save credentials");
     } finally {
       setSavingToken(false);
+    }
+  };
+  // OAuth hands off to the provider in a new tab; the daemon completes the
+  // flow through its callback endpoint.
+  const connectOAuth = async (tracker: TrackerInfo) => {
+    setError("");
+    try {
+      const { authorizationUrl } = await api.startTrackerAuth(tracker.name);
+      window.open(authorizationUrl, "_blank", "noopener");
+      setStatus(`Opening ${tracker.name} authorization.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to start OAuth");
+    }
+  };
+  const disconnectTracker = async (tracker: TrackerInfo) => {
+    setDisconnecting(tracker.name);
+    setError("");
+    try {
+      await api.deleteTrackerCredentials(tracker.name);
+      setStatus(`${tracker.name} disconnected.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to disconnect tracker");
+    } finally {
+      setDisconnecting(undefined);
     }
   };
   return (
@@ -377,20 +403,40 @@ export function SettingsPage() {
         <h2 className="font-semibold">Trackers</h2>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {trackers.map((tracker) => (
-            <button
-              key={tracker.name}
-              onClick={() => setTokenType(tracker.name)}
-              className="rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400"
-            >
-              <b className="block">{tracker.name}</b>
-              <small className="text-zinc-500">
-                {tracker.credential
-                  ? "Connected"
-                  : tracker.capabilities.oauth
-                    ? "OAuth available"
-                    : "Token required"}
-              </small>
-            </button>
+            <div key={tracker.name} className="space-y-2">
+              <button
+                onClick={() => setTokenType(tracker.name)}
+                className="w-full rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400"
+              >
+                <b className="block">{tracker.name}</b>
+                <small className="text-zinc-500">
+                  {tracker.credential
+                    ? "Connected"
+                    : tracker.capabilities.oauth
+                      ? "Token or OAuth"
+                      : "Token required"}
+                </small>
+              </button>
+              <div className="flex gap-2">
+                {!tracker.credential && tracker.capabilities.oauth && (
+                  <button
+                    onClick={() => void connectOAuth(tracker)}
+                    className="rounded-lg border border-amber-400 px-2 py-1 text-xs text-amber-300"
+                  >
+                    Connect
+                  </button>
+                )}
+                {tracker.credential && (
+                  <button
+                    onClick={() => void disconnectTracker(tracker)}
+                    disabled={disconnecting === tracker.name}
+                    className="rounded-lg border border-red-900 px-2 py-1 text-xs text-red-300 disabled:opacity-50"
+                  >
+                    {disconnecting === tracker.name ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                )}
+              </div>
+            </div>
           ))}
         </div>
         {tokenType && (

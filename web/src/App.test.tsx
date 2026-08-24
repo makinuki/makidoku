@@ -1531,7 +1531,77 @@ describe("settings credential feedback", () => {
     expect(screen.getByText(/tracker unreachable/)).toBeInTheDocument();
   });
 
-  it("removes a category after confirmation", async () => {    window.history.pushState({}, "", "/settings");
+  it("connects and disconnects tracker credentials", async () => {
+    const open = vi.fn();
+    const originalOpen = Object.getOwnPropertyDescriptor(window, "open");
+    Object.defineProperty(window, "open", { value: open, configurable: true, writable: true });
+    window.history.pushState({}, "", "/settings");
+    let deleted = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/trackers") {
+        return Response.json([
+          {
+            name: "AniList",
+            capabilities: { search: true, status: true, scrobble: true, oauth: false, token: true },
+            credential: true,
+          },
+          {
+            name: "Kitsu",
+            capabilities: { search: true, status: true, scrobble: true, oauth: true, token: true },
+            credential: false,
+          },
+        ]);
+      }
+      if (path === "/api/trackers/Kitsu/auth/start") {
+        return Response.json({
+          authorizationUrl: "https://kitsu.test/auth",
+          redirectUri: "http://127.0.0.1:8080/api/trackers/kitsu/auth/callback",
+        });
+      }
+      if (path === "/api/trackers/AniList/credentials") {
+        deleted++;
+        return new Response(null, { status: 204 });
+      }
+      if (
+        path === "/api/sources" ||
+        path === "/api/categories" ||
+        path === "/api/catalog" ||
+        path === "/api/tracker-sync"
+      ) {
+        return Response.json([]);
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/trackers/Kitsu/auth/start", expect.anything());
+    expect(open).toHaveBeenCalledWith("https://kitsu.test/auth", "_blank", "noopener");
+    expect(await screen.findByText("Opening Kitsu authorization.")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByText("AniList disconnected.")).toBeInTheDocument();
+    expect(deleted).toBe(1);
+    if (originalOpen) {
+      Object.defineProperty(window, "open", originalOpen);
+    } else {
+      delete (window as { open?: unknown }).open;
+    }
+  });
+
+  it("removes a category after confirmation", async () => {
+    window.history.pushState({}, "", "/settings");
     let deleteCalls = 0;
     vi.stubGlobal(
       "fetch",

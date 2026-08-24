@@ -1,7 +1,9 @@
 package db
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,5 +416,31 @@ func TestUpsertMangaStubRejectsMissingSourceReference(t *testing.T) {
 	}
 	if _, err := repo.UpsertMangaStub(Manga{SourceID: "mangadex", SourceMangaID: "  ", Title: "X"}); err == nil {
 		t.Fatal("accepted an empty source manga id")
+	}
+}
+
+// The library payload must expose the backend cover route, not the raw
+// source URL, so covers keep working offline and behind anti-bot checks.
+func TestListLibraryExposesBackendCoverRoute(t *testing.T) {
+	repo := testRepository(t)
+	if _, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "cover", Title: "Covered", Status: "ongoing", CoverURL: "https://upstream.test/cover.png", InLibrary: true}); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repo.ListLibrary("", 0)
+	if err != nil || len(library) != 1 {
+		t.Fatalf("library = %+v, err = %v", library, err)
+	}
+	payload, err := json.Marshal(library[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item struct {
+		CoverURL string `json:"coverUrl"`
+	}
+	if err := json.Unmarshal(payload, &item); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(item.CoverURL, "/api/manga/") || !strings.HasSuffix(item.CoverURL, "/cover") {
+		t.Fatalf("coverUrl = %q, want the backend route", item.CoverURL)
 	}
 }

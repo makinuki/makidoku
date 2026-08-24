@@ -104,7 +104,7 @@ func (l LibraryManga) MarshalJSON() ([]byte, error) {
 		Progress:       l.Progress,
 		UnreadChapters: l.UnreadChapters,
 		SourceName:     l.SourceName,
-		CoverURL:       l.Manga.CoverURL,
+		CoverURL:       "/api/manga/" + l.Manga.ID + "/cover",
 	})
 }
 

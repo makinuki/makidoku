@@ -334,6 +334,30 @@ func TestMarkChapterDownloadedRespectsCanceledQueueItem(t *testing.T) {
 	}
 }
 
+// Completion is monotonic: navigating back a page after finishing must not
+// clear the completed flag (the remote tracker keeps it completed).
+func TestUpsertReadingProgressKeepsCompletion(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "chapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 10, TotalPages: 10, IsCompleted: true}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 9, TotalPages: 10, IsCompleted: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.IsCompleted {
+		t.Fatal("navigating back cleared the completed flag")
+	}
+}
+
 func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
 	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})

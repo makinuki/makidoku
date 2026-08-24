@@ -638,12 +638,16 @@ func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingPro
 		return ReadingProgress{}, errors.New("last read chapter does not belong to manga")
 	}
 	progress.LastReadAt = time.Now().Unix()
+	// Completion is monotonic: a later write that reports the chapter as
+	// unfinished (navigating back) must not clear an existing flag, which
+	// would disagree with remote tracker state.
 	_, err := r.db.Exec(`INSERT INTO reading_progress(
 		manga_id, last_read_chapter_id, last_read_page, total_pages, is_completed, last_read_at
 	) VALUES(?, ?, ?, ?, ?, ?)
 	ON CONFLICT(manga_id) DO UPDATE SET last_read_chapter_id=excluded.last_read_chapter_id,
 	last_read_page=excluded.last_read_page, total_pages=excluded.total_pages,
-	is_completed=excluded.is_completed, last_read_at=excluded.last_read_at`,
+	is_completed=reading_progress.is_completed OR excluded.is_completed,
+	last_read_at=excluded.last_read_at`,
 		progress.MangaID, progress.LastReadChapterID, progress.LastReadPage,
 		progress.TotalPages, progress.IsCompleted, progress.LastReadAt)
 	if err != nil {

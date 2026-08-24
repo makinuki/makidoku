@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -31,8 +32,11 @@ func (w *SyncWorker) Run(ctx context.Context) error {
 	ticker := time.NewTicker(w.Interval)
 	defer ticker.Stop()
 	for {
+		// A failed poll, claim, or bookkeeping write must not stop the
+		// worker: a transient storage error would otherwise take the whole
+		// daemon down. Only cancellation ends the loop.
 		if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			return err
+			log.Printf("tracker sync: %v", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -65,21 +69,21 @@ func (w *SyncWorker) ProcessOne(ctx context.Context, trackerType string) (bool, 
 	}
 	binding, err := w.Repo.GetTrackerBindingByID(job.BindingID)
 	if err != nil {
-		_ = w.Repo.FailTrackerSync(job.ID, false, err.Error())
+		w.failJob(job.ID, false, err.Error())
 		return true, nil
 	}
 	provider, ok := w.Registry.Get(binding.TrackerType)
 	if !ok {
-		_ = w.Repo.FailTrackerSync(job.ID, false, "unknown tracker: "+binding.TrackerType)
+		w.failJob(job.ID, false, "unknown tracker: "+binding.TrackerType)
 		return true, nil
 	}
 	if !provider.Capabilities().Scrobble {
-		_ = w.Repo.FailTrackerSync(job.ID, false, ErrUnsupported.Error())
+		w.failJob(job.ID, false, ErrUnsupported.Error())
 		return true, nil
 	}
 	cred, err := w.Registry.Credential(binding.TrackerType)
 	if err != nil {
-		_ = w.Repo.FailTrackerSync(job.ID, false, err.Error())
+		w.failJob(job.ID, false, err.Error())
 		return true, nil
 	}
 	err = provider.ScrobbleProgress(ctx, binding, job.ChapterNumber, cred)
@@ -87,9 +91,16 @@ func (w *SyncWorker) ProcessOne(ctx context.Context, trackerType string) (bool, 
 		_ = w.Repo.UpdateTrackerSyncedChapter(binding.ID, job.ChapterNumber)
 		return true, w.Repo.CompleteTrackerSync(job.ID)
 	}
-	retry := retryableTrackerError(err)
-	_ = w.Repo.FailTrackerSync(job.ID, retry, err.Error())
+	w.failJob(job.ID, retryableTrackerError(err), err.Error())
 	return true, nil
+}
+
+// failJob records a job failure and logs a failed bookkeeping write instead
+// of discarding it, so a wedged RUNNING job stays visible in the logs.
+func (w *SyncWorker) failJob(jobID int64, retry bool, message string) {
+	if err := w.Repo.FailTrackerSync(jobID, retry, message); err != nil {
+		log.Printf("tracker sync: recording failure for job %d: %v", jobID, err)
+	}
 }
 
 func retryableTrackerError(err error) bool {

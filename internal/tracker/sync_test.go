@@ -184,3 +184,65 @@ func TestSyncWorkerRunStopsCleanlyOnCancellation(t *testing.T) {
 		t.Fatalf("run error = %v", err)
 	}
 }
+
+// A storage failure while claiming work must not end the sync loop: the
+// daemon keeps running and polling until it is cancelled.
+func TestSyncWorkerSurvivesClaimFailures(t *testing.T) {
+	repo := trackerRepo(t)
+	now := time.Now().Unix()
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s5','S','1',1,'en','https://x','x',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s5", SourceMangaID: "m", Title: "M", Status: "ongoing", CoverURL: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "unknown-tracker", RemoteID: "1", RemoteTitle: "M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.EnqueueTrackerSync(manga.ID, binding.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := &SyncWorker{Repo: repo, Registry: NewRegistry(repo), Interval: 25 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errs := make(chan error, 1)
+	go func() { errs <- worker.Run(ctx) }()
+
+	// Wait until the worker processed the seeded job once, proving the loop
+	// is up and polling before the store breaks underneath it.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		jobs, listErr := repo.ListTrackerSyncJobs()
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(jobs) == 1 && jobs[0].Status == db.SyncFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker never processed the seeded job: %+v", jobs)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := repo.DB().Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-errs:
+		t.Fatalf("worker exited on a claim failure: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-errs:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not stop after cancellation")
+	}
+}

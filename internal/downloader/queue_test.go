@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -258,8 +259,70 @@ func TestQueueStopsWhenQueueRowVanishes(t *testing.T) {
 	}
 }
 
-func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {
+// After a daemon restart mid-download, the persisted page record plus staged
+// files let the worker finish without refetching completed pages.
+func TestResumeContinuesFromStagedPages(t *testing.T) {
 	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	downloadDir := filepath.Join(dataDir, "downloads")
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: downloadDir, MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an interrupted attempt: one page fetched and staged, recorded
+	// in the queue row, then the process died.
+	claimed, err := repo.ClaimNextQueueItem()
+	if err != nil || claimed == nil {
+		t.Fatalf("claim = %+v, err = %v", claimed, err)
+	}
+	tempDir := filepath.Join(downloadDir, ".tmp", strconv.FormatInt(claimed.ID, 10))
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "000000.jpg"), []byte("image-page-0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveQueuePageProgress(claimed.ID, 2, []int{0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ResetInterruptedQueue(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatalf("drain after restart: %v", err)
+	}
+
+	stored, err := repo.GetQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.QueueCompleted {
+		t.Fatalf("status = %s", stored.Status)
+	}
+	chapter, err := repo.GetChapter(stored.ChapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.OpenReader(*chapter.DownloadPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if len(reader.File) != 3 {
+		t.Fatalf("archive entries = %d, want both pages plus ComicInfo", len(reader.File))
+	}
+	if eng.fetches != 1 {
+		t.Fatalf("image fetches = %d, want only the missing page refetched", eng.fetches)
+	}
+}
+
+func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()
 	queue := NewQueue(repo, eng, Options{Workers: 1, DownloadDir: filepath.Join(dataDir, "downloads")})
 	mangaID := seedLibrary(t, repo)

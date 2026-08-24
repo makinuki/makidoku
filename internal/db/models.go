@@ -259,4 +259,8 @@ type DownloadQueueItem struct {
 	ChapterTitle     *string  `db:"chapter_title" json:"chapterTitle,omitempty"`
 	Language         *string  `db:"language" json:"language,omitempty"`
 	Scanlator        *string  `db:"scanlator" json:"scanlator,omitempty"`
+	// DonePagesJSON holds the JSON-encoded page indexes already persisted in
+	// a previous pass so an interrupted download resumes instead of
+	// restarting. It is worker bookkeeping and never leaves the backend.
+	DonePagesJSON string `db:"done_pages" json:"-"`
 }

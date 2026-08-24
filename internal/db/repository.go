@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -924,6 +925,31 @@ func (r *Repository) UpdateQueueProgress(id int64, totalPages, downloadedPages i
 	return requireChange(result, "update queue progress")
 }
 
+// SaveQueuePageProgress persists the set of page indexes already fetched for
+// an in-flight download. An interrupted or failed attempt resumes from this
+// record instead of refetching every page.
+func (r *Repository) SaveQueuePageProgress(id int64, totalPages int, done []int) error {
+	if totalPages < 0 || len(done) > totalPages {
+		return errors.New("invalid queue page progress")
+	}
+	encoded, err := json.Marshal(done)
+	if err != nil {
+		return err
+	}
+	progress := 0
+	if totalPages > 0 {
+		progress = len(done) * 100 / totalPages
+	}
+	result, err := r.db.Exec(`UPDATE download_queue SET
+		downloaded_pages = ?, progress = ?, done_pages = ?
+		WHERE id = ? AND status IN (?, ?)`,
+		len(done), progress, string(encoded), id, QueuePending, QueueDownloading)
+	if err != nil {
+		return err
+	}
+	return requireChange(result, "save queue page progress")
+}
+
 func (r *Repository) MarkQueueFailed(id int64, queueErr error) error {
 	message := "download failed"
 	if queueErr != nil {
@@ -1076,7 +1102,7 @@ func (r *Repository) ListQueue() ([]DownloadQueueItem, error) {
 
 const queueSelect = `SELECT
 	q.id, q.chapter_id, q.status, q.progress, q.total_pages,
-	q.downloaded_pages, q.error_message, q.queued_at,
+	q.downloaded_pages, q.done_pages, q.error_message, q.queued_at,
 	c.manga_id, cs.source_chapter_id, c.chapter_number, c.volume,
 	c.title AS chapter_title, c.language, c.scanlator,
 	c.source_id, m.source_manga_id, m.title AS manga_title,

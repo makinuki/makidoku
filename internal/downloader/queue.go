@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -289,7 +290,14 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		return q.fail(item, errors.New("source returned no pages"))
 	}
 	sort.SliceStable(pages, func(i, j int) bool { return pages[i].Index < pages[j].Index })
-	if err := q.repo.UpdateQueueProgress(item.ID, len(pages), 0, nil); err != nil {
+	done := parseDonePages(item.DonePagesJSON)
+	// Fetched pages land in a per-item staging directory so an interrupted
+	// attempt resumes from disk instead of refetching everything.
+	tempDir := filepath.Join(q.options.DownloadDir, ".tmp", strconv.FormatInt(item.ID, 10))
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		return q.fail(item, err)
+	}
+	if err := q.repo.UpdateQueueProgress(item.ID, len(pages), len(done), nil); err != nil {
 		if q.stopped(item.ID) {
 			return nil
 		}
@@ -298,6 +306,10 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 
 	downloaded := make([]PageData, 0, len(pages))
 	for index, page := range pages {
+		if data, ext, ok := readStagedPage(tempDir, index); ok {
+			downloaded = append(downloaded, PageData{Bytes: data, Extension: ext})
+			continue
+		}
 		if q.stopped(item.ID) {
 			return nil
 		}
@@ -322,9 +334,19 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 				return q.fail(item, err)
 			}
 		}
+		if err := stagePage(tempDir, index, data, imageExtension(page.URL, data)); err != nil {
+			return q.fail(item, err)
+		}
 		downloaded = append(downloaded, PageData{Bytes: data, Extension: imageExtension(page.URL, data)})
+		done = append(done, index)
 		q.downloadedPages.Add(1)
-		if err := q.repo.UpdateQueueProgress(item.ID, len(pages), index+1, nil); err != nil {
+		if err := q.repo.UpdateQueueProgress(item.ID, len(pages), len(done), nil); err != nil {
+			if q.stopped(item.ID) {
+				return nil
+			}
+			return q.fail(item, err)
+		}
+		if err := q.repo.SaveQueuePageProgress(item.ID, len(pages), done); err != nil {
 			if q.stopped(item.ID) {
 				return nil
 			}
@@ -386,6 +408,10 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		q.removeArtifact(archivePath)
 		return q.fail(item, err)
 	}
+	// The archive is final; staged pages are no longer needed.
+	if err := os.RemoveAll(tempDir); err != nil {
+		log.Printf("downloader: removing staged pages for %s failed: %v", item.ChapterID, err)
+	}
 	q.publishCurrent("completed", item.ID)
 	return nil
 }
@@ -396,6 +422,46 @@ func (q *Queue) removeArtifact(path string) {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Printf("downloader: removing incomplete artifact %s failed: %v", path, err)
 	}
+}
+
+// parseDonePages reads the persisted page index list; unparsable content
+// simply means "nothing to resume".
+func parseDonePages(raw string) []int {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var done []int
+	_ = json.Unmarshal([]byte(raw), &done)
+	return done
+}
+
+// stagePage stores one fetched page in the item's staging directory. The
+// extension travels in the file name so a resumed pass can reconstruct the
+// PageData without refetching.
+func stagePage(dir string, index int, data []byte, ext string) error {
+	name := filepath.Join(dir, fmt.Sprintf("%06d%s", index, ext))
+	return os.WriteFile(name, data, 0o644)
+}
+
+// readStagedPage returns previously staged bytes for a page index, reporting
+// false when the page was never staged or its file went missing.
+func readStagedPage(dir string, index int) ([]byte, string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, "", false
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		var staged int
+		if n, err := fmt.Sscanf(name, "%06d", &staged); err == nil && n == 1 && staged == index {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				return nil, "", false
+			}
+			return data, filepath.Ext(name), true
+		}
+	}
+	return nil, "", false
 }
 
 func (q *Queue) fail(item db.DownloadQueueItem, cause error) error {

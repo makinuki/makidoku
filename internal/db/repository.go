@@ -971,6 +971,24 @@ func (r *Repository) CancelQueueItem(id int64) error {
 		QueuePending, QueueDownloading, QueuePaused, QueueFailed)
 }
 
+// RetryQueueItem returns a failed download to the pending state so the
+// worker can pick it up again.
+func (r *Repository) RetryQueueItem(id int64) error {
+	return r.transitionQueueItem(id, QueuePending, QueueFailed)
+}
+
+// ClearFinishedQueueItems deletes terminal rows (completed, canceled and
+// failed). Terminal rows are history only; deleting them touches no
+// downloaded chapter state.
+func (r *Repository) ClearFinishedQueueItems() (int64, error) {
+	result, err := r.db.Exec(`DELETE FROM download_queue WHERE status IN (?, ?, ?)`,
+		QueueCompleted, QueueCanceled, QueueFailed)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (r *Repository) transitionQueueItem(id int64, target string, allowed ...string) error {
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(allowed)), ",")
 	args := make([]any, 0, len(allowed)+2)

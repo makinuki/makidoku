@@ -1526,6 +1526,78 @@ describe("settings credential feedback", () => {
     expect(await screen.findByText("Category Reading removed.")).toBeInTheDocument();
     expect(deleteCalls).toBe(1);
   });
+
+  it("retries failed downloads and clears finished rows", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+    const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+    // jsdom has no WebSocket; a silent stub keeps the page's subscription
+    // from interfering with the HTTP assertions.
+    class FakeWebSocket {
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    window.history.pushState({}, "", "/downloads");
+    let retries = 0;
+    let cleared = 0;
+    const failedItem = {
+      id: 5,
+      mangaId,
+      chapterId: chapterId,
+      mangaTitle: "Yosuga no Sora",
+      chapterTitle: "Chapter 1",
+      chapterNumber: 1,
+      sourceName: "MangaDex",
+      status: "FAILED",
+      progress: 40,
+      errorMessage: "connection reset",
+    };
+    const doneItem = { ...failedItem, id: 6, status: "COMPLETED", progress: 100, errorMessage: null };
+    let items: Array<Record<string, unknown>> = [failedItem, doneItem];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/download" && !init?.method) {
+          return Response.json({
+            items,
+            stats: { downloadedPages: 0, retriedRequests: 0, throttledRequests: 0 },
+          });
+        }
+        if (path === "/api/download/5/retry") {
+          retries++;
+          items = items.map((item) =>
+            item.id === 5 ? { ...failedItem, status: "PENDING", progress: 0 } : item,
+          );
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/api/download/clear") {
+          cleared++;
+          items = [];
+          return Response.json({ removed: 1 });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("connection reset")).toBeInTheDocument();
+
+    // The finished row keeps "Clear finished" available while the failed one
+    // offers retry.
+    fireEvent.click(await screen.findByRole("button", { name: "retry" }));
+    expect(retries).toBe(1);
+    expect(await screen.findByText(/· pending/)).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clear finished" }));
+    expect(cleared).toBe(1);
+    expect(await screen.findByText("Download queue is empty")).toBeInTheDocument();
+  });
 });
 
 describe("details page action feedback", () => {

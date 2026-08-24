@@ -22,12 +22,27 @@ type downloadSnapshot struct {
 func (s *Server) mountDownloads(r chi.Router) {
 	r.Get("/download", s.downloadSnapshot)
 	r.Post("/download", s.enqueueDownload)
+	r.Post("/download/clear", s.clearFinishedDownloads)
 	r.Get("/download/events", s.downloadEvents)
 	r.Route("/download/{itemID}", func(item chi.Router) {
 		item.Post("/pause", s.pauseDownload)
 		item.Post("/resume", s.resumeDownload)
 		item.Post("/cancel", s.cancelDownload)
+		item.Post("/retry", s.retryDownload)
 	})
+}
+
+func (s *Server) retryDownload(w http.ResponseWriter, r *http.Request) {
+	s.controlDownload(w, r, s.downloads.Retry)
+}
+
+func (s *Server) clearFinishedDownloads(w http.ResponseWriter, r *http.Request) {
+	removed, err := s.downloads.ClearFinished()
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"removed": removed})
 }
 
 func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {

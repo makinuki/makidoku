@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pause, Play, X } from "lucide-react";
+import { Pause, Play, RotateCw, X } from "lucide-react";
 import { api } from "../../api";
 import type { DownloadEvent, DownloadSnapshot, QueueItem } from "../../types";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
@@ -12,12 +12,24 @@ export function DownloadsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const socket = useRef<WebSocket | undefined>(undefined);
+  const [clearing, setClearing] = useState(false);
   const refresh = () =>
     api
       .downloads()
       .then(setSnapshot)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+  const clearFinished = async () => {
+    setClearing(true);
+    try {
+      await api.clearFinishedDownloads();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to clear finished downloads");
+    } finally {
+      setClearing(false);
+    }
+  };
   useEffect(() => {
     void refresh();
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -42,11 +54,25 @@ export function DownloadsPage() {
   return (
     <div className="mx-auto max-w-5xl p-5 sm:p-8">
       <PageHeader eyebrow="Queue" title="Downloads">
-        <div className="text-right text-xs text-zinc-500">
-          <p>{snapshot.stats.downloadedPages} pages saved</p>
-          <p>
-            {snapshot.stats.retriedRequests} retries · {snapshot.stats.throttledRequests} throttled
-          </p>
+        <div className="flex items-center gap-4">
+          <div className="text-right text-xs text-zinc-500">
+            <p>{snapshot.stats.downloadedPages} pages saved</p>
+            <p>
+              {snapshot.stats.retriedRequests} retries ·{" "}
+              {snapshot.stats.throttledRequests} throttled
+            </p>
+          </div>
+          {snapshot.items.some(
+            (item) => item.status === "COMPLETED" || item.status === "CANCELED" || item.status === "FAILED",
+          ) && (
+            <button
+              onClick={() => void clearFinished()}
+              disabled={clearing}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 disabled:opacity-50"
+            >
+              {clearing ? "Clearing…" : "Clear finished"}
+            </button>
+          )}
         </div>
       </PageHeader>
       {error && <ErrorState message={error} />}
@@ -70,17 +96,22 @@ export function DownloadsPage() {
 
 function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const action =
     item.status === "PAUSED"
       ? "resume"
       : ["PENDING", "DOWNLOADING"].includes(item.status)
         ? "pause"
         : undefined;
-  const control = async (value: "pause" | "resume" | "cancel") => {
+  const retryable = item.status === "FAILED";
+  const control = async (value: "pause" | "resume" | "cancel" | "retry") => {
     setBusy(true);
+    setError("");
     try {
       await api.controlDownload(item.id, value);
       onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to update the download");
     } finally {
       setBusy(false);
     }
@@ -101,7 +132,9 @@ function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void })
               style={{ width: `${item.progress}%` }}
             />
           </div>
-          {item.errorMessage && <p className="mt-2 text-xs text-red-300">{item.errorMessage}</p>}
+          {(item.errorMessage || error) && (
+            <p className="mt-2 text-xs text-red-300">{error || item.errorMessage}</p>
+          )}
         </div>
         <strong className="text-sm text-zinc-300">{item.progress}%</strong>
         <div className="flex gap-1">
@@ -116,7 +149,18 @@ function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void })
               {action === "pause" ? <Pause size={16} /> : <Play size={16} />}
             </button>
           )}
-          {["PENDING", "DOWNLOADING", "PAUSED"].includes(item.status) && (
+          {retryable && (
+            <button
+              disabled={busy}
+              aria-label="retry"
+              title="Retry"
+              onClick={() => void control("retry")}
+              className="rounded-lg p-2 text-amber-300 hover:bg-zinc-800"
+            >
+              <RotateCw size={16} />
+            </button>
+          )}
+          {["PENDING", "DOWNLOADING", "PAUSED", "FAILED"].includes(item.status) && (
             <button
               disabled={busy}
               aria-label="cancel"

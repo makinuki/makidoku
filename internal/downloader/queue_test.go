@@ -3,6 +3,7 @@ package downloader
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -286,5 +287,57 @@ func TestEnqueueMangaRejectsEmptySelection(t *testing.T) {
 	mangaID := seedLibrary(t, repo)
 	if _, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{}, FormatCBZ); err == nil {
 		t.Fatal("accepted an empty chapter selection")
+	}
+}
+
+// A failed download can be returned to the queue and completed on retry, and
+// terminal rows can be cleared without touching downloaded chapters.
+func TestRetryAndClearFinishedDownloads(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ClaimNextQueueItem(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkQueueFailed(items[0].ID, errors.New("boom")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queue.Retry(items[0].ID); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	retried, err := repo.GetQueueItem(items[0].ID)
+	if err != nil || retried.Status != db.QueuePending {
+		t.Fatalf("retried status = %+v, err = %v", retried.Status, err)
+	}
+
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatalf("drain after retry: %v", err)
+	}
+	completed, err := repo.GetQueueItem(items[0].ID)
+	if err != nil || completed.Status != db.QueueCompleted {
+		t.Fatalf("status after drain = %+v, err = %v", completed.Status, err)
+	}
+	chapter, err := repo.GetChapter(items[0].ChapterID)
+	if err != nil || !chapter.Downloaded {
+		t.Fatalf("chapter after retry = %+v, err = %v", chapter.Downloaded, err)
+	}
+
+	removed, err := queue.ClearFinished()
+	if err != nil || removed != 1 {
+		t.Fatalf("clear finished = %d, err = %v", removed, err)
+	}
+	if _, err := repo.GetQueueItem(items[0].ID); err == nil {
+		t.Fatal("terminal row survived the clear")
+	}
+	if !chapter.Downloaded {
+		t.Fatal("cleared row must not affect downloaded chapter state")
 	}
 }

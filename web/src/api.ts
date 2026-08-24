@@ -85,8 +85,9 @@ export const api = {
       body: JSON.stringify({ mangaId, chapters, range, format }),
     }),
   downloads: () => request<DownloadSnapshot>("/api/download"),
-  controlDownload: (id: number, action: "pause" | "resume" | "cancel") =>
+  controlDownload: (id: number, action: "pause" | "resume" | "cancel" | "retry") =>
     request(`/api/download/${id}/${action}`, { method: "POST" }),
+  clearFinishedDownloads: () => request<{ removed: number }>("/api/download/clear", { method: "POST" }),
   progress: (mangaId: string, chapterId: string, page: number, total: number, complete = false) =>
     request<Progress>(`/api/progress${complete ? "/complete" : ""}`, {
       method: "POST",

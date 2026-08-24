@@ -25,6 +25,8 @@ type fakeDownloads struct {
 	pausedID   int64
 	resumedID  int64
 	canceledID int64
+	retriedID  int64
+	cleared    int64
 	events     chan downloader.Event
 }
 
@@ -41,6 +43,11 @@ func (f *fakeDownloads) EnqueueManga(ctx context.Context, mangaID string, select
 func (f *fakeDownloads) Pause(id int64) error  { f.pausedID = id; return nil }
 func (f *fakeDownloads) Resume(id int64) error { f.resumedID = id; return nil }
 func (f *fakeDownloads) Cancel(id int64) error { f.canceledID = id; return nil }
+func (f *fakeDownloads) Retry(id int64) error  { f.retriedID = id; return nil }
+func (f *fakeDownloads) ClearFinished() (int64, error) {
+	f.items = nil
+	return f.cleared, nil
+}
 func (f *fakeDownloads) Subscribe() (<-chan downloader.Event, func()) {
 	return f.events, func() {}
 }
@@ -92,6 +99,7 @@ func TestDownloadControlRoutes(t *testing.T) {
 		"pause":  &downloads.pausedID,
 		"resume": &downloads.resumedID,
 		"cancel": &downloads.canceledID,
+		"retry":  &downloads.retriedID,
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/42/"+route, nil))
@@ -101,6 +109,28 @@ func TestDownloadControlRoutes(t *testing.T) {
 		if *want != 42 {
 			t.Fatalf("%s id = %d", route, *want)
 		}
+	}
+}
+
+func TestClearFinishedDownloads(t *testing.T) {
+	downloads := newFakeDownloads()
+	downloads.cleared = 3
+	downloads.items = []db.DownloadQueueItem{{DownloadQueue: db.DownloadQueue{ID: 7, Status: db.QueueCompleted}}}
+	handler := downloadRouter(downloads)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/clear", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Removed int64 `json:"removed"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Removed != 3 {
+		t.Fatalf("removed = %d", payload.Removed)
 	}
 }
 

@@ -447,6 +447,26 @@ func (q *Queue) Cancel(id int64) error {
 	return nil
 }
 
+// Retry returns a failed download to the pending state and wakes the worker.
+func (q *Queue) Retry(id int64) error {
+	if err := q.repo.RetryQueueItem(id); err != nil {
+		return err
+	}
+	q.publishCurrent("pending", id)
+	q.notify()
+	return nil
+}
+
+// ClearFinished deletes terminal queue rows. It reports how many rows went
+// away so the caller can answer with the removed count.
+func (q *Queue) ClearFinished() (int64, error) {
+	removed, err := q.repo.ClearFinishedQueueItems()
+	if err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
 func (q *Queue) publishCurrent(eventType string, id int64) {
 	item, err := q.repo.GetQueueItem(id)
 	if err == nil {

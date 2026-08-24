@@ -15,6 +15,7 @@ export function BrowsePage() {
   const [filterValues, setFilterValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [failedSources, setFailedSources] = useState({ failed: 0, total: 0 });
   useEffect(() => {
     if (selected === "all") {
       setFilterSchemas([]);
@@ -54,6 +55,7 @@ export function BrowsePage() {
       setLoading(true);
       setError("");
       const wanted = selected === "all" ? sources : sources.filter((item) => item.id === selected);
+      let failed = 0;
       Promise.all(
         wanted.map(async (source) => {
           try {
@@ -65,11 +67,15 @@ export function BrowsePage() {
             );
             return page.items.map((item) => ({ ...item, source }));
           } catch {
+            failed++;
             return [];
           }
         }),
       )
-        .then((items) => setResults(items.flat()))
+        .then((items) => {
+          setFailedSources({ failed, total: wanted.length });
+          setResults(items.flat());
+        })
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false));
     }, 300);
@@ -144,6 +150,11 @@ export function BrowsePage() {
         </section>
       )}
       {error && <ErrorState message={error} />}
+      {failedSources.failed > 0 && (
+        <p role="alert" className="mb-4 text-xs text-red-300">
+          {failedSources.failed} of {failedSources.total} plugins failed to respond.
+        </p>
+      )}
       {loading ? (
         <LoadingState label="Searching plugins" />
       ) : results.length ? (

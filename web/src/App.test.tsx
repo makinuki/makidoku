@@ -33,7 +33,7 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByRole("heading", { name: "Library" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Your library is empty" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your library is empty" })).toBeInTheDocument();
     expect(screen.getByLabelText("Daemon status")).toHaveTextContent("Connected");
     expect(screen.queryByText("Local user")).not.toBeInTheDocument();
   });
@@ -1506,5 +1506,161 @@ describe("details page action feedback", () => {
     });
     expect(await screen.findByText(/queued for download/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Download/ })).toBeEnabled();
+  });
+});
+
+describe("search robustness", () => {
+  it("debounces library search and drops stale responses", async () => {
+    vi.useFakeTimers();
+    window.history.pushState({}, "", "/");
+    const libraryCalls: string[] = [];
+    let resolveInitial!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL): Promise<Response> => {
+        const path = String(input);
+        if (path.startsWith("/api/library")) {
+          libraryCalls.push(path);
+          if (libraryCalls.length === 1) {
+            // The initial load stalls; a later query must still win.
+            return new Promise<Response>((resolve) => {
+              resolveInitial = resolve;
+            });
+          }
+          return Promise.resolve(
+            Response.json([
+              {
+                id: "fresh",
+                title: "Fresh Title",
+                coverUrl: "",
+                updatedAt: 1,
+                categories: [],
+                unreadChapters: 0,
+              },
+            ]),
+          );
+        }
+        if (path === "/api/categories") return Promise.resolve(Response.json([]));
+        if (path === "/api/health") return Promise.resolve(Response.json({ ok: true }));
+        return Promise.resolve(Response.json([]));
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    const input = screen.getByPlaceholderText("Search your library");
+    fireEvent.change(input, { target: { value: "yo" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    fireEvent.change(input, { target: { value: "yosuga" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByText("Fresh Title")).toBeInTheDocument();
+
+    // The cancelled "yo" request never fired; only the settled queries ran.
+    expect(libraryCalls.filter((call) => call.endsWith("q=yo"))).toHaveLength(0);
+
+    await act(async () => {
+      resolveInitial(
+        Response.json([
+          {
+            id: "stale",
+            title: "Stale Title",
+            coverUrl: "",
+            updatedAt: 2,
+            categories: [],
+            unreadChapters: 0,
+          },
+        ]),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Stale Title")).not.toBeInTheDocument();
+    expect(screen.getByText("Fresh Title")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("reports library errors in global search", async () => {
+    window.history.pushState({}, "", "/");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.startsWith("/api/library")) {
+          return Response.json({ error: { message: "database busy" } }, { status: 500 });
+        }
+        if (path === "/api/health") return Response.json({ ok: true });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Search titles" }));
+    const input = await screen.findAllByPlaceholderText("Search your library");
+    fireEvent.change(input[input.length - 1], { target: { value: "anything" } });
+    expect(await screen.findByText("database busy")).toBeInTheDocument();
+    expect(screen.queryByText("No library matches.")).not.toBeInTheDocument();
+  });
+
+  it("reports partial plugin failures in browse results", async () => {
+    window.history.pushState({}, "", "/browse");
+    const sourceOne = "0198c0de-7a00-7000-8000-000000000001";
+    const sourceTwo = "0198c0de-7a00-7000-8000-000000000002";
+    const source = (id: string, name: string) => ({
+      id,
+      name,
+      version: "1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: false,
+      hasClearance: false,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return Response.json([source(sourceOne, "MangaDex"), source(sourceTwo, "Asura")]);
+        }
+        if (path.startsWith(`/api/sources/${sourceOne}/search`)) {
+          return Response.json({ error: { message: "blocked" } }, { status: 503 });
+        }
+        if (path.startsWith(`/api/sources/${sourceTwo}/search`)) {
+          return Response.json({
+            page: 1,
+            hasNextPage: false,
+            items: [{ id: "remote-1", title: "Yosuga no Sora", coverUrl: "" }],
+          });
+        }
+        if (path === "/api/health") return Response.json({ ok: true });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByPlaceholderText("Search installed plugins"), "yosuga");
+    expect(await screen.findByText("Yosuga no Sora")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 plugins failed to respond.")).toBeInTheDocument();
   });
 });

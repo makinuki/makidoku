@@ -8,16 +8,28 @@ import { CoverImg } from "../../components/CoverImg";
 export function GlobalSearch({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<LibraryManga[]>([]);
+  const [error, setError] = useState("");
   useEffect(() => {
+    // Stale responses are dropped: only the latest query may update the list.
+    let active = true;
     const timer = window.setTimeout(
       () =>
         void api
           .library(query)
-          .then(setItems)
-          .catch(() => setItems([])),
+          .then((items) => {
+            if (!active) return;
+            setItems(items);
+            setError("");
+          })
+          .catch((e) => {
+            if (active) setError(e instanceof Error ? e.message : "Search failed");
+          }),
       200,
     );
-    return () => window.clearTimeout(timer);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [query]);
   return (
     <div className="fixed inset-0 z-50 bg-black/70 p-4" onMouseDown={onClose}>
@@ -60,7 +72,12 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
               <ChevronRight size={16} className="text-zinc-600" />
             </Link>
           ))}
-          {!items.length && (
+          {error && (
+            <p role="alert" className="p-8 text-center text-sm text-red-300">
+              {error}
+            </p>
+          )}
+          {!items.length && !error && (
             <p className="p-8 text-center text-sm text-zinc-500">No library matches.</p>
           )}
         </div>

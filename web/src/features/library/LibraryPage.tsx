@@ -21,13 +21,28 @@ export function LibraryPage() {
       .catch((e) => setError(e.message));
   }, []);
   useEffect(() => {
+    // Keystrokes are debounced and stale responses are dropped: only the
+    // latest query may update the grid.
+    let active = true;
     setLoading(true);
-    setError("");
-    api
-      .library(query, category)
-      .then(setItems)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    const timer = window.setTimeout(() => {
+      setError("");
+      api
+        .library(query, category)
+        .then((items) => {
+          if (active) setItems(items);
+        })
+        .catch((e) => {
+          if (active) setError(e.message);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [query, category]);
   const visible = useMemo(
     () =>

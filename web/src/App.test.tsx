@@ -1446,4 +1446,67 @@ describe("details page action feedback", () => {
     expect(await screen.findByText("category write rejected")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
   });
+
+  it("shows busy and confirmation states when queueing downloads", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let resolveQueue!: (value: Response) => void;
+    const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          const path = String(input);
+          if (path === `/api/manga/${mangaId}` && !init?.method) {
+            return Promise.resolve(
+              Response.json({
+                manga: {
+                  id: mangaId,
+                  sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+                  title: "Yosuga no Sora",
+                  status: "completed",
+                  coverUrl: "/api/manga/" + mangaId + "/cover",
+                  inLibrary: true,
+                  downloadFormat: "cbz",
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+                categories: [],
+                chapters: [
+                  { id: chapterId, mangaId, chapterNumber: 1, language: "en", downloaded: false },
+                ],
+                trackers: [],
+              }),
+            );
+          }
+          if (path === "/api/download" && init?.method === "POST") {
+            return new Promise<Response>((resolve) => {
+              resolveQueue = resolve;
+            });
+          }
+          if (path === "/api/categories") return Promise.resolve(Response.json([]));
+          return Promise.resolve(Response.json([]));
+        },
+      ),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText("Range 1-10"), "1");
+    await user.click(screen.getByRole("button", { name: /Download/ }));
+    expect(screen.getByRole("button", { name: /Queueing/ })).toBeDisabled();
+
+    await act(async () => {
+      resolveQueue(Response.json({ items: [] }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByText(/queued for download/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Download/ })).toBeEnabled();
+  });
 });

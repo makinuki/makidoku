@@ -42,6 +42,9 @@ export function DetailsPage() {
   const [actionError, setActionError] = useState("");
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [categoryBusy, setCategoryBusy] = useState<number>();
+  const [enqueueing, setEnqueueing] = useState(false);
+  const [enqueueError, setEnqueueError] = useState("");
+  const [queuedNote, setQueuedNote] = useState("");
   const [languageFilter, setLanguageFilter] = useState<string>();
   const load = async () => {
     setLoading(true);
@@ -74,6 +77,11 @@ export function DetailsPage() {
       .then(setCategories)
       .catch(() => undefined);
   }, [decodedManga]);
+  useEffect(() => {
+    if (!queuedNote) return;
+    const timer = window.setTimeout(() => setQueuedNote(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [queuedNote]);
   if (loading) return <LoadingState label="Loading title" />;
   if (error || !data)
     return (
@@ -120,11 +128,17 @@ export function DetailsPage() {
     }
   };
   const enqueue = async () => {
+    setEnqueueing(true);
+    setEnqueueError("");
+    setQueuedNote("");
     try {
       await api.enqueue(manga.id, selected, range, manga.downloadFormat);
+      setQueuedNote("Chapters queued for download.");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to enqueue chapters");
+      setEnqueueError(e instanceof Error ? e.message : "Unable to queue chapters");
+    } finally {
+      setEnqueueing(false);
     }
   };
   return (
@@ -242,12 +256,19 @@ export function DetailsPage() {
             </button>
             <button
               onClick={() => void enqueue()}
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950"
+              disabled={enqueueing}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50"
             >
-              <Download size={14} /> Download
+              <Download size={14} /> {enqueueing ? "Queueing…" : "Download"}
             </button>
           </div>
         </PageHeader>
+        {enqueueError && (
+          <p role="alert" className="mb-4 text-xs text-red-300">
+            {enqueueError}
+          </p>
+        )}
+        {queuedNote && <p className="mb-4 text-xs text-emerald-300">{queuedNote}</p>}
         {languages.length > 1 && (
           <div className="mb-5 flex flex-wrap gap-2">
             <button

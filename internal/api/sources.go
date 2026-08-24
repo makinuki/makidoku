@@ -30,34 +30,8 @@ func (s *Server) mountSources(r chi.Router) {
 		source.Delete("/", s.uninstallSource)
 		source.Get("/filters", s.sourceFilters)
 		source.Get("/search", s.search)
-		source.Post("/library", s.saveSourceManga)
 		source.Post("/clearance", s.submitClearance)
 	})
-}
-
-func (s *Server) saveSourceManga(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		MangaID string `json:"mangaId"`
-	}
-	if !decodeBody(w, r, &body) {
-		return
-	}
-	mangaID := strings.TrimSpace(body.MangaID)
-	if mangaID == "" {
-		writeBadRequest(w, "mangaId is required")
-		return
-	}
-	if _, err := s.repo.SetMangaLibrary(mangaID, true); err != nil {
-		writeLocalError(w, http.StatusConflict, err)
-		return
-	}
-	aggregate, err := s.repo.GetMangaAggregate(mangaID)
-	if err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
-	}
-	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
-	writeJSON(w, http.StatusCreated, aggregate)
 }
 
 func jsonString(values []string) *string {
@@ -194,34 +168,6 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{"id": manga.ID, "title": item.Title, "coverUrl": "/api/manga/" + manga.ID + "/cover", "latestChapter": item.LatestChapter, "url": ""})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"page": result.Page, "hasNextPage": result.HasNextPage, "items": items})
-}
-
-func (s *Server) details(w http.ResponseWriter, r *http.Request) {
-	mangaID := r.URL.Query().Get("mangaId")
-	if mangaID == "" {
-		writeBadRequest(w, "mangaId is required")
-		return
-	}
-	details, err := s.engine.Details(r.Context(), chi.URLParam(r, "sourceID"), mangaID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, details)
-}
-
-func (s *Server) pages(w http.ResponseWriter, r *http.Request) {
-	chapterID := r.URL.Query().Get("chapterId")
-	if chapterID == "" {
-		writeBadRequest(w, "chapterId is required")
-		return
-	}
-	pages, err := s.engine.Pages(r.Context(), chi.URLParam(r, "sourceID"), chapterID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, pages)
 }
 
 // materializePages is local-first: a persisted page list serves the read so

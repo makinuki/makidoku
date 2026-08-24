@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
 import { api } from "../../api";
 import type { FilterSchema, SearchResult, Source } from "../../types";
@@ -276,15 +276,15 @@ function FilterControl({
 }
 
 function SourceResult({ item }: { item: SearchResult & { source: Source } }) {
-  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const save = async () => {
     setBusy(true);
     setError("");
     try {
-      const aggregate = await api.saveManga(item.id);
-      navigate(`/manga/${encodeURIComponent(aggregate.manga.id)}`);
+      await api.saveManga(item.id);
+      setSaved(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save title");
     } finally {
@@ -293,20 +293,29 @@ function SourceResult({ item }: { item: SearchResult & { source: Source } }) {
   };
   return (
     <article className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-      <div className="aspect-3/4 bg-zinc-800">
+      <Link to={`/manga/${encodeURIComponent(item.id)}`} className="block aspect-3/4 bg-zinc-800">
         <CoverImg src={item.coverUrl} className="size-full object-cover" />
-      </div>
+      </Link>
       <div className="space-y-2 p-4">
-        <p className="text-xs uppercase tracking-wide text-amber-400">{item.source.name}</p>
-        <h2 className="line-clamp-2 font-semibold">{item.title}</h2>
+        <Link
+          to={`/manga/${encodeURIComponent(item.id)}`}
+          className="block text-xs uppercase tracking-wide text-amber-400 hover:text-amber-300"
+        >
+          {item.source.name}
+        </Link>
+        <h2 className="line-clamp-2 font-semibold">
+          <Link to={`/manga/${encodeURIComponent(item.id)}`} className="hover:text-amber-300">
+            {item.title}
+          </Link>
+        </h2>
         <p className="text-xs text-zinc-500">{item.latestChapter || "No chapter metadata"}</p>
         {error && <p className="text-xs text-red-300">{error}</p>}
         <button
-          disabled={busy}
+          disabled={busy || saved}
           onClick={() => void save()}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
         >
-          <Plus size={15} /> {busy ? "Saving" : "Save title"}
+          <Plus size={15} /> {busy ? "Saving" : saved ? "Added" : "Save title"}
         </button>
       </div>
     </article>

@@ -25,6 +25,7 @@ import type {
 import { CoverImg } from "../../components/CoverImg";
 import { Modal } from "../../components/Modal";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
+import { relativeTime } from "../../time";
 
 export function DetailsPage() {
   const { mangaId = "" } = useParams();
@@ -32,6 +33,7 @@ export function DetailsPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<Aggregate>();
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryError, setCategoryError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -83,7 +85,7 @@ export function DetailsPage() {
     void api
       .categories()
       .then(setCategories)
-      .catch(() => undefined);
+      .catch((e) => setCategoryError(e instanceof Error ? e.message : "Unable to load categories"));
   }, [decodedManga]);
   useEffect(() => {
     if (!queuedNote) return;
@@ -184,10 +186,10 @@ export function DetailsPage() {
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
             <Link
-              to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(chapters[0]?.id || "")}`}
+              to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(resumeChapterId(data, chapters))}`}
               className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
             >
-              <Play size={15} /> Read
+              <Play size={15} /> {data.progress ? "Continue" : "Read"}
             </Link>
             <button
               onClick={() => void toggleLibrary()}
@@ -227,6 +229,11 @@ export function DetailsPage() {
           {actionError && <p className="mt-3 text-xs text-red-300">{actionError}</p>}
         </div>
       </section>
+      {categoryError && (
+        <p role="alert" className="mt-8 text-xs text-red-300">
+          {categoryError}
+        </p>
+      )}
       {categories.length > 0 && (
         <section className="mt-8">
           <PageHeader title="Categories" />{" "}
@@ -386,16 +393,15 @@ function groupByVolume(chapters: Chapter[]) {
   });
 }
 
-function relativeTime(unix: number) {
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - unix);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 365) return `${days}d ago`;
-  return `${Math.floor(days / 365)}y ago`;
+// resumeChapterId picks where the Read/Continue action opens: the saved
+// chapter when its progress still points at this title, otherwise the first
+// listed chapter.
+function resumeChapterId(data: Aggregate, chapters: Chapter[]): string {
+  const saved = data.progress?.lastReadChapterId;
+  if (saved && chapters.some((chapter) => chapter.id === saved)) {
+    return saved;
+  }
+  return chapters[0]?.id || "";
 }
 
 const LANGUAGE_NAMES: Record<string, string> = {

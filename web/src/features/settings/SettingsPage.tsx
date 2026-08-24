@@ -32,6 +32,7 @@ export function SettingsPage() {
   const [confirmCategoryRemoval, setConfirmCategoryRemoval] = useState<Category>();
   const [removingCategory, setRemovingCategory] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string>();
+  const [exporting, setExporting] = useState(false);
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(""), 4000);
@@ -197,6 +198,28 @@ export function SettingsPage() {
       setError(e instanceof Error ? e.message : "Unable to disconnect tracker");
     } finally {
       setDisconnecting(undefined);
+    }
+  };
+  // The export is fetched to a blob instead of a plain link so a failed
+  // request surfaces as a message rather than navigating away from the app.
+  const exportJson = async () => {
+    setExporting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/export");
+      if (!response.ok) throw new Error(`Export failed (${response.status})`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `makidoku-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setStatus("Backup exported.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to export backup");
+    } finally {
+      setExporting(false);
     }
   };
   return (
@@ -491,12 +514,19 @@ export function SettingsPage() {
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
         <h2 className="font-semibold">Backup</h2>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a
-            href="/api/export"
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+          <button
+            onClick={() => void exportJson()}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
           >
-            <Download size={15} /> Export JSON
-          </a>
+            {exporting ? (
+              "Preparing…"
+            ) : (
+              <>
+                <Download size={15} /> Export JSON
+              </>
+            )}
+          </button>
           <button
             onClick={() => setConfirmImport(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"

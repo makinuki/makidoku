@@ -5,6 +5,7 @@ import { api } from "../../api";
 import type { Chapter, LibraryManga, Progress } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
+import { relativeTime } from "../../time";
 
 export function HistoryPage() {
   const [items, setItems] = useState<
@@ -41,8 +42,12 @@ export function HistoryPage() {
                 <small className="text-zinc-500">
                   {item.chapter.chapterNumber == null
                     ? item.chapter.title || "Special"
-                    : `Chapter ${item.chapter.chapterNumber}`}{" "}
-                  · page {item.progress.lastReadPage} of {item.progress.totalPages}
+                    : `Chapter ${item.chapter.chapterNumber}`}
+                  {" · "}
+                  {item.progress.totalPages > 0
+                    ? `page ${Math.min(item.progress.lastReadPage, item.progress.totalPages)} of ${item.progress.totalPages}`
+                    : `page ${item.progress.lastReadPage}`}
+                  {item.progress.lastReadAt > 0 && ` · ${relativeTime(item.progress.lastReadAt)}`}
                 </small>
               </span>
               <ChevronRight size={17} className="text-zinc-600" />

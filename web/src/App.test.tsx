@@ -1200,7 +1200,8 @@ describe("tracker binding feedback", () => {
 
   it("disables bind results while a bind runs and reports failures", async () => {
     window.history.pushState({}, "", `/manga/${mangaId}`);
-    let resolveBind!: (value: Response) => void;
+    const bindResolvers: Array<(value: Response) => void> = [];
+    let bound = false;
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -1237,7 +1238,18 @@ describe("tracker binding feedback", () => {
               },
               categories: [],
               chapters: [],
-              trackers: [],
+              trackers: bound
+                ? [
+                    {
+                      id: 9,
+                      mangaId,
+                      trackerType: "AniList",
+                      remoteId: "42",
+                      remoteTitle: "Yosuga no Sora",
+                      lastSyncedChapter: 0,
+                    },
+                  ]
+                : [],
             }),
           );
         }
@@ -1246,7 +1258,7 @@ describe("tracker binding feedback", () => {
         }
         if (path.endsWith("/trackers/AniList/bind")) {
           return new Promise<Response>((resolve) => {
-            resolveBind = resolve;
+            bindResolvers.push(resolve);
           });
         }
         return Promise.resolve(Response.json([]));
@@ -1265,13 +1277,34 @@ describe("tracker binding feedback", () => {
     await user.click(result);
     expect(screen.getByRole("button", { name: /Binding/ })).toBeDisabled();
     await act(async () => {
-      resolveBind(Response.json({ error: { message: "no session" } }, { status: 500 }));
+      bindResolvers.shift()!(Response.json({ error: { message: "no session" } }, { status: 500 }));
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(await screen.findByText("no session")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Yosuga no Sora 42/ })).toBeEnabled();
+
+    // A successful rebind updates the list in place and keeps the dialog open.
+    await user.click(screen.getByRole("button", { name: /Yosuga no Sora 42/ }));
+    await act(async () => {
+      bound = true;
+      bindResolvers.shift()!(
+        Response.json({
+          id: 9,
+          mangaId,
+          trackerType: "AniList",
+          remoteId: "42",
+          remoteTitle: "Yosuga no Sora",
+          lastSyncedChapter: 0,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("button", { name: /Unbind/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
   });
 });
 

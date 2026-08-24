@@ -57,6 +57,15 @@ export function DetailsPage() {
       setLoading(false);
     }
   };
+  // Background refetch used after mutations: stale content stays on screen
+  // and open dialogs are not dismissed by a loading flash.
+  const reload = async () => {
+    try {
+      setData(await api.manga(decodedManga));
+    } catch {
+      // keep the current view when a background refresh fails
+    }
+  };
   // The read is local-first, so a failed refresh only reports; the stale
   // content stays on screen for the next attempt.
   const refresh = async () => {
@@ -108,7 +117,7 @@ export function DetailsPage() {
     setActionError("");
     try {
       await api.setLibrary(manga.id, !manga.inLibrary);
-      await load();
+      await reload();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Unable to update the library");
     } finally {
@@ -120,7 +129,7 @@ export function DetailsPage() {
     setActionError("");
     try {
       await api.setCategory(manga.id, category.id, !active);
-      await load();
+      await reload();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Unable to update categories");
     } finally {
@@ -134,7 +143,7 @@ export function DetailsPage() {
     try {
       await api.enqueue(manga.id, selected, range, manga.downloadFormat);
       setQueuedNote("Chapters queued for download.");
-      await load();
+      await reload();
     } catch (e) {
       setEnqueueError(e instanceof Error ? e.message : "Unable to queue chapters");
     } finally {
@@ -335,7 +344,7 @@ export function DetailsPage() {
           mangaId={manga.id}
           bindings={data.trackers}
           onClose={() => setModal(undefined)}
-          onChanged={load}
+          onChanged={reload}
         />
       )}
       {modal === "migration" && (

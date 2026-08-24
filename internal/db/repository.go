@@ -672,11 +672,16 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 			return Chapter{}, fmt.Errorf("link chapter source %s: %w", chapter.ID, err)
 		}
 	} else {
+		// manga_id is part of the update: a source may re-parent an external
+		// chapter to another series, and the canonical record must follow.
 		_, err = r.db.Exec(`UPDATE chapters SET
-			chapter_number=?, volume=?, title=?, language=?, uploaded_at=?, scanlator=?
+			manga_id=?, chapter_number=?, volume=?, title=?, language=?, uploaded_at=?, scanlator=?
 			WHERE id=?`,
-			chapter.ChapterNumber, chapter.Volume, chapter.Title,
+			chapter.MangaID, chapter.ChapterNumber, chapter.Volume, chapter.Title,
 			chapter.Language, chapter.UploadedAt, chapter.Scanlator, chapter.ID)
+		if err != nil {
+			return Chapter{}, fmt.Errorf("update chapter %s: %w", chapter.ID, err)
+		}
 		if err != nil {
 			return Chapter{}, fmt.Errorf("update chapter %s: %w", chapter.ID, err)
 		}

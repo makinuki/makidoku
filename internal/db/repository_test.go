@@ -457,6 +457,38 @@ func TestListHistorySkipsOrphanedProgress(t *testing.T) {
 		t.Fatalf("items = %d, want the valid entry with the ghost skipped", len(items))
 	}
 }
+// When a source re-parents an external chapter to another series, the
+// canonical record must follow instead of staying on the stale entry.
+func TestUpsertChapterReParentsOnUpdate(t *testing.T) {
+	repo := testRepository(t)
+	mangaA, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "series-a", Title: "Series A", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mangaB, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "series-b", Title: "Series B", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	original, err := repo.UpsertChapter(Chapter{MangaID: mangaA.ID, SourceChapterID: "ext-1", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	moved, err := repo.UpsertChapter(Chapter{MangaID: mangaB.ID, SourceChapterID: "ext-1", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.MangaID != mangaB.ID {
+		t.Fatalf("chapter stayed on %q, want re-parented to %q", moved.MangaID, mangaB.ID)
+	}
+	chaptersA, err := repo.ListChapters(mangaA.ID)
+	if err != nil || len(chaptersA) != 0 {
+		t.Fatalf("old series still holds %d chapters, err = %v", len(chaptersA), err)
+	}
+	_ = original
+}
+
 func TestReadingProgressRequiresChapterFromManga(t *testing.T) {	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})
 	if err != nil {

@@ -154,8 +154,17 @@ func TestPrepareRequeuesInterruptedTrackerJob(t *testing.T) {
 	}
 }
 
-func TestRetryableTrackerErrorClassifiesTransientFailures(t *testing.T) {
-	cases := []struct {
+// Every outbound tracker request must carry a timeout so a hung connection
+// cannot stall the sync worker or hold the refresh lock.
+func TestRegistryHTTPClientHasTimeout(t *testing.T) {
+	repo := trackerRepo(t)
+	registry := NewRegistry(repo)
+	if registry.HTTP.Timeout <= 0 {
+		t.Fatalf("http client timeout = %v, want a positive bound", registry.HTTP.Timeout)
+	}
+}
+
+func TestRetryableTrackerErrorClassifiesTransientFailures(t *testing.T) {	cases := []struct {
 		name string
 		err  error
 		want bool

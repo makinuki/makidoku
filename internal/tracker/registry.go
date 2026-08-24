@@ -34,8 +34,12 @@ type oauthState struct {
 	Expires                   time.Time
 }
 
+// trackerHTTPTimeout bounds every outbound tracker request so one hung
+// connection cannot stall a worker or hold the refresh lock indefinitely.
+const trackerHTTPTimeout = 30 * time.Second
+
 func NewRegistry(repo *db.Repository) *Registry {
-	r := &Registry{Repo: repo, HTTP: &http.Client{}, items: map[string]Tracker{}, oauth: map[string]oauthState{}}
+	r := &Registry{Repo: repo, HTTP: &http.Client{Timeout: trackerHTTPTimeout}, items: map[string]Tracker{}, oauth: map[string]oauthState{}}
 	r.Store = NewCredentialStore(repo)
 	get := func(name string) func() (Credential, error) {
 		return func() (Credential, error) { return r.credential(name) }
@@ -80,7 +84,12 @@ func (r *Registry) credential(name string) (Credential, error) {
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
 	}
-	if err := postToken(context.Background(), r.HTTP, endpoint, form, &token); err != nil {
+	// The refresh runs while the provider lock is held; bounding it with a
+	// timeout keeps a wedged token endpoint from blocking every call for this
+	// tracker. Caller cancellation is propagated by the HTTP layer.
+	refreshCtx, cancel := context.WithTimeout(context.Background(), trackerHTTPTimeout)
+	defer cancel()
+	if err := postToken(refreshCtx, r.HTTP, endpoint, form, &token); err != nil {
 		return Credential{}, err
 	}
 	if token.AccessToken == "" {

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
 import { Download, History, Library, Search, Settings, Wifi, WifiOff } from "lucide-react";
 import { api } from "../api";
+import { Logo } from "../components/Logo";
 
 export function AppShell({ children, onSearch }: { children: ReactNode; onSearch: () => void }) {
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -29,9 +30,7 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
     <div className="min-h-screen bg-zinc-950 text-zinc-100 lg:flex">
       <aside className="border-b border-zinc-800 bg-zinc-900/80 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:flex-col lg:border-b-0 lg:border-r">
         <div className="flex h-16 shrink-0 items-center gap-3 border-b border-zinc-800 px-5">
-          <span className="grid size-8 place-items-center rounded-lg bg-amber-400 font-bold text-zinc-950">
-            巻
-          </span>
+          <Logo className="size-8 shrink-0" />
           <Link to="/" className="font-semibold tracking-wide">
             MakiDoku
           </Link>

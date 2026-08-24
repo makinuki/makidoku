@@ -249,7 +249,9 @@ func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath str
 	return e.Get(sourceID)
 }
 
-// Uninstall removes a source, its plugin storage and its cached binary.
+// Uninstall removes a source and its cached binary. Plugin storage rows are
+// kept so reinstalling the same plugin recovers its state; they can be
+// removed through the storage endpoints if desired.
 func (e *Engine) Uninstall(ctx context.Context, id string) error {
 	row, err := e.row(id)
 	if err != nil {
@@ -404,10 +406,13 @@ func (e *Engine) Unscramble(ctx context.Context, sourceID string, data []byte) (
 // SubmitClearance stores anti-bot clearance material for a source and releases
 // any request waiting on it.
 func (e *Engine) SubmitClearance(sourceID, cookie, userAgent string) error {
-	if _, err := e.row(sourceID); err != nil {
+	row, err := e.row(sourceID)
+	if err != nil {
 		return err
 	}
-	return e.clearance.Submit(sourceID, cookie, userAgent)
+	// Persist under the canonical id: the fetcher always reads by id, while
+	// callers may pass a plugin key or alias.
+	return e.clearance.Submit(row.ID, cookie, userAgent)
 }
 
 // plugin returns the loaded plugin for sourceID, compiling it on first use.

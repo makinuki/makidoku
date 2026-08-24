@@ -415,7 +415,9 @@ func (q *Queue) fail(item db.DownloadQueueItem, cause error) error {
 func (q *Queue) stopped(id int64) bool {
 	item, err := q.repo.GetQueueItem(id)
 	if err != nil {
-		return false
+		// A missing row means the item no longer exists (for example its
+		// chapter was retired by a migration): stop working on it.
+		return true
 	}
 	return item.Status == db.QueuePaused || item.Status == db.QueueCanceled
 }

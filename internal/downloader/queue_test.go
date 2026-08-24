@@ -226,6 +226,37 @@ func TestQueueStopsBetweenPagesWhenPaused(t *testing.T) {
 	}
 }
 
+// A queue row that vanishes mid-download (its chapter was retired by a
+// migration, cascading the row away) must halt the worker instead of
+// completing into an orphaned artifact.
+func TestQueueStopsWhenQueueRowVanishes(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.afterFirstFetch = func() {
+		if _, err := repo.DB().Exec(`DELETE FROM download_queue WHERE id=?`, items[0].ID); err != nil {
+			t.Errorf("delete queue row: %v", err)
+		}
+	}
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	chapter, err := repo.GetChapter(items[0].ChapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chapter.Downloaded || chapter.DownloadPath != nil {
+		t.Fatalf("vanished download produced an artifact: %+v", chapter)
+	}
+}
+
 func TestEnqueueMangaKeepsStoredDownloadFormatWhenOmitted(t *testing.T) {
 	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()

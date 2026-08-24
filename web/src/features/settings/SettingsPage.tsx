@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Download, FolderOpen, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Download, FolderOpen, LoaderCircle, RefreshCw, Trash2, X } from "lucide-react";
 import { api } from "../../api";
 import type { CatalogEntry, Category, Source, TrackerInfo } from "../../types";
 import { Modal } from "../../components/Modal";
@@ -27,6 +27,9 @@ export function SettingsPage() {
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [confirmCategoryRemoval, setConfirmCategoryRemoval] = useState<Category>();
+  const [removingCategory, setRemovingCategory] = useState(false);
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(""), 4000);
@@ -102,12 +105,33 @@ export function SettingsPage() {
   };
   const addCategory = async () => {
     if (!name.trim()) return;
+    setCreating(true);
+    setError("");
     try {
       const next = await api.createCategory(name.trim());
       setCategories((items) => [...items, next]);
       setName("");
+      setStatus(`Category ${next.name} added.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to create category");
+    } finally {
+      setCreating(false);
+    }
+  };
+  // Removing a category unlinks it from titles but deletes no titles, so a
+  // single confirmation step is enough.
+  const removeCategory = async (category: Category) => {
+    setRemovingCategory(true);
+    setError("");
+    try {
+      await api.deleteCategory(category.id);
+      setConfirmCategoryRemoval(undefined);
+      setStatus(`Category ${category.name} removed.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to remove category");
+    } finally {
+      setRemovingCategory(false);
     }
   };
   // Clearance and credential writes report their outcome in the same banner
@@ -293,18 +317,58 @@ export function SettingsPage() {
           />
           <button
             onClick={() => void addCategory()}
-            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+            disabled={creating || !name.trim()}
+            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
           >
-            Add
+            {creating ? "Adding…" : "Add"}
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {categories.map((item) => (
-            <span key={item.id} className="rounded-full border border-zinc-700 px-3 py-1 text-xs">
+            <span
+              key={item.id}
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-700 py-1 pl-3 pr-1.5 text-xs"
+            >
               {item.name}
+              <button
+                aria-label={`Delete category ${item.name}`}
+                onClick={() => setConfirmCategoryRemoval(item)}
+                className="rounded-full p-0.5 text-zinc-500 hover:text-red-300"
+              >
+                <X size={12} />
+              </button>
             </span>
           ))}
         </div>
+        {confirmCategoryRemoval && (
+          <Modal
+            title="Remove category"
+            onClose={() => {
+              if (!removingCategory) setConfirmCategoryRemoval(undefined);
+            }}
+          >
+            <p className="text-sm text-zinc-400">
+              Remove the category {confirmCategoryRemoval.name}? Titles keep their other categories
+              and stay in the library.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmCategoryRemoval(undefined)}
+                disabled={removingCategory}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void removeCategory(confirmCategoryRemoval)}
+                disabled={removingCategory}
+                className="rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {removingCategory ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </Modal>
+        )}
       </section>
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
         <h2 className="font-semibold">Trackers</h2>

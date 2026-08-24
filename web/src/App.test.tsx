@@ -1305,6 +1305,78 @@ describe("tracker binding feedback", () => {
     });
     expect(await screen.findByRole("button", { name: /Unbind/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
+    expect(await screen.findByText("Bound to Yosuga no Sora.")).toBeInTheDocument();
+  });
+
+  it("disables the tracker search button while it runs", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let resolveSearch!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers")
+          return Promise.resolve(
+            Response.json([
+              {
+                name: "AniList",
+                capabilities: {
+                  search: true,
+                  status: true,
+                  scrobble: true,
+                  oauth: true,
+                  token: true,
+                },
+                credential: true,
+              },
+            ]),
+          );
+        if (path.includes(`/api/manga/${mangaId}`) && !path.includes("/trackers")) {
+          return Promise.resolve(
+            Response.json({
+              manga: {
+                id: mangaId,
+                sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+                title: "Yosuga no Sora",
+                status: "completed",
+                coverUrl: "/api/manga/" + mangaId + "/cover",
+                inLibrary: true,
+                downloadFormat: "cbz",
+                createdAt: 1,
+                updatedAt: 1,
+              },
+              categories: [],
+              chapters: [],
+              trackers: [],
+            }),
+          );
+        }
+        if (path.startsWith("/api/trackers/AniList/search")) {
+          return new Promise<Response>((resolve) => {
+            resolveSearch = resolve;
+          });
+        }
+        return Promise.resolve(Response.json([]));
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    await user.type(await screen.findByPlaceholderText("Search provider"), "Yosuga");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.getByRole("button", { name: /Searching/ })).toBeDisabled();
+    await act(async () => {
+      resolveSearch(Response.json([{ remoteId: "42", title: "Yosuga no Sora" }]));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("button", { name: /Yosuga no Sora 42/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search" })).toBeEnabled();
   });
 });
 
@@ -1420,6 +1492,39 @@ describe("settings credential feedback", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("AniList credentials saved.")).toBeInTheDocument();
     expect(tokenInput).toHaveValue("");
+  });
+
+  it("removes a category after confirmation", async () => {
+    window.history.pushState({}, "", "/settings");
+    let deleteCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/categories" && !init?.method) {
+          return Response.json([{ id: 7, name: "Reading", sortOrder: 1 }]);
+        }
+        if (path === "/api/categories/7") {
+          deleteCalls++;
+          return new Response(null, { status: 204 });
+        }
+        if (path === "/api/sources" || path === "/api/catalog" || path === "/api/trackers") {
+          return Response.json([]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Delete category Reading" }));
+    expect(await screen.findByRole("heading", { name: "Remove category" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByText("Category Reading removed.")).toBeInTheDocument();
+    expect(deleteCalls).toBe(1);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -487,9 +487,12 @@ function TrackerModal({
     Array<{ remoteId: string; title: string; status?: string }>
   >([]);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
   const [unbinding, setUnbinding] = useState(false);
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [bindingRemote, setBindingRemote] = useState<string>();
+  const [searching, setSearching] = useState(false);
+  const searchSeq = useRef(0);
   useEffect(() => {
     void api
       .trackers()
@@ -501,10 +504,20 @@ function TrackerModal({
   }, []);
   const binding = bindings.find((item) => item.trackerType === active);
   const search = async () => {
+    // Out-of-order responses are discarded so a slow older search cannot
+    // overwrite the results of a newer one.
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    setError("");
+    setNote("");
     try {
-      setResults(await api.trackerSearch(active, query));
+      const found = await api.trackerSearch(active, query);
+      if (seq === searchSeq.current) setResults(found);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Tracker search failed");
+      if (seq === searchSeq.current)
+        setError(e instanceof Error ? e.message : "Tracker search failed");
+    } finally {
+      if (seq === searchSeq.current) setSearching(false);
     }
   };
   // Unbinding severs the tracker link and stops syncing, so it asks for
@@ -512,9 +525,11 @@ function TrackerModal({
   const unbind = async () => {
     setUnbinding(true);
     setError("");
+    setNote("");
     try {
       await api.unbindTracker(mangaId, active);
       setConfirmUnbind(false);
+      setNote(`Unbound from ${active}.`);
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to unbind tracker");
@@ -525,12 +540,14 @@ function TrackerModal({
   const bind = async (item: { remoteId: string; title: string; status?: string }) => {
     setBindingRemote(item.remoteId);
     setError("");
+    setNote("");
     try {
       await api.bindTracker(mangaId, active, {
         remoteId: item.remoteId,
         remoteTitle: item.title,
         remoteStatus: item.status,
       });
+      setNote(`Bound to ${item.title}.`);
       await onChanged();
       setResults([]);
     } catch (e) {
@@ -572,13 +589,15 @@ function TrackerModal({
           />
           <button
             onClick={() => void search()}
-            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+            disabled={searching || !query.trim()}
+            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
           >
-            Search
+            {searching ? "Searching…" : "Search"}
           </button>
         </div>
       )}
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
+      {note && !error && <p className="mt-3 text-xs text-emerald-300">{note}</p>}
       {binding && !confirmUnbind && (
         <button
           onClick={() => setConfirmUnbind(true)}

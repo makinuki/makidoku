@@ -52,6 +52,7 @@ export const api = {
   categories: () => request<Category[]>("/api/categories"),
   createCategory: (name: string) =>
     request<Category>("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),
+  deleteCategory: (id: number) => request<void>(`/api/categories/${id}`, { method: "DELETE" }),
   setCategory: (mangaId: string, category: number, enabled: boolean) =>
     request(`/api/manga/${idPath(mangaId)}/categories/${category}`, {
       method: enabled ? "POST" : "DELETE",

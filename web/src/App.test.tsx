@@ -1334,7 +1334,7 @@ describe("settings credential feedback", () => {
     let tokenCalls = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
         if (path === "/api/trackers") {
           return Response.json([

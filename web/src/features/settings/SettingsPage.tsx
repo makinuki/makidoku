@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Download, FolderOpen, LoaderCircle, RefreshCw, Trash2, X } from "lucide-react";
 import { api } from "../../api";
-import type { CatalogEntry, Category, Source, TrackerInfo } from "../../types";
+import type { CatalogEntry, Category, Source, TrackerInfo, TrackerSyncJob } from "../../types";
 import { Modal } from "../../components/Modal";
 import { ErrorState, PageHeader } from "../../components/States";
 
@@ -10,6 +10,7 @@ export function SettingsPage() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [trackers, setTrackers] = useState<TrackerInfo[]>([]);
+  const [syncJobs, setSyncJobs] = useState<TrackerSyncJob[]>([]);
   const [name, setName] = useState("");
   const [tokenType, setTokenType] = useState("");
   const [token, setToken] = useState("");
@@ -38,16 +39,18 @@ export function SettingsPage() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const [installed, entries, groups, services] = await Promise.all([
+      const [installed, entries, groups, services, jobs] = await Promise.all([
         api.sources(),
         api.catalog(),
         api.categories(),
         api.trackers(),
+        api.syncJobs(),
       ]);
       setSources(installed);
       setCatalog(entries);
       setCategories(groups);
       setTrackers(services);
+      setSyncJobs(jobs.slice(0, 5));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load settings");
     } finally {
@@ -413,6 +416,29 @@ export function SettingsPage() {
                 Personal access token
               </label>
             )}
+          </div>
+        )}
+        {syncJobs.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Recent sync activity
+            </h3>
+            <ul className="mt-2 space-y-1">
+              {syncJobs.map((job) => (
+                <li key={job.id} className="text-xs text-zinc-500">
+                  {job.status === "FAILED" ? (
+                    <span className="text-red-300">Failed</span>
+                  ) : job.status === "COMPLETED" ? (
+                    <span className="text-emerald-300">Synced</span>
+                  ) : (
+                    job.status
+                  )}
+                  {" · chapter "}
+                  {job.chapterNumber}
+                  {job.errorMessage ? ` · ${job.errorMessage}` : ""}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </section>

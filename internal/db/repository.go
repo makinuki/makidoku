@@ -836,6 +836,22 @@ func (r *Repository) ResetInterruptedTrackerSync() error {
 	return err
 }
 
+// PruneTerminalTrackerSyncJobs trims finished sync history to the most
+// recent limit entries so the table cannot grow without bound. It reports
+// how many rows were removed.
+func (r *Repository) PruneTerminalTrackerSyncJobs(limit int) (int64, error) {
+	if limit < 0 {
+		limit = 0
+	}
+	result, err := r.db.Exec(`DELETE FROM tracker_sync_jobs WHERE status IN ('COMPLETED','FAILED') AND id NOT IN (
+		SELECT id FROM tracker_sync_jobs WHERE status IN ('COMPLETED','FAILED')
+		ORDER BY created_at DESC, id DESC LIMIT ?)`, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (r *Repository) ListTrackerSyncJobs() ([]TrackerSyncJob, error) {
 	var jobs []TrackerSyncJob
 	err := r.db.Select(&jobs, `SELECT id,manga_id,binding_id,chapter_number,status,attempts,next_attempt_at,error_message,created_at,completed_at FROM tracker_sync_jobs ORDER BY created_at DESC,id DESC`)

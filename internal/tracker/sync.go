@@ -18,6 +18,9 @@ type SyncWorker struct {
 	Interval time.Duration
 }
 
+// syncJobHistoryLimit caps how many finished sync jobs are retained.
+const syncJobHistoryLimit = 200
+
 func (w *SyncWorker) Prepare() error {
 	return w.Repo.ResetInterruptedTrackerSync()
 }
@@ -37,6 +40,9 @@ func (w *SyncWorker) Run(ctx context.Context) error {
 		// daemon down. Only cancellation ends the loop.
 		if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("tracker sync: %v", err)
+		}
+		if _, err := w.Repo.PruneTerminalTrackerSyncJobs(syncJobHistoryLimit); err != nil {
+			log.Printf("tracker sync: pruning history failed: %v", err)
 		}
 		select {
 		case <-ctx.Done():

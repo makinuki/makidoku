@@ -1494,8 +1494,44 @@ describe("settings credential feedback", () => {
     expect(tokenInput).toHaveValue("");
   });
 
-  it("removes a category after confirmation", async () => {
+  // Recent tracker sync outcomes are visible so failures are not silent.
+  it("shows recent tracker sync activity", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
     window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") return Response.json([]);
+        if (path === "/api/tracker-sync") {
+          return Response.json([
+            {
+              id: 1,
+              mangaId,
+              bindingId: 3,
+              chapterNumber: 4.5,
+              status: "FAILED",
+              attempts: 2,
+              errorMessage: "tracker unreachable",
+            },
+          ]);
+        }
+        if (path === "/api/sources" || path === "/api/categories" || path === "/api/catalog") {
+          return Response.json([]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Recent sync activity")).toBeInTheDocument();
+    expect(screen.getByText(/tracker unreachable/)).toBeInTheDocument();
+  });
+
+  it("removes a category after confirmation", async () => {    window.history.pushState({}, "", "/settings");
     let deleteCalls = 0;
     vi.stubGlobal(
       "fetch",

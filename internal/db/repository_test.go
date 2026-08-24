@@ -358,8 +358,71 @@ func TestUpsertReadingProgressKeepsCompletion(t *testing.T) {
 	}
 }
 
-func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
+// Finished sync history is trimmed to the newest entries; pending and
+// running jobs are never touched.
+func TestPruneTerminalTrackerSyncJobsKeepsNewest(t *testing.T) {
 	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "sync", Title: "Sync", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := repo.UpsertTrackerBinding(TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "1", RemoteTitle: "S"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldest, kept int64
+	for i := 0; i < 4; i++ {
+		job, err := repo.EnqueueTrackerSync(manga.ID, binding.ID, float64(i+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			oldest = job.ID
+			if err := repo.CompleteTrackerSync(job.ID); err != nil {
+				t.Fatal(err)
+			}
+		} else if i == 3 {
+			kept = job.ID
+			if err := repo.CompleteTrackerSync(job.ID); err != nil {
+				t.Fatal(err)
+			}
+		} else if i == 1 {
+			if err := repo.FailTrackerSync(job.ID, false, "gone"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	removed, err := repo.PruneTerminalTrackerSyncJobs(2)
+	if err != nil || removed != 1 {
+		t.Fatalf("pruned = %d, err = %v", removed, err)
+	}
+	jobs, err := repo.ListTrackerSyncJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, job := range jobs {
+		if job.ID == oldest {
+			t.Fatal("oldest terminal job survived the prune")
+		}
+		if job.Status == QueueCompleted && job.ID != kept {
+			t.Fatalf("unexpected retained completed job %d", job.ID)
+		}
+	}
+	if len(jobs) != 3 {
+		t.Fatalf("remaining jobs = %d, want pending + failed + newest completed", len(jobs))
+	}
+	var foundKept bool
+	for _, job := range jobs {
+		if job.ID == kept && job.Status == QueueCompleted {
+			foundKept = true
+		}
+	}
+	if !foundKept {
+		t.Fatal("the newest completed job was pruned out of order")
+	}
+}
+
+func TestReadingProgressRequiresChapterFromManga(t *testing.T) {	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})
 	if err != nil {
 		t.Fatal(err)

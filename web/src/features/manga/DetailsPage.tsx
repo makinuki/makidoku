@@ -33,7 +33,6 @@ export function DetailsPage() {
   const [data, setData] = useState<Aggregate>();
   const [categories, setCategories] = useState<Category[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [range, setRange] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<"tracker" | "migration">();
@@ -141,7 +140,7 @@ export function DetailsPage() {
     setEnqueueError("");
     setQueuedNote("");
     try {
-      await api.enqueue(manga.id, selected, range, manga.downloadFormat);
+      await api.enqueue(manga.id, selected, "", manga.downloadFormat);
       setQueuedNote("Chapters queued for download.");
       await reload();
     } catch (e) {
@@ -251,12 +250,6 @@ export function DetailsPage() {
       <section className="mt-10">
         <PageHeader title="Chapters">
           <div className="flex flex-wrap gap-2">
-            <input
-              value={range}
-              onChange={(e) => setRange(e.target.value)}
-              placeholder="Range 1-10"
-              className="w-28 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs"
-            />
             <button
               onClick={() => setSelected(chapters.map((item) => item.id))}
               className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"

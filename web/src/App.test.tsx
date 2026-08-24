@@ -1634,7 +1634,7 @@ describe("details page action feedback", () => {
     const user = userEvent.setup();
     expect(await screen.findByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
 
-    await user.type(screen.getByPlaceholderText("Range 1-10"), "1");
+    await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: /Download/ }));
     expect(screen.getByRole("button", { name: /Queueing/ })).toBeDisabled();
 

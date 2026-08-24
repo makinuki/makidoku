@@ -815,4 +815,78 @@ describe("MakiDoku app shell", () => {
       await Promise.resolve();
     });
   });
+
+  // Leaving the reader inside the debounce window must still record the
+  // position the reader showed at exit, not drop the write.
+  it("flushes a pending progress write when leaving the reader", async () => {
+    vi.useFakeTimers();
+    window.history.pushState({}, "", "/");
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
+    const progressPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/progress" || path === "/api/progress/complete") {
+          progressPosts.push(JSON.parse(String(init?.body ?? "{}")));
+          return Response.json({});
+        }
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false }],
+            trackers: [],
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
+          return Response.json([
+            { id: pageOne, chapterId, index: 0, isScrambled: false },
+            { id: pageTwo, chapterId, index: 1, isScrambled: false },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    const view = render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    let loaded = false;
+    await act(async () => {
+      for (let i = 0; i < 30 && !loaded; i++) {
+        await vi.advanceTimersByTimeAsync(50);
+        loaded = !!screen.queryByRole("button", { name: "Single" });
+      }
+    });
+    expect(screen.getByRole("button", { name: "Single" })).toBeInTheDocument();
+    const baseline = progressPosts.length;
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(progressPosts).toHaveLength(baseline);
+
+    act(() => {
+      view.unmount();
+    });
+    expect(progressPosts).toHaveLength(baseline + 1);
+    expect(progressPosts[progressPosts.length - 1]).toMatchObject({
+      mangaId,
+      lastReadChapterId: chapterId,
+      lastReadPage: 2,
+    });
+  });
 });

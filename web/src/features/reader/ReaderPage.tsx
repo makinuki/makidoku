@@ -55,14 +55,30 @@ export function ReaderPage() {
       active = false;
     };
   }, [mangaId, chapterId]);
+  const saver = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!pages.length || !aggregate) return;
     const visibleEnd = Math.min(pages.length, index + (mode === "double" ? 2 : 1));
-    const timer = window.setTimeout(() => {
-      void api.progress(mangaId, chapterId, visibleEnd, pages.length, visibleEnd >= pages.length);
-    }, 500);
+    const save = () => {
+      saver.current = null;
+      api
+        .progress(mangaId, chapterId, visibleEnd, pages.length, visibleEnd >= pages.length)
+        .catch((e) => console.error("saving reading progress failed", e));
+    };
+    saver.current = save;
+    const timer = window.setTimeout(save, 500);
     return () => window.clearTimeout(timer);
   }, [index, mode, pages.length, aggregate, mangaId, chapterId]);
+  useEffect(() => {
+    // A pending write is flushed when leaving the reader or switching
+    // chapters so the debounce window cannot lose the final position.
+    return () => {
+      if (saver.current) {
+        saver.current();
+        saver.current = null;
+      }
+    };
+  }, [mangaId, chapterId]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "m") setMenu((value) => !value);

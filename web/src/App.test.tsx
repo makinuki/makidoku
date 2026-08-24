@@ -608,7 +608,7 @@ describe("MakiDoku app shell", () => {
     expect(await screen.findByRole("button", { name: "Migrate" })).toBeInTheDocument();
   });
 
-  it("uploads a selected backup from settings", async () => {
+  it("uploads a backup only after confirming from settings", async () => {
     window.history.pushState({}, "", "/settings");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -623,13 +623,54 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     const user = userEvent.setup();
-    const input = await screen.findByLabelText("Import JSON");
-    await user.upload(input, new File(["{}"], "backup.json", { type: "application/json" }));
+    await user.click(await screen.findByRole("button", { name: "Import JSON" }));
+    expect(screen.getByRole("heading", { name: "Import backup" })).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/import", expect.anything());
+    await user.upload(
+      screen.getByLabelText("Choose file"),
+      new File(["{}"], "backup.json", { type: "application/json" }),
+    );
     expect(await screen.findByText("Backup imported.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/import",
       expect.objectContaining({ method: "POST" }),
     );
+    // The settings data is re-fetched so restored plugins and categories show up.
+    await waitFor(() => {
+      const sourceCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/sources");
+      expect(sourceCalls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("shows an error when a backup import fails", async () => {
+    window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources" || path === "/api/categories") return Response.json([]);
+        if (path === "/api/import") {
+          return Response.json(
+            { error: { message: "unsupported backup version 9" } },
+            { status: 400 },
+          );
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Import JSON" }));
+    await user.upload(
+      screen.getByLabelText("Choose file"),
+      new File(["{}"], "backup.json", { type: "application/json" }),
+    );
+    expect(await screen.findByText("unsupported backup version 9")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Import backup" })).not.toBeInTheDocument();
   });
 
   it("offers single, double, and webtoon reader modes", async () => {

@@ -23,6 +23,8 @@ export function SettingsPage() {
   const [removing, setRemoving] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   const [confirmRemoval, setConfirmRemoval] = useState<Source>();
+  const [confirmImport, setConfirmImport] = useState(false);
+  const [importing, setImporting] = useState(false);
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(""), 4000);
@@ -80,6 +82,22 @@ export function SettingsPage() {
   useEffect(() => {
     void refresh();
   }, []);
+  // Importing overwrites library, progress and categories, so the file is
+  // only picked after an explicit confirmation. Failures land in the banner
+  // and a success re-reads everything the restore may have changed.
+  const runImport = async (file: File) => {
+    setImporting(true);
+    setError("");
+    try {
+      await api.importBackup(file);
+      setStatus("Backup imported.");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to import backup");
+    } finally {
+      setImporting(false);
+    }
+  };
   const addCategory = async () => {
     if (!name.trim()) return;
     try {
@@ -317,21 +335,56 @@ export function SettingsPage() {
           >
             <Download size={15} /> Export JSON
           </a>
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm">
+          <button
+            onClick={() => setConfirmImport(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+          >
             <FolderOpen size={15} /> Import JSON
-            <input
-              type="file"
-              accept="application/json"
-              hidden
-              onChange={async (event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                await api.importBackup(file);
-                setStatus("Backup imported.");
-              }}
-            />
-          </label>
+          </button>
         </div>
+        {confirmImport && (
+          <Modal
+            title="Import backup"
+            onClose={() => {
+              if (!importing) setConfirmImport(false);
+            }}
+          >
+            <p className="text-sm text-zinc-400">
+              Importing replaces your library, categories, progress and tracker links with the
+              contents of the selected file. This cannot be undone.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmImport(false)}
+                disabled={importing}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <label
+                className={`inline-flex cursor-pointer items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 ${
+                  importing ? "pointer-events-none opacity-60" : ""
+                }`}
+              >
+                {importing && <LoaderCircle size={15} className="animate-spin" />}
+                {importing ? "Importing…" : "Choose file"}
+                <input
+                  type="file"
+                  accept="application/json"
+                  hidden
+                  disabled={importing}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    setConfirmImport(false);
+                    void runImport(file);
+                  }}
+                />
+              </label>
+            </div>
+          </Modal>
+        )}
       </section>
     </div>
   );

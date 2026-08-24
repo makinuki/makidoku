@@ -34,6 +34,7 @@ type Server struct {
 	trackers  *tracker.Registry
 	syncer    *tracker.SyncWorker
 	http      *http.Server
+	api       *api.Server
 }
 
 func waitForBackground(downloadErrs, syncErrs <-chan error, downloadConsumed, syncConsumed bool) error {
@@ -108,6 +109,7 @@ func New(cfg config.Config) (*Server, error) {
 		downloads: downloads,
 		trackers:  trackers,
 		syncer:    syncer,
+		api:       server,
 		http: &http.Server{
 			Addr:              net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port)),
 			Handler:           router,
@@ -141,6 +143,7 @@ func (s *Server) Run(ctx context.Context) error {
 	defer s.close()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.api.SetLifetimeContext(runCtx)
 
 	errs := make(chan error, 1)
 	go func() {

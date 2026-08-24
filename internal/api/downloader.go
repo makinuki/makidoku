@@ -122,7 +122,7 @@ func (s *Server) downloadEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer connection.CloseNow()
 
-	ctx := connection.CloseRead(context.Background())
+	ctx := connection.CloseRead(s.Lifetime())
 	events, unsubscribe := s.downloads.Subscribe()
 	defer unsubscribe()
 	for {

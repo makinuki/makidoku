@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 
@@ -35,6 +36,16 @@ type Server struct {
 	trackers   *tracker.Registry
 	syncer     *tracker.SyncWorker
 	imageCache *imagecache.Cache
+	lifetime   atomic.Pointer[context.Context]
+}
+
+// Lifetime returns the daemon run context when available, falling back to a
+// detached context for tests and direct construction.
+func (s *Server) Lifetime() context.Context {
+	if ctx := s.lifetime.Load(); ctx != nil {
+		return *ctx
+	}
+	return context.Background()
 }
 
 func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQueue) *Server {
@@ -49,6 +60,13 @@ func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQue
 // images. Without it the cache directory grows without limits.
 func (s *Server) SetImageCache(cache *imagecache.Cache) {
 	s.imageCache = cache
+}
+
+// SetLifetimeContext supplies the daemon's run context so hijacked handlers
+// (websockets) end when the daemon shuts down, not only when the client
+// disconnects.
+func (s *Server) SetLifetimeContext(ctx context.Context) {
+	s.lifetime.Store(&ctx)
 }
 
 func NewTrackerServer(repo *db.Repository, eng *engine.Engine, downloads downloadQueue, trackers *tracker.Registry) *Server {

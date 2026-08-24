@@ -1453,40 +1453,38 @@ describe("details page action feedback", () => {
     const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-          const path = String(input);
-          if (path === `/api/manga/${mangaId}` && !init?.method) {
-            return Promise.resolve(
-              Response.json({
-                manga: {
-                  id: mangaId,
-                  sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
-                  title: "Yosuga no Sora",
-                  status: "completed",
-                  coverUrl: "/api/manga/" + mangaId + "/cover",
-                  inLibrary: true,
-                  downloadFormat: "cbz",
-                  createdAt: 1,
-                  updatedAt: 1,
-                },
-                categories: [],
-                chapters: [
-                  { id: chapterId, mangaId, chapterNumber: 1, language: "en", downloaded: false },
-                ],
-                trackers: [],
-              }),
-            );
-          }
-          if (path === "/api/download" && init?.method === "POST") {
-            return new Promise<Response>((resolve) => {
-              resolveQueue = resolve;
-            });
-          }
-          if (path === "/api/categories") return Promise.resolve(Response.json([]));
-          return Promise.resolve(Response.json([]));
-        },
-      ),
+      vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const path = String(input);
+        if (path === `/api/manga/${mangaId}` && !init?.method) {
+          return Promise.resolve(
+            Response.json({
+              manga: {
+                id: mangaId,
+                sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+                title: "Yosuga no Sora",
+                status: "completed",
+                coverUrl: "/api/manga/" + mangaId + "/cover",
+                inLibrary: true,
+                downloadFormat: "cbz",
+                createdAt: 1,
+                updatedAt: 1,
+              },
+              categories: [],
+              chapters: [
+                { id: chapterId, mangaId, chapterNumber: 1, language: "en", downloaded: false },
+              ],
+              trackers: [],
+            }),
+          );
+        }
+        if (path === "/api/download" && init?.method === "POST") {
+          return new Promise<Response>((resolve) => {
+            resolveQueue = resolve;
+          });
+        }
+        if (path === "/api/categories") return Promise.resolve(Response.json([]));
+        return Promise.resolve(Response.json([]));
+      }),
     );
     render(
       <BrowserRouter>

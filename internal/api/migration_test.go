@@ -1,0 +1,158 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/internal/identity"
+)
+
+// migrationTestRouter wires two sources so a title can migrate between them.
+func migrationTestRouter(t *testing.T) (*db.Repository, chi.Router, string, string) {
+	t.Helper()
+	handle, err := db.Open(filepath.Join(t.TempDir(), "makidoku.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	oldSource, err := identity.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSource, err := identity.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	if _, err := handle.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES(?,?,?,?,?,?,?,?,?)`, oldSource, "old", "Old", 1, 1, "en", "https://old.test", "missing-old.wasm", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES(?,?,?,?,?,?,?,?,?)`, newSource, "replacement", "Replacement", 1, 1, "en", "https://replacement.test", "missing-replacement.wasm", now); err != nil {
+		t.Fatal(err)
+	}
+	repo := db.NewRepository(handle)
+	router := chi.NewRouter()
+	NewServer(repo, engine.New(handle, engine.Options{DataDir: t.TempDir()})).Mount(router)
+	return repo, router, oldSource, newSource
+}
+
+// Applying a migration must retire the previous source's chapters (including
+// their download artifacts) and leave the title ready for the replacement
+// source. The replacement fetch fails on the missing demo binary, so the
+// chapter list ends up empty but consistent, and dangling progress is dropped.
+func TestApplyMigrationRetiresOldChapters(t *testing.T) {
+	repo, router, oldSource, newSource := migrationTestRouter(t)
+	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceID: oldSource, SourceChapterID: "chapter-a", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "artifact", "Chapter 1.cbz")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("pages"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkChapterDownloaded(chapter.ID, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(db.ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 2, TotalPages: 10, LastReadAt: 123}); err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := repo.UpsertManga(db.Manga{SourceID: newSource, SourceMangaID: "remote-b", Title: "Demo", Status: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := json.Marshal(map[string]string{"sourceId": newSource, "mangaId": discovered.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/migration/apply", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Fatalf("artifact still on disk: %v", err)
+	}
+	chapters, err := repo.ListChapters(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chapters) != 0 {
+		t.Fatalf("chapters after migration = %d, want the old list retired", len(chapters))
+	}
+	if _, err := repo.GetReadingProgress(manga.ID); err == nil {
+		t.Fatal("dangling reading progress survived migration")
+	}
+	source, err := repo.GetMangaSource(manga.ID)
+	if err != nil || source.SourceID != newSource {
+		t.Fatalf("primary source = %+v, err = %v", source, err)
+	}
+}
+
+// The claimed source must match the replacement manga's actual source.
+func TestApplyMigrationRejectsSourceMismatch(t *testing.T) {
+	repo, router, oldSource, newSource := migrationTestRouter(t)
+	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := repo.UpsertManga(db.Manga{SourceID: newSource, SourceMangaID: "remote-b", Title: "Demo", Status: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{"sourceId": oldSource, "mangaId": discovered.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/migration/apply", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want a bad request for a source mismatch", rec.Code)
+	}
+}
+
+// Reading progress carries over when the replacement source has a chapter
+// with the same number.
+func TestRemapProgressMatchesByChapterNumber(t *testing.T) {
+	oldNumber := 7.0
+	other := 9.0
+	retired := []db.Chapter{
+		{ID: "old-7", ChapterNumber: &oldNumber},
+		{ID: "old-9", ChapterNumber: &other},
+	}
+	newNumber := 7.0
+	replacement := []db.Chapter{
+		{ID: "new-7", ChapterNumber: &newNumber},
+	}
+	progress := db.ReadingProgress{MangaID: "m", LastReadChapterID: "old-7", LastReadPage: 3, TotalPages: 20, LastReadAt: 42}
+
+	mapped := remapProgress(progress, retired, replacement)
+	if mapped == nil || mapped.LastReadChapterID != "new-7" {
+		t.Fatalf("remapped progress = %+v, want it moved to new-7", mapped)
+	}
+	if mapped.LastReadPage != 3 || mapped.TotalPages != 20 || mapped.LastReadAt != 42 {
+		t.Fatalf("remapped progress lost its state: %+v", mapped)
+	}
+
+	missing := remapProgress(progress, retired, nil)
+	if missing != nil {
+		t.Fatalf("unmatched progress = %+v, want nil", missing)
+	}
+}

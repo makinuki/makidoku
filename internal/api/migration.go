@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -90,19 +92,111 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldID := chi.URLParam(r, "mangaID")
-	old, err := s.repo.GetManga(oldID)
+	if _, err := s.repo.GetManga(oldID); err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	if oldID == body.MangaID {
+		writeBadRequest(w, "a distinct replacement manga is required")
+		return
+	}
+	// The replacement must belong to the claimed source.
+	discoveredSource, err := s.repo.GetMangaSource(body.MangaID)
 	if err != nil {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
-	if old.ID == body.MangaID || strings.TrimSpace(body.SourceID) == "" {
-		writeBadRequest(w, "a distinct replacement manga is required")
+	if discoveredSource.SourceID != body.SourceID {
+		writeBadRequest(w, "the replacement manga does not belong to the claimed source")
 		return
 	}
-	aggregate, err := s.repo.AttachMangaSource(oldID, body.MangaID)
+
+	// Retire the previous source's chapters and remember the reading state
+	// for remapping once the replacement's chapters are known.
+	progress, progressErr := s.repo.GetReadingProgress(oldID)
+	hasProgress := progressErr == nil
+	retired, artifacts, err := s.repo.RetireMangaChapters(oldID, discoveredSource.SourceID)
 	if err != nil {
 		writeLocalError(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, migrationResponse{Manga: aggregate, Source: body.SourceID, ChapterMap: map[string]string{}})
+	if _, err := s.repo.AttachMangaSource(oldID, body.MangaID); err != nil {
+		writeLocalError(w, http.StatusConflict, err)
+		return
+	}
+	for _, path := range artifacts {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("migration: removing artifact %s failed: %v", path, err)
+		}
+	}
+
+	// Materialize the replacement's chapters right away so the title opens
+	// with a consistent list. A failed fetch keeps the migration; the title
+	// simply stays empty until the next refresh.
+	source, err := s.repo.GetMangaSource(oldID)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	aggregate, fetchErr := s.fetchAndStoreDetails(r, source)
+	if fetchErr != nil {
+		log.Printf("migration: replacement fetch for %s failed: %v", oldID, fetchErr)
+		aggregate, err = s.repo.GetMangaAggregate(oldID)
+		if err != nil {
+			writeLocalError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	// Remap reading state and report the old-to-new chapter matches.
+	chapterMap := map[string]string{}
+	for i := range retired {
+		if next := findSameNumber(aggregate.Chapters, retired[i].ChapterNumber); next != nil {
+			chapterMap[retired[i].ID] = next.ID
+		}
+	}
+	if hasProgress {
+		if mapped := remapProgress(progress, retired, aggregate.Chapters); mapped != nil {
+			if _, err := s.repo.UpsertReadingProgress(*mapped); err != nil {
+				log.Printf("migration: remapping progress for %s failed: %v", oldID, err)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, migrationResponse{Manga: aggregate, Source: body.SourceID, ChapterMap: chapterMap})
+}
+
+// findSameNumber locates a chapter with the given number in the list.
+func findSameNumber(chapters []db.Chapter, number *float64) *db.Chapter {
+	if number == nil {
+		return nil
+	}
+	for i := range chapters {
+		if chapters[i].ChapterNumber != nil && *chapters[i].ChapterNumber == *number {
+			return &chapters[i]
+		}
+	}
+	return nil
+}
+
+// remapProgress moves reading state onto the replacement chapter with the
+// same number. It reports nil when the state cannot carry over, which keeps
+// the progress store free of dangling references.
+func remapProgress(progress db.ReadingProgress, retired, replacement []db.Chapter) *db.ReadingProgress {
+	var old *db.Chapter
+	for i := range retired {
+		if retired[i].ID == progress.LastReadChapterID {
+			old = &retired[i]
+			break
+		}
+	}
+	if old == nil {
+		return nil
+	}
+	next := findSameNumber(replacement, old.ChapterNumber)
+	if next == nil {
+		return nil
+	}
+	mapped := progress
+	mapped.LastReadChapterID = next.ID
+	return &mapped
 }

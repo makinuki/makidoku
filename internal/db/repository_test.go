@@ -292,6 +292,48 @@ func TestMangaDetailsFetchedAtLifecycle(t *testing.T) {
 	}
 }
 
+// A queue item canceled while the archive was being written must not flip
+// back to completed: the chapter stays unmarked and the row stays canceled.
+func TestMarkChapterDownloadedRespectsCanceledQueueItem(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "chapter-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := repo.EnqueueChapter(chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ClaimNextQueueItem(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CancelQueueItem(item.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.MarkChapterDownloaded(chapter.ID, `C:\manga\chapter.cbz`); err == nil {
+		t.Fatal("marked a chapter whose download was canceled")
+	}
+	stored, err := repo.GetChapter(chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Downloaded || stored.DownloadPath != nil {
+		t.Fatalf("canceled chapter kept a downloaded state: %+v", stored)
+	}
+	row, err := repo.GetQueueItem(item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != QueueCanceled {
+		t.Fatalf("queue status = %q, want CANCELED", row.Status)
+	}
+}
+
 func TestReadingProgressRequiresChapterFromManga(t *testing.T) {
 	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})

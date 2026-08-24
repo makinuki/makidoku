@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -378,13 +379,23 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		})
 	}
 	if _, err := q.repo.UpsertPages(item.ChapterID, item.SourceID, pageRows); err != nil {
+		q.removeArtifact(archivePath)
 		return q.fail(item, err)
 	}
 	if err := q.repo.MarkChapterDownloaded(item.ChapterID, archivePath); err != nil {
+		q.removeArtifact(archivePath)
 		return q.fail(item, err)
 	}
 	q.publishCurrent("completed", item.ID)
 	return nil
+}
+
+// removeArtifact deletes an archive that was written but never registered, so
+// a failed bookkeeping write cannot leave an orphaned file on disk.
+func (q *Queue) removeArtifact(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("downloader: removing incomplete artifact %s failed: %v", path, err)
+	}
 }
 
 func (q *Queue) fail(item db.DownloadQueueItem, cause error) error {

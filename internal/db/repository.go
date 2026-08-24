@@ -930,10 +930,26 @@ func (r *Repository) MarkChapterDownloaded(chapterID, path string) error {
 	if err := requireChange(result, "mark chapter downloaded"); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE download_queue SET status = ?, progress = 100,
-		downloaded_pages = total_pages, error_message = NULL WHERE chapter_id = ?`,
-		QueueCompleted, chapterID); err != nil {
+	// The queue row only advances while still downloading: an item canceled
+	// during the archive write must not flip back to completed. Chapters
+	// without a queue row (imports, manual records) are marked regardless.
+	var queueID int64
+	hasQueue := false
+	if err := tx.Get(&queueID, `SELECT id FROM download_queue WHERE chapter_id = ?`, chapterID); err == nil {
+		hasQueue = true
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if hasQueue {
+		result, err := tx.Exec(`UPDATE download_queue SET status = ?, progress = 100,
+			downloaded_pages = total_pages, error_message = NULL WHERE chapter_id = ? AND status = ?`,
+			QueueCompleted, chapterID, QueueDownloading)
+		if err != nil {
+			return err
+		}
+		if err := requireChange(result, "complete queue item"); err != nil {
+			return fmt.Errorf("download canceled before completion")
+		}
 	}
 	return tx.Commit()
 }

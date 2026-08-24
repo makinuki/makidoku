@@ -39,6 +39,9 @@ export function DetailsPage() {
   const [modal, setModal] = useState<"tracker" | "migration">();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [categoryBusy, setCategoryBusy] = useState<number>();
   const [languageFilter, setLanguageFilter] = useState<string>();
   const load = async () => {
     setLoading(true);
@@ -90,6 +93,32 @@ export function DetailsPage() {
     setSelected((items) =>
       items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
     );
+  // Library and category changes report failures inline: the title stays on
+  // screen and the user can retry without losing their place.
+  const toggleLibrary = async () => {
+    setLibraryBusy(true);
+    setActionError("");
+    try {
+      await api.setLibrary(manga.id, !manga.inLibrary);
+      await load();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Unable to update the library");
+    } finally {
+      setLibraryBusy(false);
+    }
+  };
+  const toggleCategory = async (category: Category, active: boolean) => {
+    setCategoryBusy(category.id);
+    setActionError("");
+    try {
+      await api.setCategory(manga.id, category.id, !active);
+      await load();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Unable to update categories");
+    } finally {
+      setCategoryBusy(undefined);
+    }
+  };
   const enqueue = async () => {
     try {
       await api.enqueue(manga.id, selected, range, manga.downloadFormat);
@@ -139,13 +168,12 @@ export function DetailsPage() {
               <Play size={15} /> Read
             </Link>
             <button
-              onClick={async () => {
-                await api.setLibrary(manga.id, !manga.inLibrary);
-                await load();
-              }}
-              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
+              onClick={() => void toggleLibrary()}
+              disabled={libraryBusy}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm disabled:opacity-50"
             >
-              <Bookmark size={15} /> {manga.inLibrary ? "In library" : "Add to library"}
+              <Bookmark size={15} />{" "}
+              {libraryBusy ? "Updating…" : manga.inLibrary ? "In library" : "Add to library"}
             </button>
             <button
               onClick={() => setModal("tracker")}
@@ -174,6 +202,7 @@ export function DetailsPage() {
             )}
           </div>
           {refreshError && <p className="mt-3 text-xs text-red-300">{refreshError}</p>}
+          {actionError && <p className="mt-3 text-xs text-red-300">{actionError}</p>}
         </div>
       </section>
       {categories.length > 0 && (
@@ -185,11 +214,9 @@ export function DetailsPage() {
               return (
                 <button
                   key={category.id}
-                  onClick={async () => {
-                    await api.setCategory(manga.id, category.id, !active);
-                    await load();
-                  }}
-                  className={`rounded-full border px-3 py-2 text-xs ${active ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400"}`}
+                  onClick={() => void toggleCategory(category, active)}
+                  disabled={categoryBusy !== undefined}
+                  className={`rounded-full border px-3 py-2 text-xs disabled:opacity-50 ${active ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400"}`}
                 >
                   {category.name}
                 </button>

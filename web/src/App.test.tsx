@@ -1387,3 +1387,63 @@ describe("settings credential feedback", () => {
     expect(tokenInput).toHaveValue("");
   });
 });
+
+describe("details page action feedback", () => {
+  const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+  const aggregate = (overrides: Record<string, unknown> = {}) => ({
+    manga: {
+      id: mangaId,
+      sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+      title: "Yosuga no Sora",
+      status: "completed",
+      coverUrl: "/api/manga/" + mangaId + "/cover",
+      inLibrary: true,
+      downloadFormat: "cbz",
+      createdAt: 1,
+      updatedAt: 1,
+      ...overrides,
+    },
+    categories: [] as unknown[],
+    chapters: [],
+    trackers: [],
+  });
+
+  // A failed library toggle or category change must not blank the page.
+  it("reports library and category failures inline", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === `/api/manga/${mangaId}` && !init?.method) {
+          return Response.json(aggregate());
+        }
+        if (path === `/api/manga/${mangaId}/library`) {
+          return Response.json({ error: { message: "library write rejected" } }, { status: 500 });
+        }
+        if (/\/api\/manga\/[^/]+\/categories\/\d+$/.test(path)) {
+          return Response.json({ error: { message: "category write rejected" } }, { status: 500 });
+        }
+        if (path === "/api/categories") {
+          return Response.json([{ id: 7, name: "Reading", sortOrder: 1 }]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /In library/ }));
+    expect(await screen.findByText("library write rejected")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reading" }));
+    expect(await screen.findByText("category write rejected")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
+  });
+});

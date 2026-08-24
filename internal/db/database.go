@@ -18,29 +18,19 @@ var migrationFS embed.FS
 // Open opens (or creates) the SQLite database at path, configures WAL mode
 // and pragmas, and applies embedded migrations.
 func Open(path string) (*sqlx.DB, error) {
-	// modernc.org/sqlite DSN: file:path?cache=shared is for in-memory sharing;
-	// for file DB we just pass the path. Use _pragma query params for foreign_keys,
-	// but we also set them via PRAGMA after open for determinism.
-	dsn := fmt.Sprintf("file:%s?cache=shared", path)
+	// Per-connection pragmas ride on the DSN so every pooled connection -
+	// present and future - enforces foreign keys and a busy timeout. The
+	// journal mode is set once after open because it is database-level state.
+	dsn := fmt.Sprintf("file:%s?cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)", path)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db := sqlx.NewDb(sqlDB, "sqlite")
 
-	// Each must be set per connection; the driver pools connections so we
-	// set them globally via PRAGMA and also limit to single writer via WAL.
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL;",
-		"PRAGMA foreign_keys=ON;",
-		"PRAGMA busy_timeout=5000;",
-		"PRAGMA synchronous=NORMAL;",
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("pragma %q: %w", p, err)
-		}
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("journal_mode: %w", err)
 	}
 
 	// Enforce single-writer friendly pool for SQLite.

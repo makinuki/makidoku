@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 
 	"github.com/makinuki/makidoku/internal/identity"
 )
+
+func placeholders(n int) string {
+	return strings.TrimRight(strings.Repeat("?,", n), ",")
+}
 
 // Repository groups typed queries. Currently it provides only health helpers;
 // domain queries are added as the matching subsystems land.
@@ -330,27 +335,74 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 	if err != nil {
 		return nil, err
 	}
+
+	// Categories, progress and unread counts are fetched in three batched
+	// queries instead of per-title round-trips.
+	ids := make([]any, 0, len(manga))
+	for _, item := range manga {
+		ids = append(ids, item.ID)
+	}
+	in := placeholders(len(ids))
+
+	categoryMap := map[string][]Category{}
+	if len(ids) > 0 {
+		var catRows []struct {
+			MangaID   string `db:"manga_id"`
+			ID        int64  `db:"id"`
+			Name      string `db:"name"`
+			SortOrder int    `db:"sort_order"`
+		}
+		if err := r.db.Select(&catRows, `SELECT mc.manga_id,c.id,c.name,c.sort_order FROM manga_categories mc JOIN categories c ON c.id=mc.category_id WHERE mc.manga_id IN (`+in+`) ORDER BY c.sort_order,c.name`, ids...); err != nil {
+			return nil, err
+		}
+		for _, row := range catRows {
+			categoryMap[row.MangaID] = append(categoryMap[row.MangaID], Category{ID: row.ID, Name: row.Name, SortOrder: row.SortOrder})
+		}
+	}
+
+	progressMap := map[string]ReadingProgress{}
+	if len(ids) > 0 {
+		var progressRows []ReadingProgress
+		if err := r.db.Select(&progressRows, `SELECT manga_id,last_read_chapter_id,last_read_page,total_pages,is_completed,last_read_at FROM reading_progress WHERE manga_id IN (`+in+`)`, ids...); err != nil {
+			return nil, err
+		}
+		for _, row := range progressRows {
+			progressMap[row.MangaID] = row
+		}
+	}
+
+	unreadMap := map[string]int{}
+	if len(ids) > 0 {
+		var unreadRows []struct {
+			MangaID string `db:"manga_id"`
+			Unread  int    `db:"unread"`
+		}
+		unreadQuery := `SELECT c.manga_id, SUM(CASE WHEN p.last_read_chapter_id IS NULL
+			THEN (CASE WHEN c.downloaded=0 THEN 1 ELSE 0 END)
+			ELSE (CASE WHEN c.downloaded=0 OR c.id<>p.last_read_chapter_id THEN 1 ELSE 0 END)
+			END) AS unread
+			FROM chapters c LEFT JOIN reading_progress p ON p.manga_id=c.manga_id
+			WHERE c.manga_id IN (` + in + `) GROUP BY c.manga_id`
+		if err := r.db.Select(&unreadRows, unreadQuery, ids...); err != nil {
+			return nil, err
+		}
+		for _, row := range unreadRows {
+			unreadMap[row.MangaID] = row.Unread
+		}
+	}
+
 	out := make([]LibraryManga, 0, len(manga))
 	for _, item := range manga {
-		categories, err := r.ListMangaCategories(item.ID)
-		if err != nil {
-			return nil, err
-		}
 		var progress *ReadingProgress
-		if p, err := r.GetReadingProgress(item.ID); err == nil {
+		if p, ok := progressMap[item.ID]; ok {
 			progress = &p
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
 		}
-		var unread int
-		if progress != nil {
-			if err := r.db.Get(&unread, `SELECT COUNT(*) FROM chapters WHERE manga_id=? AND (downloaded=0 OR id<>?)`, item.ID, progress.LastReadChapterID); err != nil {
-				return nil, err
-			}
-		} else if err := r.db.Get(&unread, `SELECT COUNT(*) FROM chapters WHERE manga_id=? AND downloaded=0`, item.ID); err != nil {
-			return nil, err
-		}
-		out = append(out, LibraryManga{Manga: item, Categories: categories, Progress: progress, UnreadChapters: unread})
+		out = append(out, LibraryManga{
+			Manga:          item,
+			Categories:     categoryMap[item.ID],
+			Progress:       progress,
+			UnreadChapters: unreadMap[item.ID],
+		})
 	}
 	return out, nil
 }
@@ -387,15 +439,57 @@ func (r *Repository) ListHistory() ([]HistoryItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]HistoryItem, 0, len(rows))
+
+	// Manga and chapter records are fetched in batched queries. A progress
+	// row whose references vanished (retired chapters, removed titles) is
+	// skipped rather than failing the whole page.
+	mangaIDs := make([]any, 0, len(rows))
+	chapterIDs := make([]any, 0, len(rows))
+	seenManga := map[string]struct{}{}
+	seenChapter := map[string]struct{}{}
 	for _, row := range rows {
-		manga, err := r.GetManga(row.MangaID)
-		if err != nil {
+		if _, ok := seenManga[row.MangaID]; !ok {
+			seenManga[row.MangaID] = struct{}{}
+			mangaIDs = append(mangaIDs, row.MangaID)
+		}
+		if _, ok := seenChapter[row.LastReadChapterID]; !ok {
+			seenChapter[row.LastReadChapterID] = struct{}{}
+			chapterIDs = append(chapterIDs, row.LastReadChapterID)
+		}
+	}
+
+	mangaMap := map[string]Manga{}
+	if len(mangaIDs) > 0 {
+		var mangaRows []Manga
+		if err := r.db.Select(&mangaRows, `SELECT * FROM manga WHERE id IN (`+placeholders(len(mangaIDs))+`)`, mangaIDs...); err != nil {
 			return nil, err
 		}
-		chapter, err := r.GetChapter(row.LastReadChapterID)
-		if err != nil {
+		for _, m := range mangaRows {
+			mangaMap[m.ID] = m
+		}
+	}
+	chapterMap := map[string]Chapter{}
+	if len(chapterIDs) > 0 {
+		var chapterRows []Chapter
+		if err := r.db.Select(&chapterRows, `SELECT * FROM chapters WHERE id IN (`+placeholders(len(chapterIDs))+`)`, chapterIDs...); err != nil {
 			return nil, err
+		}
+		for _, c := range chapterRows {
+			chapterMap[c.ID] = c
+		}
+	}
+
+	out := make([]HistoryItem, 0, len(rows))
+	for _, row := range rows {
+		manga, ok := mangaMap[row.MangaID]
+		if !ok {
+			log.Printf("history: skipping progress for missing manga %s", row.MangaID)
+			continue
+		}
+		chapter, ok := chapterMap[row.LastReadChapterID]
+		if !ok {
+			log.Printf("history: skipping progress for missing chapter %s", row.LastReadChapterID)
+			continue
 		}
 		out = append(out, HistoryItem{Manga: manga, Chapter: chapter, Progress: row})
 	}

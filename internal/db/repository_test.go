@@ -422,6 +422,41 @@ func TestPruneTerminalTrackerSyncJobsKeepsNewest(t *testing.T) {
 	}
 }
 
+// A progress row whose chapter has vanished (retired by a migration) must be
+// skipped instead of blanking the whole history page.
+func TestListHistorySkipsOrphanedProgress(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "h", Title: "History", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 1, TotalPages: 5}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a row from a legacy or partially restored database by writing
+	// one progress entry whose chapter does not exist.
+	if _, err := repo.DB().Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB().Exec(`INSERT INTO reading_progress(manga_id,last_read_chapter_id,last_read_page,total_pages,is_completed,last_read_at) VALUES('ghost-manga', 'ghost-chapter', 1, 5, 0, 99)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB().Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := repo.ListHistory()
+	if err != nil {
+		t.Fatalf("list history failed on an orphaned row: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want the valid entry with the ghost skipped", len(items))
+	}
+}
 func TestReadingProgressRequiresChapterFromManga(t *testing.T) {	repo := testRepository(t)
 	first, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "one", Title: "One", Status: "ongoing", CoverURL: "cover"})
 	if err != nil {

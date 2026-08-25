@@ -573,6 +573,7 @@ describe("MakiDoku app shell", () => {
     );
     const user = userEvent.setup();
     await user.type(await screen.findByPlaceholderText("Search installed plugins"), "Yosuga");
+    await user.keyboard("{Enter}");
     const save = await screen.findByRole("button", { name: /Save title/ });
     await user.click(save);
     expect(await screen.findByRole("button", { name: /Added/ })).toBeDisabled();
@@ -581,6 +582,55 @@ describe("MakiDoku app shell", () => {
       `/manga/${resultId}`,
     );
     expect(window.location.pathname).toBe("/browse");
+  });
+
+  it("submits source searches only when Enter is pressed", async () => {
+    window.history.pushState({}, "", "/browse");
+    let searchCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/health") return Response.json({ ok: true });
+        if (path === "/api/sources") {
+          return Response.json([
+            {
+              id: "mangadex",
+              name: "MangaDex",
+              version: "1",
+              abiVersion: 1,
+              lang: "en",
+              baseUrl: "https://mangadex.org",
+              iconUrl: "",
+              nsfw: false,
+              installedAt: 1,
+              loaded: true,
+              hasClearance: false,
+            },
+          ]);
+        }
+        if (path.startsWith("/api/sources/mangadex/search")) {
+          searchCalls++;
+          return Response.json({ page: 1, hasNextPage: false, items: [] });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText("Search installed plugins");
+    await user.type(input, "Yosuga");
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    });
+    expect(searchCalls).toBe(0);
+
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(searchCalls).toBe(1));
   });
 
   it("reports failed plugin installs in the error banner", async () => {
@@ -929,6 +979,7 @@ describe("MakiDoku app shell", () => {
     const status = await screen.findByRole("combobox", { name: "Status" });
     await user.selectOptions(status, "completed");
     await user.type(screen.getByPlaceholderText("Search installed plugins"), "Yosuga");
+    await user.keyboard("{Enter}");
     await waitFor(() => {
       const requestPaths = fetchMock.mock.calls.map(([input]) => String(input));
       expect(requestPaths).toEqual(
@@ -2669,6 +2720,7 @@ describe("search robustness", () => {
     );
     const user = userEvent.setup();
     await user.type(await screen.findByPlaceholderText("Search installed plugins"), "yosuga");
+    await user.keyboard("{Enter}");
     expect(await screen.findByText("Yosuga no Sora")).toBeInTheDocument();
     expect(screen.getByText("1 of 2 plugins failed to respond.")).toBeInTheDocument();
   });

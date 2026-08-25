@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../componen
 export function BrowsePage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [selected, setSelected] = useState("all");
+  const [draftQuery, setDraftQuery] = useState("");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Array<SearchResult & { source: Source }>>([]);
   const [filterSchemas, setFilterSchemas] = useState<FilterSchema[]>([]);
@@ -49,37 +50,45 @@ export function BrowsePage() {
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
+      setFailedSources({ failed: 0, total: 0 });
+      setLoading(false);
       return;
     }
-    const timer = window.setTimeout(() => {
-      setLoading(true);
-      setError("");
-      const wanted = selected === "all" ? sources : sources.filter((item) => item.id === selected);
-      let failed = 0;
-      Promise.all(
-        wanted.map(async (source) => {
-          try {
-            const page = await api.search(
-              source.id,
-              query,
-              1,
-              selected === source.id ? filterValues : undefined,
-            );
-            return page.items.map((item) => ({ ...item, source }));
-          } catch {
-            failed++;
-            return [];
-          }
-        }),
-      )
-        .then((items) => {
-          setFailedSources({ failed, total: wanted.length });
-          setResults(items.flat());
-        })
-        .catch((e) => setError(e.message))
-        .finally(() => setLoading(false));
-    }, 300);
-    return () => window.clearTimeout(timer);
+    let active = true;
+    setLoading(true);
+    setError("");
+    const wanted = selected === "all" ? sources : sources.filter((item) => item.id === selected);
+    let failed = 0;
+    void Promise.all(
+      wanted.map(async (source) => {
+        try {
+          const page = await api.search(
+            source.id,
+            query,
+            1,
+            selected === source.id ? filterValues : undefined,
+          );
+          return page.items.map((item) => ({ ...item, source }));
+        } catch {
+          failed++;
+          return [];
+        }
+      }),
+    )
+      .then((items) => {
+        if (!active) return;
+        setFailedSources({ failed, total: wanted.length });
+        setResults(items.flat());
+      })
+      .catch((e) => {
+        if (active) setError(e instanceof Error ? e.message : "Search failed");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [query, selected, sources, filterValues]);
   return (
     <div className="mx-auto max-w-7xl p-5 sm:p-8">
@@ -122,16 +131,22 @@ export function BrowsePage() {
           </button>
         ))}
       </div>
-      <label className="mb-6 flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setQuery(draftQuery.trim());
+        }}
+        className="mb-6 flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3"
+      >
         <Search size={18} className="text-zinc-500" />
         <input
           autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={draftQuery}
+          onChange={(e) => setDraftQuery(e.target.value)}
           placeholder="Search installed plugins"
           className="min-w-0 flex-1 bg-transparent outline-none"
         />
-      </label>
+      </form>
       {selected !== "all" && filterSchemas.length > 0 && (
         <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <h2 className="text-sm font-semibold">Plugin filters</h2>

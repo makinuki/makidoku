@@ -562,6 +562,7 @@ describe("MakiDoku app shell", () => {
       trackers: [],
       sourceName: "MangaDex",
     };
+    let mangaGets = 0;
     let resolveApply!: (value: Response) => void;
     const applyGate = new Promise<Response>((resolve) => {
       resolveApply = resolve;
@@ -603,7 +604,10 @@ describe("MakiDoku app shell", () => {
         if (path.includes("/migration/apply") && init?.method === "POST") {
           return await applyGate;
         }
-        if (path.includes(`/api/manga/${mangaId}`)) return Response.json(aggregate);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          if (!init?.method) mangaGets++;
+          return Response.json(aggregate);
+        }
         return Response.json([]);
       }),
     );
@@ -617,8 +621,15 @@ describe("MakiDoku app shell", () => {
     await user.click(await screen.findByRole("button", { name: /Yosuga no Sora/ }));
     await user.click(screen.getByRole("button", { name: "Apply" }));
     expect(screen.getByRole("button", { name: /Migrating/ })).toBeDisabled();
+
+    // The daemon now reports the replacement plugin; the details view must
+    // refetch even though migration kept the canonical id.
+    const getsBeforeApplyResolved = mangaGets;
+    aggregate.sourceName = "Asura Scans";
     resolveApply(Response.json({ manga: aggregate, source: "asurascans", chapterMap: {} }));
-    expect(await screen.findByRole("button", { name: "Migrate" })).toBeInTheDocument();
+    await waitFor(() => expect(mangaGets).toBe(getsBeforeApplyResolved + 1));
+    expect(await screen.findByText("Asura Scans · completed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Migrate" })).toBeInTheDocument();
   });
 
   it("uploads a backup only after confirming from settings", async () => {

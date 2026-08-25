@@ -352,7 +352,12 @@ export function DetailsPage() {
         <MigrationModal
           manga={manga}
           onClose={() => setModal(undefined)}
-          onApplied={(nextMangaId) => navigate(`/manga/${encodeURIComponent(nextMangaId)}`)}
+          onApplied={(nextMangaId) => {
+            // Migration keeps the canonical id, so the route often stays the
+            // same: refetch explicitly instead of relying on remounting.
+            void reload();
+            navigate(`/manga/${encodeURIComponent(nextMangaId)}`);
+          }}
         />
       )}
     </div>

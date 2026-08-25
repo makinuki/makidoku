@@ -501,6 +501,40 @@ func TestUpdateTrackerBindingRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestUpdateTrackerBindingPreservesOmittedDates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if strings.Contains(payload.Query, "findMangaById") {
+			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"M"},"chapterCount":14,"myLibraryEntry":{"id":"e1","progress":8,"status":"CURRENT"}}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"libraryEntry":{"update":{"errors":[],"libraryEntry":{"id":"e1"}}}}}`))
+	}))
+	defer server.Close()
+
+	_, mux, registry, mangaID, trackerType, _ := newBindingFixture(t, server.URL+"/api/graphql")
+	startedAt, finishedAt := int64(1700000000), int64(1700086400)
+	if _, err := registry.Repo.UpdateTrackerTracking(mangaID, trackerType, nil, &startedAt, &finishedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/manga/"+mangaID+"/trackers/"+trackerType, strings.NewReader(`{"score":8}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var binding db.TrackerBinding
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.StartedAt == nil || *binding.StartedAt != startedAt || binding.FinishedAt == nil || *binding.FinishedAt != finishedAt {
+		t.Fatalf("dates were cleared: %+v", binding)
+	}
+}
+
 func TestProgressCompletionPushesFinishDate(t *testing.T) {
 	var mutations []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -441,6 +441,7 @@ func (s *Server) trackerStatuses(w http.ResponseWriter, r *http.Request) {
 			writeTrackerError(w, e)
 			return
 		}
+		status.TrackerType = b.TrackerType
 		out = append(out, status)
 	}
 	writeJSON(w, http.StatusOK, out)

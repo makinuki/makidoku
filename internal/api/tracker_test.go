@@ -161,6 +161,27 @@ func TestTrackerStatusSkipsBindingsWithoutStatusCapability(t *testing.T) {
 	}
 }
 
+func TestTrackerStatusIdentifiesProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"M"},"chapterCount":14,"myLibraryEntry":{"id":"e1","progress":8,"status":"CURRENT"}}}}`))
+	}))
+	defer server.Close()
+
+	_, mux, _, mangaID, trackerType, _ := newBindingFixture(t, server.URL+"/api/graphql")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/manga/"+mangaID+"/trackers/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var statuses []tracker.Status
+	if err := json.Unmarshal(rec.Body.Bytes(), &statuses); err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 || statuses[0].TrackerType != trackerType {
+		t.Fatalf("statuses = %+v", statuses)
+	}
+}
+
 type trackerListItem struct {
 	Name        string `json:"name"`
 	Credential  bool   `json:"credential"`

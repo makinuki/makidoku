@@ -1408,10 +1408,11 @@ describe("tracker binding feedback", () => {
   it("disables bind results while a bind runs and reports failures", async () => {
     window.history.pushState({}, "", `/manga/${mangaId}`);
     const bindResolvers: Array<(value: Response) => void> = [];
+    let bindBody: Record<string, unknown> | undefined;
     let bound = false;
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL) => {
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/trackers")
           return Promise.resolve(
@@ -1462,9 +1463,12 @@ describe("tracker binding feedback", () => {
           );
         }
         if (path.startsWith("/api/trackers/AniList/search")) {
-          return Promise.resolve(Response.json([{ remoteId: "42", title: "Yosuga no Sora" }]));
+          return Promise.resolve(
+            Response.json([{ remoteId: "42", title: "Yosuga no Sora", score: 8, chapters: 12 }]),
+          );
         }
         if (path.endsWith("/trackers/AniList/bind")) {
+          bindBody = JSON.parse(String(init?.body));
           return new Promise<Response>((resolve) => {
             bindResolvers.push(resolve);
           });
@@ -1483,6 +1487,12 @@ describe("tracker binding feedback", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     const result = await screen.findByRole("button", { name: /Yosuga no Sora 42/ });
     await user.click(result);
+    expect(bindBody).toEqual({
+      remoteId: "42",
+      remoteTitle: "Yosuga no Sora",
+      remoteScore: 8,
+      totalRemoteChapters: 12,
+    });
     expect(screen.getByRole("button", { name: /Binding/ })).toBeDisabled();
     await act(async () => {
       bindResolvers.shift()!(Response.json({ error: { message: "no session" } }, { status: 500 }));
@@ -1590,6 +1600,7 @@ describe("tracker binding feedback", () => {
 
   it("renders bound tracker status, progress, score, and dates", async () => {
     window.history.pushState({}, "", `/manga/${mangaId}`);
+    let statusCalls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -1638,6 +1649,19 @@ describe("tracker binding feedback", () => {
             ],
           });
         }
+        if (path === `/api/manga/${mangaId}/trackers/status`) {
+          statusCalls++;
+          return Response.json([
+            {
+              remoteId: "45821",
+              title: "Yosuga no Sora",
+              status: "CURRENT",
+              score: 9,
+              progress: statusCalls === 1 ? 10 : 11,
+              totalChapters: 12,
+            },
+          ]);
+        }
         return Response.json([]);
       }),
     );
@@ -1652,10 +1676,17 @@ describe("tracker binding feedback", () => {
     expect(screen.getByRole("img", { name: "AniList logo" })).toBeInTheDocument();
     expect(screen.getAllByText("Yosuga no Sora").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("CURRENT")).toBeInTheDocument();
-    expect(screen.getByText("8 / 12")).toBeInTheDocument();
+    expect(screen.getByText("10 / 12")).toBeInTheDocument();
     expect(screen.getByLabelText("AniList score")).toHaveValue(7.5);
     expect(screen.getByLabelText("AniList start date")).toHaveValue("2024-01-02");
     expect(screen.getByLabelText("AniList finish date")).toHaveValue("2024-02-01");
+    expect(statusCalls).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    expect(await screen.findByText("11 / 12")).toBeInTheDocument();
+    expect(screen.getByLabelText("AniList score")).toHaveValue(7.5);
+    expect(statusCalls).toBe(2);
   });
 
   it("updates tracker score and dates in one request", async () => {

@@ -553,6 +553,30 @@ func TestRebindingTrackerClearsOldSyncHistory(t *testing.T) {
 	}
 }
 
+func TestUpsertTrackerBindingKeepsExistingScoreForSameRemote(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "tracker-score", Title: "Tracker", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	score := 8.5
+	if _, err := repo.UpsertTrackerBinding(TrackerBinding{
+		MangaID: manga.ID, TrackerType: "anilist", RemoteID: "1", RemoteTitle: "Old", RemoteScore: &score,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newScore := 6.0
+	updated, err := repo.UpsertTrackerBinding(TrackerBinding{
+		MangaID: manga.ID, TrackerType: "anilist", RemoteID: "1", RemoteTitle: "New", RemoteScore: &newScore,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RemoteScore == nil || *updated.RemoteScore != score || updated.RemoteTitle != "New" {
+		t.Fatalf("binding = %+v", updated)
+	}
+}
+
 func TestUpsertMangaStubCreatesBareEntry(t *testing.T) {
 	repo := testRepository(t)
 	stub, err := repo.UpsertMangaStub(Manga{

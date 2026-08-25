@@ -22,6 +22,8 @@ import type {
   Category,
   Chapter,
   MigrationCandidate,
+  TrackerSearchResult,
+  TrackerStatus,
   TrackerInfo,
 } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
@@ -490,6 +492,7 @@ function TrackerModal({
   onChanged: () => Promise<void>;
 }) {
   const [trackers, setTrackers] = useState<TrackerInfo[]>([]);
+  const [statuses, setStatuses] = useState<TrackerStatus[]>([]);
   const [error, setError] = useState("");
   const refreshTrackers = useCallback(async () => {
     try {
@@ -499,9 +502,24 @@ function TrackerModal({
       setError(e instanceof Error ? e.message : "Unable to load trackers");
     }
   }, []);
+  const refreshStatuses = useCallback(async () => {
+    try {
+      setStatuses(await api.trackerStatuses(mangaId));
+    } catch {
+      // Status data enriches the modal but should not prevent local bindings from rendering.
+      setStatuses([]);
+    }
+  }, [mangaId]);
+  const bindingKey = bindings
+    .map((binding) => `${binding.trackerType}:${binding.remoteId}`)
+    .sort()
+    .join("|");
   useEffect(() => {
     void refreshTrackers();
   }, [refreshTrackers]);
+  useEffect(() => {
+    void refreshStatuses();
+  }, [bindingKey, refreshStatuses]);
   useTrackerEvents(() => {
     void refreshTrackers();
   });
@@ -509,15 +527,27 @@ function TrackerModal({
   return (
     <Modal title="Tracking" onClose={onClose}>
       <div className="space-y-3">
-        {visibleTrackers.map((tracker) => (
-          <TrackerSection
-            key={tracker.name}
-            mangaId={mangaId}
-            tracker={tracker}
-            binding={bindings.find((binding) => sameTracker(binding.trackerType, tracker.name))}
-            onChanged={onChanged}
-          />
-        ))}
+        {visibleTrackers.map((tracker) => {
+          const binding = bindings.find((item) => sameTracker(item.trackerType, tracker.name));
+          return (
+            <TrackerSection
+              key={tracker.name}
+              mangaId={mangaId}
+              tracker={tracker}
+              binding={binding}
+              status={
+                binding
+                  ? statuses.find(
+                      (item) =>
+                        (!item.trackerType || sameTracker(item.trackerType, binding.trackerType)) &&
+                        item.remoteId === binding.remoteId,
+                    )
+                  : undefined
+              }
+              onChanged={onChanged}
+            />
+          );
+        })}
         {!visibleTrackers.length && !error && (
           <p className="text-sm text-zinc-500">No trackers available.</p>
         )}
@@ -531,18 +561,18 @@ function TrackerSection({
   mangaId,
   tracker,
   binding,
+  status,
   onChanged,
 }: {
   mangaId: string;
   tracker: TrackerInfo;
   binding?: Binding;
+  status?: TrackerStatus;
   onChanged: () => Promise<void>;
 }) {
   const label = trackerLabel(tracker.name);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<
-    Array<{ remoteId: string; title: string; status?: string }>
-  >([]);
+  const [results, setResults] = useState<TrackerSearchResult[]>([]);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [searching, setSearching] = useState(false);
@@ -551,7 +581,7 @@ function TrackerSection({
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [unbinding, setUnbinding] = useState(false);
   const [refreshingStatus, setRefreshingStatus] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<import("../../types").TrackerStatus>();
+  const [liveStatus, setLiveStatus] = useState<TrackerStatus>();
   const searchSeq = useRef(0);
   const search = async () => {
     const seq = ++searchSeq.current;
@@ -568,7 +598,7 @@ function TrackerSection({
       if (seq === searchSeq.current) setSearching(false);
     }
   };
-  const bind = async (item: { remoteId: string; title: string; status?: string }) => {
+  const bind = async (item: TrackerSearchResult) => {
     setBindingRemote(item.remoteId);
     setError("");
     setNote("");
@@ -576,7 +606,9 @@ function TrackerSection({
       await api.bindTracker(mangaId, tracker.name, {
         remoteId: item.remoteId,
         remoteTitle: item.title,
+        remoteScore: item.score,
         remoteStatus: item.status,
+        totalRemoteChapters: item.chapters,
       });
       setNote(`Bound to ${item.title}.`);
       await onChanged();
@@ -620,7 +652,8 @@ function TrackerSection({
       setRefreshingStatus(false);
     }
   };
-  const score = liveStatus?.score ?? binding?.remoteScore;
+  const currentStatus = liveStatus ?? status;
+  const score = binding?.remoteScore ?? currentStatus?.score;
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
       <div className="flex items-start gap-3">
@@ -634,7 +667,7 @@ function TrackerSection({
           </div>
           {binding && (
             <p className="mt-0.5 truncate text-sm text-zinc-400">
-              {liveStatus?.title || binding.remoteTitle}
+              {currentStatus?.title || binding.remoteTitle}
             </p>
           )}
         </div>
@@ -676,7 +709,7 @@ function TrackerSection({
           mangaId={mangaId}
           tracker={tracker}
           binding={binding}
-          status={liveStatus}
+          status={currentStatus}
           score={score}
           onChanged={onChanged}
         />
@@ -766,12 +799,15 @@ function TrackingEditor({
   const [scoreValue, setScoreValue] = useState(score == null ? "" : String(score));
   const [startedAt, setStartedAt] = useState(formatTrackerDate(binding.startedAt));
   const [finishedAt, setFinishedAt] = useState(formatTrackerDate(binding.finishedAt));
+  const scoreEdited = useRef(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   useEffect(() => {
-    setScoreValue(score == null ? "" : String(score));
-  }, [score]);
+    if (!scoreEdited.current && scoreValue === "" && score != null) {
+      setScoreValue(String(score));
+    }
+  }, [score, scoreValue]);
   const save = async () => {
     const nextScore = scoreValue === "" ? undefined : Number(scoreValue);
     if (
@@ -816,7 +852,10 @@ function TrackingEditor({
             max="10"
             step="0.1"
             value={scoreValue}
-            onChange={(event) => setScoreValue(event.target.value)}
+            onChange={(event) => {
+              scoreEdited.current = true;
+              setScoreValue(event.target.value);
+            }}
             aria-label={`${label} score`}
             className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-sm"
           />

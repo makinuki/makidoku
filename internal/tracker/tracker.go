@@ -31,6 +31,7 @@ type SearchResult struct {
 }
 
 type Status struct {
+	TrackerType   string   `json:"trackerType,omitempty"`
 	RemoteID      string   `json:"remoteId"`
 	Title         string   `json:"title"`
 	Status        string   `json:"status,omitempty"`

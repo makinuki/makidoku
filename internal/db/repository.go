@@ -789,7 +789,10 @@ func (r *Repository) UpsertTrackerBinding(binding TrackerBinding) (TrackerBindin
 		last_synced_chapter, total_remote_chapters
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(manga_id, tracker_type) DO UPDATE SET remote_id=excluded.remote_id,
-	remote_title=excluded.remote_title, remote_score=excluded.remote_score,
+	remote_title=excluded.remote_title,
+	remote_score=CASE WHEN tracker_bindings.remote_id=excluded.remote_id
+		THEN COALESCE(tracker_bindings.remote_score, excluded.remote_score)
+		ELSE excluded.remote_score END,
 	remote_status=excluded.remote_status, total_remote_chapters=excluded.total_remote_chapters`,
 		binding.MangaID, binding.TrackerType, binding.RemoteID, binding.RemoteTitle,
 		binding.RemoteScore, binding.RemoteStatus, binding.LastSyncedChapter, binding.TotalRemoteChapters)

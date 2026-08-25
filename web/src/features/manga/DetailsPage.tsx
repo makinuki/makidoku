@@ -343,7 +343,7 @@ export function DetailsPage() {
       {modal === "tracker" && (
         <TrackerModal
           mangaId={manga.id}
-          bindings={data.trackers}
+          bindings={data.trackers ?? []}
           onClose={() => setModal(undefined)}
           onChanged={reload}
         />

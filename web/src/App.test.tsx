@@ -162,6 +162,49 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByRole("heading", { name: "Migrate plugin" })).toBeInTheDocument();
   });
 
+  it("opens the tracking modal when the aggregate carries null collections", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") return Response.json([]);
+        if (path.includes("/migration/candidates")) {
+          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
+        }
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [],
+            trackers: null,
+            sourceName: "MangaDex",
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByText("MangaDex · completed")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
+  });
+
   it("labels chapter volumes and falls back when the cover fails to load", async () => {
     window.history.pushState({}, "", `/manga/${mangaId}`);
     vi.stubGlobal(

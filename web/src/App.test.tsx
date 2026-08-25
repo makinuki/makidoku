@@ -1061,6 +1061,8 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     const image = await screen.findByAltText("Page 1");
+    // Paged pages must fit the viewport instead of rendering at full width.
+    expect(image).toHaveClass("object-contain");
     fireEvent.error(image);
     fireEvent.click(screen.getByRole("button", { name: "Retry page" }));
     expect(await screen.findByAltText("Page 1")).toHaveAttribute(

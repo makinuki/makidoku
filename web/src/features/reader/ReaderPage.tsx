@@ -283,7 +283,12 @@ function Paged({
   return (
     <div className="relative flex min-h-0 flex-1 items-center justify-center gap-2 overflow-hidden bg-black p-2 sm:p-6">
       {pages.slice(index, index + count).map((page, offset) => (
-        <PageImage key={page.index} page={page} alt={`Page ${index + offset + 1}`} />
+        <PageImage
+          key={page.index}
+          page={page}
+          alt={`Page ${index + offset + 1}`}
+          className="max-h-full max-w-[calc(50%-0.5rem)] object-contain"
+        />
       ))}
       <button
         aria-label="Previous page"
@@ -362,7 +367,12 @@ function Webtoon({
             className="absolute left-0 w-full px-2 pb-2"
             style={{ transform: `translateY(${item.start}px)` }}
           >
-            <PageImage page={pages[item.index]} alt={`Page ${item.index + 1}`} />
+            <PageImage
+              page={pages[item.index]}
+              alt={`Page ${item.index + 1}`}
+              className="w-full rounded-sm"
+              loading="lazy"
+            />
           </div>
         ))}
       </div>
@@ -372,8 +382,19 @@ function Webtoon({
 
 // PageImage degrades a failed delivery into an inline retry. The retry
 // re-requests the image with a cache-busting parameter so an intermediary
-// cache cannot serve the failed response again.
-function PageImage({ page, alt }: { page: Page; alt: string }) {
+// cache cannot serve the failed response again. Layout classes come from the
+// caller: paged and webtoon modes fit images to the screen differently.
+function PageImage({
+  page,
+  alt,
+  className,
+  loading,
+}: {
+  page: Page;
+  alt: string;
+  className: string;
+  loading?: "lazy" | "eager";
+}) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   if (failed)
@@ -383,7 +404,7 @@ function PageImage({ page, alt }: { page: Page; alt: string }) {
           setFailed(false);
           setAttempt((value) => value + 1);
         }}
-        className="grid h-64 w-full place-items-center rounded-sm border border-zinc-800 bg-zinc-900 text-sm text-zinc-300"
+        className={`grid h-64 w-full place-items-center rounded-sm border border-zinc-800 bg-zinc-900 text-sm text-zinc-300 ${className}`}
       >
         Retry page
       </button>
@@ -393,8 +414,8 @@ function PageImage({ page, alt }: { page: Page; alt: string }) {
       src={`/api/pages/${encodeURIComponent(page.id)}/image${attempt ? `?retry=${attempt}` : ""}`}
       alt={alt}
       onError={() => setFailed(true)}
-      className="w-full rounded-sm"
-      loading="lazy"
+      className={className}
+      loading={loading}
     />
   );
 }

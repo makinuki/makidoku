@@ -359,6 +359,93 @@ func TestKitsuContractNormalizesSearchRating(t *testing.T) {
 	}
 }
 
+func TestMangaUpdatesStatusReadsListAndToleratesUnrated(t *testing.T) {
+	var ratingRequested bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/lists/series/18335852408":
+			_, _ = w.Write([]byte(`{"series":{"id":18335852408},"list_id":0,"status":{"chapter":"13"}}`))
+		case "/series/18335852408/rating":
+			ratingRequested = true
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not rated"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewMangaUpdates(server.Client(), func() (Credential, error) { return Credential{AccessToken: "st"}, nil })
+	provider.Client.BaseURL = server.URL
+	status, err := provider.FetchUserStatus(context.Background(), db.TrackerBinding{RemoteID: "18335852408", RemoteTitle: "Yosuga no Sora"}, Credential{AccessToken: "st"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ratingRequested || status.Status != "Reading" || status.Progress != 13 || status.Score != nil || status.Title != "Yosuga no Sora" {
+		t.Fatalf("status = %+v ratingRequested=%v", status, ratingRequested)
+	}
+}
+
+func TestMangaUpdatesScrobbleUpdatesExistingEntry(t *testing.T) {
+	var updateBody []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/lists/series/18335852408":
+			_, _ = w.Write([]byte(`{"series":{"id":18335852408},"list_id":0}`))
+		case "/lists/series/update":
+			_ = json.NewDecoder(r.Body).Decode(&updateBody)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewMangaUpdates(server.Client(), func() (Credential, error) { return Credential{AccessToken: "st"}, nil })
+	provider.Client.BaseURL = server.URL
+	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "18335852408"}, 8.9, Credential{AccessToken: "st"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(updateBody) != 1 {
+		t.Fatalf("update body entries = %d", len(updateBody))
+	}
+	series := updateBody[0]["series"].(map[string]any)
+	listStatus := updateBody[0]["status"].(map[string]any)
+	if series["id"] != float64(18335852408) || updateBody[0]["list_id"] != float64(0) || listStatus["chapter"] != float64(8) {
+		t.Fatalf("update body = %#v", updateBody[0])
+	}
+}
+
+func TestMangaUpdatesScrobbleAddsMissingSeries(t *testing.T) {
+	var addBody []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/lists/series/18335852408":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not in list"}`))
+		case "/lists/series":
+			_ = json.NewDecoder(r.Body).Decode(&addBody)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewMangaUpdates(server.Client(), func() (Credential, error) { return Credential{AccessToken: "st"}, nil })
+	provider.Client.BaseURL = server.URL
+	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "18335852408"}, 1, Credential{AccessToken: "st"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(addBody) != 1 {
+		t.Fatalf("add body entries = %d", len(addBody))
+	}
+	series := addBody[0]["series"].(map[string]any)
+	if series["id"] != float64(18335852408) || addBody[0]["list_id"] != float64(0) {
+		t.Fatalf("add body = %#v", addBody[0])
+	}
+}
+
 func TestMangaBakaUsesOIDCRefreshEndpoint(t *testing.T) {
 	repo := trackerRepo(t)
 	t.Setenv("MAKIDOKU_SECRET", "refresh-secret")

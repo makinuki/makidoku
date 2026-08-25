@@ -1,10 +1,13 @@
 package tracker
 
 import (
+	"encoding/json"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/makinuki/makidoku/internal/db"
@@ -69,11 +72,86 @@ func (m *MangaUpdates) Search(ctx context.Context, text string) ([]SearchResult,
 	}
 	return r, nil
 }
-func (m *MangaUpdates) FetchUserStatus(context.Context, db.TrackerBinding, Credential) (Status, error) {
-	return Status{}, ErrUnsupported
+
+// MangaUpdates list identifiers. The API tracks list membership as numbered
+// lists; reading progress lives on the entry's status object.
+const (
+	muReadingList    = 0
+	muWishList       = 1
+	muCompleteList   = 2
+	muUnfinishedList = 3
+	muOnHoldList     = 4
+)
+
+var muListNames = map[int]string{
+	muReadingList:    "Reading",
+	muWishList:       "Wish",
+	muCompleteList:   "Complete",
+	muUnfinishedList: "Unfinished",
+	muOnHoldList:     "On hold",
 }
-func (m *MangaUpdates) ScrobbleProgress(context.Context, db.TrackerBinding, float64, Credential) error {
-	return ErrUnsupported
+
+// FetchUserStatus reads the series' list membership and chapter progress.
+// The personal rating endpoint answers 4xx when the series is unrated, which
+// counts as no score rather than a failure.
+func (m *MangaUpdates) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Credential) (Status, error) {
+	var item struct {
+		ListID *int `json:"list_id"`
+		Status struct {
+			// The API sends the chapter count as a JSON string.
+			Chapter json.Number `json:"chapter"`
+		} `json:"status"`
+	}
+	if err := m.Client.do(ctx, http.MethodGet, "/lists/series/"+url.PathEscape(b.RemoteID), nil, &item, true); err != nil {
+		return Status{}, err
+	}
+	status := Status{RemoteID: b.RemoteID, Title: b.RemoteTitle}
+	if item.ListID != nil {
+		if name, ok := muListNames[*item.ListID]; ok {
+			status.Status = name
+		}
+	}
+	if item.Status.Chapter != "" {
+		if chapter, err := item.Status.Chapter.Float64(); err == nil {
+			status.Progress = chapter
+		}
+	}
+	var rating struct {
+		Rating *float64 `json:"rating"`
+	}
+	if err := m.Client.do(ctx, http.MethodGet, "/series/"+url.PathEscape(b.RemoteID)+"/rating", nil, &rating, true); err == nil && rating.Rating != nil {
+		status.Score = rating.Rating
+	}
+	return status, nil
+}
+
+// ScrobbleProgress pushes the floored chapter count into the series list
+// entry, adding the series to the reading list when it is missing.
+func (m *MangaUpdates) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
+	chapter := int(ch)
+	var item struct {
+		ListID *int `json:"list_id"`
+	}
+	err := m.Client.do(ctx, http.MethodGet, "/lists/series/"+url.PathEscape(b.RemoteID), nil, &item, true)
+	if err != nil || item.ListID == nil {
+		body := []map[string]any{{"series": map[string]any{"id": remoteIDNumber(b.RemoteID)}, "list_id": muReadingList}}
+		return m.Client.do(ctx, http.MethodPost, "/lists/series", body, nil, true)
+	}
+	body := []map[string]any{{
+		"series":  map[string]any{"id": remoteIDNumber(b.RemoteID)},
+		"list_id": *item.ListID,
+		"status":  map[string]any{"chapter": chapter},
+	}}
+	return m.Client.do(ctx, http.MethodPost, "/lists/series/update", body, nil, true)
+}
+
+// remoteIDNumber parses the stored numeric series id.
+func remoteIDNumber(remoteID string) int64 {
+	id, err := strconv.ParseInt(remoteID, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
 }
 func itoa(v int) string {
 	return fmt.Sprint(v)

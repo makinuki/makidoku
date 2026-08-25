@@ -33,6 +33,14 @@ func (s *CredentialStore) key() ([]byte, error) {
 	return sum[:], nil
 }
 
+// Ready reports whether stored credentials can be encrypted and decrypted
+// with the current configuration. Callers use it to fail before a user is
+// sent through a provider flow that cannot be completed.
+func (s *CredentialStore) Ready() error {
+	_, err := s.key()
+	return err
+}
+
 func seal(key []byte, value []byte) ([]byte, error) {
 	b, err := aes.NewCipher(key)
 	if err != nil {

@@ -88,6 +88,12 @@ func New(cfg config.Config) (*Server, error) {
 
 	repo := db.NewRepository(database)
 	trackers := tracker.NewRegistry(repo)
+	// Credential storage is unavailable without the encryption secret, so the
+	// condition is reported at boot rather than when a user is halfway through
+	// a provider authorization.
+	if err := trackers.CredentialsReady(); err != nil {
+		log.Printf("tracker credentials disabled: %v", err)
+	}
 	syncer := &tracker.SyncWorker{Repo: repo, Registry: trackers}
 	if cfg.ImageCacheMaxBytes == 0 {
 		cfg.ImageCacheMaxBytes = config.DefaultImageCacheMaxBytes()

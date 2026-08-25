@@ -49,7 +49,10 @@ func (rt rewriteTransport) RoundTrip(request *http.Request) (*http.Response, err
 	return rt.base.RoundTrip(cloned)
 }
 
-func newIsolatedTrackerServer(t *testing.T) (*Server, *chi.Mux, *tracker.Registry) {
+// newIsolatedTrackerServerWithSecret builds a mounted API server whose
+// credential store is constructed with exactly the given secret, mirroring
+// how the daemon captures MAKIDOKU_SECRET at startup.
+func newIsolatedTrackerServerWithSecret(t *testing.T, secret string) (*Server, *chi.Mux, *tracker.Registry) {
 	t.Helper()
 	handle, err := db.Open(filepath.Join(t.TempDir(), "trackers.db"))
 	if err != nil {
@@ -57,12 +60,16 @@ func newIsolatedTrackerServer(t *testing.T) (*Server, *chi.Mux, *tracker.Registr
 	}
 	t.Cleanup(func() { _ = handle.Close() })
 	repo := db.NewRepository(handle)
-	t.Setenv("MAKIDOKU_SECRET", "api-secret")
+	t.Setenv("MAKIDOKU_SECRET", secret)
 	registry := tracker.NewRegistry(repo)
 	server := NewTrackerServer(repo, nil, nil, registry)
 	mux := chi.NewRouter()
 	server.Mount(mux)
 	return server, mux, registry
+}
+
+func newIsolatedTrackerServer(t *testing.T) (*Server, *chi.Mux, *tracker.Registry) {
+	return newIsolatedTrackerServerWithSecret(t, "api-secret")
 }
 
 func getJSON(t *testing.T, handler http.Handler, target string, out any) *httptest.ResponseRecorder {
@@ -372,5 +379,39 @@ func TestTrackerEventsSocketBroadcastsCredentialChanges(t *testing.T) {
 	}
 	if event.Type != "credentials" || event.Tracker != "kitsu" {
 		t.Fatalf("event = %+v", event)
+	}
+}
+
+func TestCredentialFlowsRefuseMissingEncryptionSecret(t *testing.T) {
+	_, mux, _ := newIsolatedTrackerServerWithSecret(t, "")
+
+	startReq := httptest.NewRequest(http.MethodGet, "/api/trackers/anilist/auth/start", nil)
+	startReq.Host = "127.0.0.1:6254"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, startReq)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "MAKIDOKU_SECRET") {
+		t.Fatalf("auth/start status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	for _, target := range []string{"/api/trackers/kitsu/login", "/api/trackers/anilist/token"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{"accessToken":"t","username":"u","password":"p"}`)))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "MAKIDOKU_SECRET") {
+			t.Fatalf("%s status=%d body=%s", target, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestListTrackersReportsMissingEncryptionSecretOnEveryCard(t *testing.T) {
+	_, mux, _ := newIsolatedTrackerServerWithSecret(t, "")
+	var items []trackerListItem
+	getJSON(t, mux, "/api/trackers", &items)
+	if len(items) == 0 {
+		t.Fatal("no trackers listed")
+	}
+	for _, entry := range items {
+		if entry.Configured || entry.Credential || !strings.Contains(entry.ConfigHint, "MAKIDOKU_SECRET") {
+			t.Fatalf("%s = %+v", entry.Name, entry)
+		}
 	}
 }

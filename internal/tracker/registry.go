@@ -175,6 +175,13 @@ func (r *Registry) credential(name string) (Credential, error) {
 	return refreshed, nil
 }
 
+// CredentialsReady reports whether tracker credentials can be stored with the
+// current configuration. Flows that create or read credentials must refuse to
+// start when this fails, before any provider interaction.
+func (r *Registry) CredentialsReady() error {
+	return r.Store.Ready()
+}
+
 // OAuthConfigured reports whether browser authorization for a tracker can
 // start, meaning its provider application credentials are present on the
 // server. Trackers that do not use browser authorization are always

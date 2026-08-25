@@ -51,6 +51,18 @@ func trackerAuthType(t tracker.Tracker) string {
 	return "token"
 }
 
+// requireCredentialsReady refuses flows that create or read stored
+// credentials when encryption is unavailable. Failing here, before any
+// provider interaction, spares the user a browser round-trip that could not
+// complete anyway.
+func (s *Server) requireCredentialsReady(w http.ResponseWriter) bool {
+	if err := s.trackers.CredentialsReady(); err != nil {
+		writeLocalError(w, http.StatusBadRequest, err)
+		return false
+	}
+	return true
+}
+
 func (s *Server) listTrackers(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		Name         string               `json:"name"`
@@ -62,6 +74,7 @@ func (s *Server) listTrackers(w http.ResponseWriter, r *http.Request) {
 		ConnectedAs  string               `json:"connectedAs,omitempty"`
 	}
 	items := make([]item, 0)
+	credentialsReady := s.trackers.CredentialsReady() == nil
 	for _, t := range s.trackers.List() {
 		name := t.Name()
 		entry := item{
@@ -69,6 +82,14 @@ func (s *Server) listTrackers(w http.ResponseWriter, r *http.Request) {
 			Capabilities: t.Capabilities(),
 			AuthType:     trackerAuthType(t),
 			Configured:   true,
+		}
+		if !credentialsReady {
+			// Without the encryption secret no credential can be stored or
+			// read, so every tracker is effectively unusable.
+			entry.Configured = false
+			entry.ConfigHint = "Set MAKIDOKU_SECRET (required to encrypt tracker credentials)"
+			items = append(items, entry)
+			continue
 		}
 		credential, err := s.trackers.Store.Load(name)
 		if err != nil {
@@ -112,6 +133,9 @@ func (s *Server) trackerSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) saveTrackerToken(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCredentialsReady(w) {
+		return
+	}
 	type request struct {
 		AccessToken  string            `json:"accessToken"`
 		RefreshToken string            `json:"refreshToken"`
@@ -158,6 +182,9 @@ func (s *Server) deleteTrackerCredentials(w http.ResponseWriter, r *http.Request
 // authenticate directly. Credentials travel only over the local loopback and
 // are never logged.
 func (s *Server) loginTracker(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCredentialsReady(w) {
+		return
+	}
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -199,6 +226,9 @@ func (s *Server) publishTrackerCredentials(trackerType string) {
 }
 
 func (s *Server) startTrackerAuth(w http.ResponseWriter, r *http.Request) {
+	if !s.requireCredentialsReady(w) {
+		return
+	}
 	typ := chi.URLParam(r, "trackerType")
 	redirect := strings.TrimSpace(r.URL.Query().Get("redirect"))
 	if redirect == "" {

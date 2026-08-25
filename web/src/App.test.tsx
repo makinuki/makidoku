@@ -1666,6 +1666,43 @@ describe("settings credential feedback", () => {
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
+  it("shows the encryption secret hint instead of sign-in forms when credentials are unavailable", async () => {
+    window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "kitsu",
+              capabilities: {
+                search: true,
+                status: false,
+                scrobble: false,
+                oauth: false,
+                token: true,
+              },
+              credential: false,
+              authType: "password",
+              configured: false,
+              configHint: "Set MAKIDOKU_SECRET (required to encrypt tracker credentials)",
+            },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText(/Set MAKIDOKU_SECRET/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("kitsu username")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Log in" })).not.toBeInTheDocument();
+  });
+
   it("signs in to a username and password tracker and surfaces rejections", async () => {
     window.history.pushState({}, "", "/settings");
     let loginCalls = 0;

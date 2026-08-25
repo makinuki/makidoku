@@ -69,6 +69,23 @@ func TestRegistryListIsSortedByProviderName(t *testing.T) {
 	}
 }
 
+func TestCredentialsReadyReflectsSecretAtConstruction(t *testing.T) {
+	t.Run("configured", func(t *testing.T) {
+		t.Setenv("MAKIDOKU_SECRET", "secret")
+		registry := NewRegistry(trackerRepo(t))
+		if err := registry.CredentialsReady(); err != nil {
+			t.Fatalf("ready with secret: %v", err)
+		}
+	})
+	t.Run("missing", func(t *testing.T) {
+		t.Setenv("MAKIDOKU_SECRET", "")
+		registry := NewRegistry(trackerRepo(t))
+		if err := registry.CredentialsReady(); err == nil {
+			t.Fatal("expected missing secret to fail readiness")
+		}
+	})
+}
+
 func TestStartOAuthRejectsPasswordOnlyTrackers(t *testing.T) {
 	r := NewRegistry(trackerRepo(t))
 	if _, err := r.StartOAuth("kitsu", "http://127.0.0.1/callback"); err == nil {

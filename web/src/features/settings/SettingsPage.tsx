@@ -508,7 +508,7 @@ export function SettingsPage() {
                     <small className="shrink-0 text-emerald-300">
                       Connected{tracker.connectedAs ? ` as ${tracker.connectedAs}` : ""}
                     </small>
-                  ) : tracker.authType === "oauth" && !tracker.configured ? (
+                  ) : !tracker.configured ? (
                     <small className="shrink-0 text-zinc-500">Not configured</small>
                   ) : pendingOAuth === tracker.name ? (
                     <small className="flex shrink-0 items-center gap-1 text-amber-300">
@@ -526,6 +526,17 @@ export function SettingsPage() {
                       {disconnecting === tracker.name ? "Disconnecting…" : "Disconnect"}
                     </button>
                   </div>
+                ) : !tracker.configured ? (
+                  <p className="text-xs leading-relaxed text-zinc-500">
+                    {tracker.configHint} on the server before this tracker can connect.
+                    {tracker.authType === "oauth" && (
+                      <>
+                        {" "}
+                        Register <code className="text-zinc-400">{callbackUrl}</code> as the
+                        redirect URI.
+                      </>
+                    )}
+                  </p>
                 ) : tracker.authType === "password" ? (
                   <div className="space-y-2">
                     <div className="flex flex-wrap gap-2">
@@ -556,21 +567,14 @@ export function SettingsPage() {
                     </button>
                   </div>
                 ) : tracker.authType === "oauth" ? (
-                  tracker.configured ? (
-                    <div>
-                      <button
-                        onClick={() => void connectOAuth(tracker)}
-                        className="rounded-lg border border-amber-400 px-2 py-1 text-xs text-amber-300"
-                      >
-                        Connect
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="text-xs leading-relaxed text-zinc-500">
-                      {tracker.configHint} on the server, registering{" "}
-                      <code className="text-zinc-400">{callbackUrl}</code> as the redirect URI.
-                    </p>
-                  )
+                  <div>
+                    <button
+                      onClick={() => void connectOAuth(tracker)}
+                      className="rounded-lg border border-amber-400 px-2 py-1 text-xs text-amber-300"
+                    >
+                      Connect
+                    </button>
+                  </div>
                 ) : (
                   <p className="text-xs text-zinc-500">Paste an access token below.</p>
                 )}

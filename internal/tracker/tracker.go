@@ -51,7 +51,20 @@ type Tracker interface {
 	Capabilities() Capabilities
 	Search(context.Context, string) ([]SearchResult, error)
 	FetchUserStatus(context.Context, db.TrackerBinding, Credential) (Status, error)
-	ScrobbleProgress(context.Context, db.TrackerBinding, float64, Credential) error
+	// UpdateTracking pushes reading state to the provider. Chapter is always
+	// meaningful; score and dates are optional and skipped by providers that
+	// do not support them. Scores travel as canonical 0 to 10 values and are
+	// converted to the provider's scale before sending.
+	UpdateTracking(context.Context, db.TrackerBinding, TrackingUpdate, Credential) error
+}
+
+// TrackingUpdate carries one progress push. Nil pointers mean "leave
+// unchanged"; providers without date support ignore the timestamps.
+type TrackingUpdate struct {
+	Chapter    float64
+	Score      *float64
+	StartedAt  *time.Time
+	FinishedAt *time.Time
 }
 
 type HTTPError struct {

@@ -125,24 +125,42 @@ func (m *MangaUpdates) FetchUserStatus(ctx context.Context, b db.TrackerBinding,
 	return status, nil
 }
 
-// ScrobbleProgress pushes the floored chapter count into the series list
-// entry, adding the series to the reading list when it is missing.
-func (m *MangaUpdates) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
-	chapter := int(ch)
+// UpdateTracking pushes the floored chapter count into the series list
+// entry, adding the series to the reading list when it is missing. MangaUpdates
+// has no date fields, so timestamps are ignored. A score is written through
+// the separate rating endpoint.
+func (m *MangaUpdates) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
+	chapter := int(update.Chapter)
 	var item struct {
 		ListID *int `json:"list_id"`
 	}
 	err := m.Client.do(ctx, http.MethodGet, "/lists/series/"+url.PathEscape(b.RemoteID), nil, &item, true)
 	if err != nil || item.ListID == nil {
 		body := []map[string]any{{"series": map[string]any{"id": remoteIDNumber(b.RemoteID)}, "list_id": muReadingList}}
-		return m.Client.do(ctx, http.MethodPost, "/lists/series", body, nil, true)
+		if err := m.Client.do(ctx, http.MethodPost, "/lists/series", body, nil, true); err != nil {
+			return err
+		}
+	} else {
+		body := []map[string]any{{
+			"series":  map[string]any{"id": remoteIDNumber(b.RemoteID)},
+			"list_id": *item.ListID,
+			"status":  map[string]any{"chapter": chapter},
+		}}
+		if err := m.Client.do(ctx, http.MethodPost, "/lists/series/update", body, nil, true); err != nil {
+			return err
+		}
 	}
-	body := []map[string]any{{
-		"series":  map[string]any{"id": remoteIDNumber(b.RemoteID)},
-		"list_id": *item.ListID,
-		"status":  map[string]any{"chapter": chapter},
-	}}
-	return m.Client.do(ctx, http.MethodPost, "/lists/series/update", body, nil, true)
+	if update.Score != nil {
+		score, err := writeScore("mangaupdates", *update.Score, c.Metadata)
+		if err != nil {
+			return err
+		}
+		if score <= 0 {
+			return m.Client.do(ctx, http.MethodDelete, "/series/"+url.PathEscape(b.RemoteID)+"/rating", nil, nil, true)
+		}
+		return m.Client.do(ctx, http.MethodPut, "/series/"+url.PathEscape(b.RemoteID)+"/rating", map[string]any{"rating": score}, nil, true)
+	}
+	return nil
 }
 
 // remoteIDNumber parses the stored numeric series id.

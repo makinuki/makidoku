@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -196,22 +197,37 @@ func (k *Kitsu) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Cred
 	return status, nil
 }
 
-// ScrobbleProgress pushes the floored chapter count into the library entry,
-// creating one when the manga is not in the library yet. The entry's existing
-// reading status is preserved.
-func (k *Kitsu) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
+// UpdateTracking pushes reading state into the library entry, creating one
+// when the manga is not in the library yet. The entry's existing reading
+// status is preserved; ratings travel on the wire's 2 to 20 scale and dates
+// as ISO timestamps.
+func (k *Kitsu) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
 	entry, _, _, err := k.findLibraryEntry(ctx, c, b.RemoteID)
 	if err != nil {
 		return err
 	}
-	progress := scrobbleProgress(ch)
-	if entry == nil {
-		return k.createLibraryEntry(ctx, c, b.RemoteID, progress)
+	progress := scrobbleProgress(update.Chapter)
+	rating := intPointer(nil)
+	if update.Score != nil {
+		if score, err := writeScore("kitsu", *update.Score, c.Metadata); err == nil {
+			rating = intPointer(&score)
+		}
 	}
-	return k.updateLibraryEntry(ctx, c, entry.ID, entry.Status, progress)
+	if entry == nil {
+		return k.createLibraryEntry(ctx, c, b.RemoteID, progress, rating)
+	}
+	return k.updateLibraryEntry(ctx, c, entry.ID, entry.Status, progress, rating, update.StartedAt, update.FinishedAt)
 }
 
-func (k *Kitsu) createLibraryEntry(ctx context.Context, credential Credential, remoteID string, progress int) error {
+func intPointer(value *float64) *int {
+	if value == nil {
+		return nil
+	}
+	v := int(math.Round(*value))
+	return &v
+}
+
+func (k *Kitsu) createLibraryEntry(ctx context.Context, credential Credential, remoteID string, progress int, rating *int) error {
 	var out struct {
 		Data struct {
 			LibraryEntry struct {
@@ -226,9 +242,9 @@ func (k *Kitsu) createLibraryEntry(ctx context.Context, credential Credential, r
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	query := `mutation($media_id:ID!,$progress:Int!){libraryEntry{create(input:{mediaId:$media_id,mediaType:MANGA,status:CURRENT,progress:$progress,private:false}){errors{message} libraryEntry{id}}}}`
+	query := `mutation($media_id:ID!,$progress:Int!,$rating:Int){libraryEntry{create(input:{mediaId:$media_id,mediaType:MANGA,status:CURRENT,progress:$progress,rating:$rating,private:false}){errors{message} libraryEntry{id}}}}`
 	if err := bearerJSON(ctx, k.Client.HTTP, http.MethodPost, k.GraphQLURL, credential.AccessToken,
-		map[string]any{"query": query, "variables": map[string]any{"media_id": remoteID, "progress": progress}}, nil, &out); err != nil {
+		map[string]any{"query": query, "variables": map[string]any{"media_id": remoteID, "progress": progress, "rating": rating}}, nil, &out); err != nil {
 		return err
 	}
 	if len(out.Errors) > 0 {
@@ -240,7 +256,17 @@ func (k *Kitsu) createLibraryEntry(ctx context.Context, credential Credential, r
 	return nil
 }
 
-func (k *Kitsu) updateLibraryEntry(ctx context.Context, credential Credential, entryID, status string, progress int) error {
+// kitsuTimestamp encodes a time as RFC 3339, the format the library entry
+// mutations accept; nil passes through as an absent variable.
+func kitsuTimestamp(t *time.Time) *string {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	v := t.UTC().Format(time.RFC3339)
+	return &v
+}
+
+func (k *Kitsu) updateLibraryEntry(ctx context.Context, credential Credential, entryID, status string, progress int, rating *int, startedAt, finishedAt *time.Time) error {
 	if status == "" {
 		status = "CURRENT"
 	}
@@ -258,9 +284,10 @@ func (k *Kitsu) updateLibraryEntry(ctx context.Context, credential Credential, e
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	query := `mutation($id:ID!,$status:LibraryEntryStatusEnum!,$progress:Int!){libraryEntry{update(input:{id:$id,status:$status,progress:$progress}){errors{message} libraryEntry{id}}}}`
+	query := `mutation($id:ID!,$status:LibraryEntryStatusEnum!,$progress:Int!,$rating:Int,$startedAt:ISO8601DateTime,$finishedAt:ISO8601DateTime){libraryEntry{update(input:{id:$id,status:$status,progress:$progress,rating:$rating,startedAt:$startedAt,finishedAt:$finishedAt}){errors{message} libraryEntry{id}}}}`
+	variables := map[string]any{"id": entryID, "status": status, "progress": progress, "rating": rating, "startedAt": kitsuTimestamp(startedAt), "finishedAt": kitsuTimestamp(finishedAt)}
 	if err := bearerJSON(ctx, k.Client.HTTP, http.MethodPost, k.GraphQLURL, credential.AccessToken,
-		map[string]any{"query": query, "variables": map[string]any{"id": entryID, "status": status, "progress": progress}}, nil, &out); err != nil {
+		map[string]any{"query": query, "variables": variables}, nil, &out); err != nil {
 		return err
 	}
 	if len(out.Errors) > 0 {

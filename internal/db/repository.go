@@ -807,24 +807,46 @@ func (r *Repository) UpsertTrackerBinding(binding TrackerBinding) (TrackerBindin
 	return r.GetTrackerBinding(binding.MangaID, binding.TrackerType)
 }
 
-func (r *Repository) GetTrackerBinding(mangaID, trackerType string) (TrackerBinding, error) {
-	var b TrackerBinding
+// UpdateTrackerTracking persists a user's score and date edits on a binding.
+// Nil fields keep their stored value.
+func (r *Repository) UpdateTrackerTracking(mangaID, trackerType string, score *float64, startedAt, finishedAt *int64) (TrackerBinding, error) {
+	binding, err := r.GetTrackerBinding(mangaID, trackerType)
+	if err != nil {
+		return TrackerBinding{}, err
+	}
+	if score != nil {
+		binding.RemoteScore = score
+	}
+	if startedAt != nil {
+		binding.StartedAt = startedAt
+	}
+	if finishedAt != nil {
+		binding.FinishedAt = finishedAt
+	}
+	if _, err := r.db.Exec(`UPDATE tracker_bindings SET remote_score=?, started_at=?, finished_at=? WHERE id=?`,
+		binding.RemoteScore, binding.StartedAt, binding.FinishedAt, binding.ID); err != nil {
+		return TrackerBinding{}, err
+	}
+	return binding, nil
+}
+
+func (r *Repository) GetTrackerBinding(mangaID, trackerType string) (TrackerBinding, error) {	var b TrackerBinding
 	err := r.db.Get(&b, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score,
-		remote_status, last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
+		remote_status, last_synced_chapter, total_remote_chapters, started_at, finished_at FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
 	return b, err
 }
 
 func (r *Repository) GetTrackerBindingByID(id int64) (TrackerBinding, error) {
 	var b TrackerBinding
 	err := r.db.Get(&b, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score, remote_status,
-		last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE id=?`, id)
+		last_synced_chapter, total_remote_chapters, started_at, finished_at FROM tracker_bindings WHERE id=?`, id)
 	return b, err
 }
 
 func (r *Repository) ListTrackerBindings(mangaID string) ([]TrackerBinding, error) {
 	var out []TrackerBinding
 	err := r.db.Select(&out, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score,
-		remote_status, last_synced_chapter, total_remote_chapters FROM tracker_bindings WHERE manga_id=? ORDER BY tracker_type`, mangaID)
+		remote_status, last_synced_chapter, total_remote_chapters, started_at, finished_at FROM tracker_bindings WHERE manga_id=? ORDER BY tracker_type`, mangaID)
 	return out, err
 }
 func (r *Repository) DeleteTrackerBinding(mangaID, trackerType string) error {

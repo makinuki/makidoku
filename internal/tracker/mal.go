@@ -59,7 +59,20 @@ func (m *MyAnimeList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, 
 	}
 	return Status{RemoteID: b.RemoteID, Title: out.Title, Score: out.MyListStatus.Score, Status: out.MyListStatus.Status, TotalChapters: out.NumChapters, Progress: out.MyListStatus.NumChaptersRead}, nil
 }
-func (m *MyAnimeList) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
-	form := url.Values{"num_chapters_read": {strconv.Itoa(int(ch))}}
+func (m *MyAnimeList) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
+	form := url.Values{"num_chapters_read": {strconv.Itoa(int(update.Chapter))}}
+	if update.Score != nil {
+		score, err := writeScore("myanimelist", *update.Score, c.Metadata)
+		if err != nil {
+			return err
+		}
+		form.Set("score", strconv.FormatFloat(score, 'f', -1, 64))
+	}
+	if update.StartedAt != nil && !update.StartedAt.IsZero() {
+		form.Set("start_date", update.StartedAt.Format("2006-01-02"))
+	}
+	if update.FinishedAt != nil && !update.FinishedAt.IsZero() {
+		form.Set("finish_date", update.FinishedAt.Format("2006-01-02"))
+	}
 	return m.Client.doForm(ctx, http.MethodPut, "/manga/"+url.PathEscape(b.RemoteID)+"/my_list_status", form, nil, true)
 }

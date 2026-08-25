@@ -92,7 +92,7 @@ func (w *SyncWorker) ProcessOne(ctx context.Context, trackerType string) (bool, 
 		w.failJob(job.ID, retry, err.Error())
 		return true, nil
 	}
-	err = provider.ScrobbleProgress(ctx, binding, job.ChapterNumber, cred)
+	err = provider.UpdateTracking(ctx, binding, TrackingUpdate{Chapter: job.ChapterNumber}, cred)
 	if err == nil {
 		_ = w.Repo.UpdateTrackerSyncedChapter(binding.ID, job.ChapterNumber)
 		return true, w.Repo.CompleteTrackerSync(job.ID)

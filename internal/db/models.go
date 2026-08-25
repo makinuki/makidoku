@@ -191,6 +191,8 @@ type TrackerBinding struct {
 	RemoteStatus        *string  `db:"remote_status" json:"remoteStatus"`
 	LastSyncedChapter   float64  `db:"last_synced_chapter" json:"lastSyncedChapter"`
 	TotalRemoteChapters *int     `db:"total_remote_chapters" json:"totalRemoteChapters"`
+	StartedAt           *int64   `db:"started_at" json:"startedAt,omitempty"`
+	FinishedAt          *int64   `db:"finished_at" json:"finishedAt,omitempty"`
 }
 
 type TrackerCredential struct {

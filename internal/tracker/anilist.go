@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/makinuki/makidoku/internal/db"
 )
@@ -121,13 +123,36 @@ func scrobbleProgress(ch float64) int {
 	return int(math.Floor(ch))
 }
 
-func (a *AniList) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
-	const q = `mutation($mediaId:Int!,$progress:Int!){SaveMediaListEntry(mediaId:$mediaId,progress:$progress){id progress}}`
+// anilistFuzzyDate encodes a time as AniList's yyyymmdd integer; zero means
+// unset and is represented as null.
+func anilistFuzzyDate(t *time.Time) *int {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	v := t.Year()*10000 + int(t.Month())*100 + t.Day()
+	return &v
+}
+
+func (a *AniList) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
+	const q = `mutation($mediaId:Int!,$progress:Int!,$score:String,$startedAt:Int,$finishedAt:Int){SaveMediaListEntry(mediaId:$mediaId,progress:$progress,score:$score,startedAt:$startedAt,finishedAt:$finishedAt){id progress}}`
 	var id int
 	if _, err := fmt.Sscan(b.RemoteID, &id); err != nil {
 		return err
 	}
-	progress := scrobbleProgress(ch)
+	variables := map[string]any{"mediaId": id, "progress": scrobbleProgress(update.Chapter)}
+	if update.Score != nil {
+		score, err := writeScore("anilist", *update.Score, c.Metadata)
+		if err != nil {
+			return err
+		}
+		variables["score"] = strconv.FormatFloat(score, 'f', -1, 64)
+	}
+	if started := anilistFuzzyDate(update.StartedAt); started != nil {
+		variables["startedAt"] = *started
+	}
+	if finished := anilistFuzzyDate(update.FinishedAt); finished != nil {
+		variables["finishedAt"] = *finished
+	}
 	var out struct{ Data json.RawMessage }
-	return a.query(ctx, q, map[string]any{"mediaId": id, "progress": progress}, &out, true)
+	return a.query(ctx, q, variables, &out, true)
 }

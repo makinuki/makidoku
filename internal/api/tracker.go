@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"html"
@@ -30,6 +31,7 @@ func (s *Server) mountTrackers(r chi.Router) {
 	r.Route("/manga/{mangaID}/trackers", func(manga chi.Router) {
 		manga.Get("/", s.listBindings)
 		manga.Post("/{trackerType}/bind", s.bindTracker)
+		manga.Patch("/{trackerType}", s.updateTrackerBinding)
 		manga.Delete("/{trackerType}", s.deleteBinding)
 		manga.Get("/status", s.trackerStatuses)
 	})
@@ -352,6 +354,63 @@ func (s *Server) bindTracker(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, b)
 }
+// updateTrackerBinding applies a user's score and date edits: the values are
+// pushed to the provider in its expected scale first and only persisted when
+// that succeeds, so local state never claims an update the provider rejected.
+func (s *Server) updateTrackerBinding(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Score      *float64 `json:"score"`
+		StartedAt  *int64   `json:"startedAt"`
+		FinishedAt *int64   `json:"finishedAt"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if !s.requireCredentialsReady(w) {
+		return
+	}
+	mangaID := chi.URLParam(r, "mangaID")
+	trackerType := chi.URLParam(r, "trackerType")
+	provider, ok := s.trackers.Get(trackerType)
+	if !ok {
+		writeBadRequest(w, "unknown tracker")
+		return
+	}
+	if body.Score != nil && (*body.Score < 0 || *body.Score > 10) {
+		writeBadRequest(w, "score must be between 0 and 10")
+		return
+	}
+	cred, err := s.trackers.Credential(trackerType)
+	if err != nil {
+		writeLocalError(w, http.StatusBadRequest, err)
+		return
+	}
+	binding, err := s.repo.GetTrackerBinding(mangaID, trackerType)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	update := tracker.TrackingUpdate{Chapter: binding.LastSyncedChapter, Score: body.Score}
+	if body.StartedAt != nil {
+		started := time.Unix(*body.StartedAt, 0)
+		update.StartedAt = &started
+	}
+	if body.FinishedAt != nil {
+		finished := time.Unix(*body.FinishedAt, 0)
+		update.FinishedAt = &finished
+	}
+	if err := provider.UpdateTracking(r.Context(), binding, update, cred); err != nil {
+		writeTrackerError(w, err)
+		return
+	}
+	binding, err = s.repo.UpdateTrackerTracking(mangaID, trackerType, body.Score, body.StartedAt, body.FinishedAt)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, binding)
+}
+
 func (s *Server) deleteBinding(w http.ResponseWriter, r *http.Request) {
 	if err := s.trackers.Repo.DeleteTrackerBinding(chi.URLParam(r, "mangaID"),
 		chi.URLParam(r, "trackerType")); err != nil {
@@ -432,7 +491,41 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request, complete bool)
 			log.Printf("tracker: enqueueing sync jobs failed: %v", err)
 		}
 	}
+	if body.IsCompleted {
+		// Completion records the finish date on providers that support dates.
+		// The push runs off the request so it cannot delay the response.
+		go s.pushFinishDates(s.Lifetime(), body)
+	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+// pushFinishDates marks completion on every bound provider. Failures are
+// logged only: the queued progress jobs remain the source of truth for
+// chapter numbers, and the next manual edit can repair a missed date.
+func (s *Server) pushFinishDates(ctx context.Context, body db.ReadingProgress) {
+	chapter, err := s.repo.GetChapter(body.LastReadChapterID)
+	if err != nil || chapter.ChapterNumber == nil {
+		return
+	}
+	bindings, err := s.trackers.Repo.ListTrackerBindings(body.MangaID)
+	if err != nil {
+		return
+	}
+	finished := time.Now()
+	for _, binding := range bindings {
+		cred, err := s.trackers.Credential(binding.TrackerType)
+		if err != nil {
+			continue
+		}
+		provider, ok := s.trackers.Get(binding.TrackerType)
+		if !ok {
+			continue
+		}
+		update := tracker.TrackingUpdate{Chapter: *chapter.ChapterNumber, FinishedAt: &finished}
+		if err := provider.UpdateTracking(ctx, binding, update, cred); err != nil {
+			log.Printf("tracker: recording finish on %s failed: %v", binding.TrackerType, err)
+		}
+	}
 }
 
 func validLoopbackRedirect(value, trackerType string) bool {

@@ -97,13 +97,13 @@ func TestKitsuScrobbleUpdatesExistingEntry(t *testing.T) {
 
 	provider := NewKitsu(server.Client(), func() (Credential, error) { return Credential{AccessToken: "tok"}, nil })
 	provider.GraphQLURL = server.URL + "/api/graphql"
-	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "1703"}, 8.9, Credential{AccessToken: "tok"}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "1703"}, TrackingUpdate{Chapter: 8.9, Score: floatPtr(8)}, Credential{AccessToken: "tok"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(mutations) != 1 {
 		t.Fatalf("mutations = %d", len(mutations))
 	}
-	if mutations[0]["id"] != "entry-9" || mutations[0]["status"] != "CURRENT" || mutations[0]["progress"] != float64(8) {
+	if mutations[0]["id"] != "entry-9" || mutations[0]["status"] != "CURRENT" || mutations[0]["progress"] != float64(8) || mutations[0]["rating"] != float64(16) {
 		t.Fatalf("update variables = %#v", mutations[0])
 	}
 }
@@ -127,7 +127,7 @@ func TestKitsuScrobbleCreatesMissingEntry(t *testing.T) {
 
 	provider := NewKitsu(server.Client(), func() (Credential, error) { return Credential{AccessToken: "tok"}, nil })
 	provider.GraphQLURL = server.URL + "/api/graphql"
-	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "1703"}, 3, Credential{AccessToken: "tok"}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "1703"}, TrackingUpdate{Chapter: 3}, Credential{AccessToken: "tok"}); err != nil {
 		t.Fatal(err)
 	}
 	if createVars["media_id"] != "1703" || createVars["progress"] != float64(3) {
@@ -216,10 +216,10 @@ func TestMangaBakaContractUsesDocumentedShapes(t *testing.T) {
 	if err != nil || status.Progress != 12.5 || status.Status != "reading" || status.Score == nil || *status.Score != 8 {
 		t.Fatalf("status = %+v, err=%v", status, err)
 	}
-	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "123"}, 13, Credential{}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "123"}, TrackingUpdate{Chapter: 13, Score: floatPtr(8)}, Credential{}); err != nil {
 		t.Fatal(err)
 	}
-	if gotAuth != "pat" || gotBody != `{"progress_chapter":13}` {
+	if gotAuth != "pat" || gotBody != `{"progress_chapter":13,"rating":80}` {
 		t.Fatalf("patch auth=%q body=%q", gotAuth, gotBody)
 	}
 }
@@ -254,6 +254,7 @@ func TestAniListContractUsesAuthenticatedListEntry(t *testing.T) {
 	provider := NewAniList(server.Client(), func() (Credential, error) { return Credential{AccessToken: "token"}, nil })
 	provider.Client.BaseURL = server.URL
 	binding := db.TrackerBinding{RemoteID: "45821", LastSyncedChapter: 3}
+	finished := time.Now()
 	status, err := provider.FetchUserStatus(context.Background(), binding, Credential{})
 	if err != nil {
 		t.Fatal(err)
@@ -264,12 +265,16 @@ func TestAniListContractUsesAuthenticatedListEntry(t *testing.T) {
 	if query, _ := requests[0]["query"].(string); !strings.Contains(query, "score(format:POINT_10)") {
 		t.Fatalf("status query did not request a stable score format: %s", query)
 	}
-	if err := provider.ScrobbleProgress(context.Background(), binding, 8.9, Credential{}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), binding, TrackingUpdate{Chapter: 8.9, Score: floatPtr(8.5), FinishedAt: &finished}, Credential{Metadata: map[string]string{"score_format": "POINT_100"}}); err != nil {
 		t.Fatal(err)
 	}
 	variables := requests[1]["variables"].(map[string]any)
-	if variables["mediaId"] != float64(45821) || variables["progress"] != float64(8) {
+	if variables["mediaId"] != float64(45821) || variables["progress"] != float64(8) || variables["score"] != "85" {
 		t.Fatalf("variables = %#v", variables)
+	}
+	finishedAt, ok := variables["finishedAt"].(float64)
+	if !ok || int(finishedAt) != finished.Year()*10000+int(finished.Month())*100+finished.Day() {
+		t.Fatalf("finishedAt = %#v", variables["finishedAt"])
 	}
 }
 
@@ -287,6 +292,7 @@ func TestAniListReportsGraphQLErrors(t *testing.T) {
 }
 
 func TestMyAnimeListScrobbleUsesFormEncoding(t *testing.T) {
+	finished := time.Now()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut || r.URL.Path != "/manga/45821/my_list_status" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
@@ -303,13 +309,19 @@ func TestMyAnimeListScrobbleUsesFormEncoding(t *testing.T) {
 		if got := r.Form.Get("num_chapters_read"); got != "12" {
 			t.Fatalf("num_chapters_read = %q", got)
 		}
+		if got := r.Form.Get("score"); got != "8" {
+			t.Fatalf("score = %q", got)
+		}
+		if got := r.Form.Get("finish_date"); got != finished.Format("2006-01-02") {
+			t.Fatalf("finish_date = %q", got)
+		}
 		_, _ = w.Write([]byte(`{"status":"reading","num_chapters_read":12}`))
 	}))
 	defer server.Close()
 
 	provider := NewMyAnimeList(server.Client(), "client", func() (Credential, error) { return Credential{AccessToken: "token"}, nil })
 	provider.Client.BaseURL = server.URL
-	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "45821"}, 12.9, Credential{}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "45821"}, TrackingUpdate{Chapter: 12.9, Score: floatPtr(7.5), FinishedAt: &finished}, Credential{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -388,12 +400,18 @@ func TestMangaUpdatesStatusReadsListAndToleratesUnrated(t *testing.T) {
 
 func TestMangaUpdatesScrobbleUpdatesExistingEntry(t *testing.T) {
 	var updateBody []map[string]any
+	var ratingBody map[string]any
+	var ratingMethod string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/lists/series/18335852408":
 			_, _ = w.Write([]byte(`{"series":{"id":18335852408},"list_id":0}`))
 		case "/lists/series/update":
 			_ = json.NewDecoder(r.Body).Decode(&updateBody)
+			_, _ = w.Write([]byte(`{}`))
+		case "/series/18335852408/rating":
+			ratingMethod = r.Method
+			_ = json.NewDecoder(r.Body).Decode(&ratingBody)
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			http.NotFound(w, r)
@@ -403,7 +421,7 @@ func TestMangaUpdatesScrobbleUpdatesExistingEntry(t *testing.T) {
 
 	provider := NewMangaUpdates(server.Client(), func() (Credential, error) { return Credential{AccessToken: "st"}, nil })
 	provider.Client.BaseURL = server.URL
-	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "18335852408"}, 8.9, Credential{AccessToken: "st"}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "18335852408"}, TrackingUpdate{Chapter: 8.9, Score: floatPtr(8)}, Credential{AccessToken: "st"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(updateBody) != 1 {
@@ -413,6 +431,9 @@ func TestMangaUpdatesScrobbleUpdatesExistingEntry(t *testing.T) {
 	listStatus := updateBody[0]["status"].(map[string]any)
 	if series["id"] != float64(18335852408) || updateBody[0]["list_id"] != float64(0) || listStatus["chapter"] != float64(8) {
 		t.Fatalf("update body = %#v", updateBody[0])
+	}
+	if ratingMethod != http.MethodPut || ratingBody["rating"] != float64(8) {
+		t.Fatalf("rating request = %s %#v", ratingMethod, ratingBody)
 	}
 }
 
@@ -434,7 +455,7 @@ func TestMangaUpdatesScrobbleAddsMissingSeries(t *testing.T) {
 
 	provider := NewMangaUpdates(server.Client(), func() (Credential, error) { return Credential{AccessToken: "st"}, nil })
 	provider.Client.BaseURL = server.URL
-	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "18335852408"}, 1, Credential{AccessToken: "st"}); err != nil {
+	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "18335852408"}, TrackingUpdate{Chapter: 1}, Credential{AccessToken: "st"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(addBody) != 1 {
@@ -530,4 +551,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
 }

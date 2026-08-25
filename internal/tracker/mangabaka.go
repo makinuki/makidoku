@@ -75,12 +75,26 @@ func (m *MangaBaka) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c 
 	}
 	return Status{RemoteID: strconv.FormatInt(id, 10), Title: b.RemoteTitle, Status: out.Data.State, Score: normalizeHundredPointScore(out.Data.Rating), Progress: progress, TotalChapters: b.TotalRemoteChapters}, nil
 }
-func (m *MangaBaka) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
+// UpdateTracking patches the library entry. MangaBaka rates on a 0 to 100
+// wire scale regardless of the account's step size, and stores ISO dates.
+func (m *MangaBaka) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
 	id, err := numericID(b.RemoteID)
 	if err != nil {
 		return err
 	}
-	return m.Client.do(ctx, http.MethodPatch, "/v1/my/library/"+strconv.FormatInt(id, 10), map[string]any{"progress_chapter": ch}, nil, true)
+	body := map[string]any{"progress_chapter": update.Chapter}
+	if update.Score != nil {
+		if score, err := writeScore("mangabaka", *update.Score, c.Metadata); err == nil {
+			body["rating"] = int(score)
+		}
+	}
+	if update.StartedAt != nil && !update.StartedAt.IsZero() {
+		body["start_date"] = update.StartedAt.Format("2006-01-02")
+	}
+	if update.FinishedAt != nil && !update.FinishedAt.IsZero() {
+		body["finish_date"] = update.FinishedAt.Format("2006-01-02")
+	}
+	return m.Client.do(ctx, http.MethodPatch, "/v1/my/library/"+strconv.FormatInt(id, 10), body, nil, true)
 }
 
 func numericID(value string) (int64, error) {

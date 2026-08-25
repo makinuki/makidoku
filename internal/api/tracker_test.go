@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -307,7 +308,7 @@ func TestTrackerCallbackRendersHTMLAndStoresCredential(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"at","expires_in":31536000}`))
 		case "/":
 			// AniList serves GraphQL from the bare host path.
-			_, _ = w.Write([]byte(`{"data":{"Viewer":{"name":"viewer-user"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"Viewer":{"name":"viewer-user","mediaListOptions":{"scoreFormat":"POINT_100"}}}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -351,6 +352,10 @@ func TestTrackerCallbackRendersHTMLAndStoresCredential(t *testing.T) {
 			t.Fatalf("anilist after callback = %+v", entry)
 		}
 	}
+	// The account's scoring configuration is captured for later conversions.
+	if credential, err := registry.Store.Load("anilist"); err != nil || credential.Metadata["score_format"] != "POINT_100" {
+		t.Fatalf("credential metadata = %+v err=%v", credential.Metadata, err)
+	}
 }
 
 func TestTrackerEventsSocketBroadcastsCredentialChanges(t *testing.T) {
@@ -380,6 +385,158 @@ func TestTrackerEventsSocketBroadcastsCredentialChanges(t *testing.T) {
 	}
 	if event.Type != "credentials" || event.Tracker != "kitsu" {
 		t.Fatalf("event = %+v", event)
+	}
+}
+
+// newBindingFixture builds a server whose database holds one manga with one
+// chapter and a kitsu binding, and whose kitsu provider talks to the given
+// GraphQL fake.
+func newBindingFixture(t *testing.T, graphqlURL string) (*Server, *chi.Mux, *tracker.Registry, string, string, db.Chapter) {
+	t.Helper()
+	handle, err := db.Open(filepath.Join(t.TempDir(), "binding.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	repo := db.NewRepository(handle)
+	t.Setenv("MAKIDOKU_SECRET", "api-secret")
+	registry := tracker.NewRegistry(repo)
+	item, ok := registry.Get("kitsu")
+	if !ok {
+		t.Fatal("kitsu provider missing")
+	}
+	kitsu := item.(*tracker.Kitsu)
+	kitsu.GraphQLURL = graphqlURL
+	kitsu.Client.HTTP = http.DefaultClient
+	server := NewTrackerServer(repo, nil, nil, registry)
+	mux := chi.NewRouter()
+	server.Mount(mux)
+
+	now := time.Now().Unix()
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','S','1',1,'en','https://example.test','source.wasm',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "M", Status: "ongoing", CoverURL: "https://example.test/cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapterNumber := 8.0
+	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: "c", ChapterNumber: &chapterNumber})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "kitsu", RemoteID: "1703", RemoteTitle: "M"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Store.Save("kitsu", tracker.Credential{AccessToken: "tok", Metadata: map[string]string{"rating_system": "advanced"}}); err != nil {
+		t.Fatal(err)
+	}
+	return server, mux, registry, manga.ID, "kitsu", chapter
+}
+
+func TestUpdateTrackerBindingPersistsAndPushesScore(t *testing.T) {
+	var mutations []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if strings.Contains(payload.Query, "findMangaById") {
+			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"M"},"chapterCount":14,"myLibraryEntry":{"id":"e1","progress":8,"status":"CURRENT"}}}}`))
+			return
+		}
+		mutations = append(mutations, payload.Variables)
+		_, _ = w.Write([]byte(`{"data":{"libraryEntry":{"update":{"errors":[],"libraryEntry":{"id":"e1"}}}}}`))
+	}))
+	defer server.Close()
+
+	_, mux, registry, mangaID, trackerType, _ := newBindingFixture(t, server.URL+"/api/graphql")
+
+	body := strings.NewReader(`{"score":8,"startedAt":1700000000,"finishedAt":1700086400}`)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/manga/"+mangaID+"/trackers/"+trackerType, body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var binding db.TrackerBinding
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.RemoteScore == nil || *binding.RemoteScore != 8 || binding.StartedAt == nil || binding.FinishedAt == nil {
+		t.Fatalf("binding = %+v", binding)
+	}
+	if len(mutations) != 1 {
+		t.Fatalf("mutations = %d", len(mutations))
+	}
+	if mutations[0]["rating"] != float64(16) {
+		t.Fatalf("pushed variables = %#v", mutations[0])
+	}
+
+	// The persisted values survive a refetch.
+	stored, err := registry.Repo.GetTrackerBinding(mangaID, trackerType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RemoteScore == nil || *stored.RemoteScore != 8 {
+		t.Fatalf("stored binding = %+v", stored)
+	}
+}
+
+func TestUpdateTrackerBindingRejectsInvalidInput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer server.Close()
+
+	_, mux, _, mangaID, trackerType, _ := newBindingFixture(t, server.URL+"/api/graphql")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/manga/"+mangaID+"/trackers/"+trackerType, strings.NewReader(`{"score":57}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("score range status=%d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/api/manga/"+mangaID+"/trackers/nonsense", strings.NewReader(`{"score":8}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown tracker status=%d", rec.Code)
+	}
+}
+
+func TestProgressCompletionPushesFinishDate(t *testing.T) {
+	var mutations []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if strings.Contains(payload.Query, "findMangaById") {
+			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"M"},"chapterCount":14,"myLibraryEntry":{"id":"e1","progress":7,"status":"CURRENT"}}}}`))
+			return
+		}
+		mutations = append(mutations, payload.Variables)
+		_, _ = w.Write([]byte(`{"data":{"libraryEntry":{"update":{"errors":[],"libraryEntry":{"id":"e1"}}}}}`))
+	}))
+	defer server.Close()
+
+	_, mux, _, mangaID, _, chapter := newBindingFixture(t, server.URL+"/api/graphql")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/progress", strings.NewReader(fmt.Sprintf(
+		`{"mangaId":%q,"lastReadChapterId":%q,"lastReadPage":20,"totalPages":20,"isCompleted":true}`, mangaID, chapter.ID))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("progress status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// The finish push runs off the request; wait for the mutation to arrive.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(mutations) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(mutations) != 1 {
+		t.Fatalf("mutations = %d", len(mutations))
+	}
+	if mutations[0]["progress"] != float64(8) || mutations[0]["finishedAt"] == nil {
+		t.Fatalf("finish variables = %#v", mutations[0])
 	}
 }
 

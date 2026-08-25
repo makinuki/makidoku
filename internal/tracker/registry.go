@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -332,21 +333,28 @@ func (r *Registry) CompleteOAuth(ctx context.Context, name, code, state, redirec
 	return r.Store.Save(name, credential)
 }
 
-// displayName resolves the connected account name for browser-authorized
-// trackers. Trackers with direct password login resolve their name inside
-// their Login implementation instead.
+// displayName resolves the connected account name and captures the account's
+// scoring configuration into credential metadata so score writes can target
+// the provider's expected scale. Trackers with direct password login resolve
+// their name inside their Login implementation instead.
 func (r *Registry) displayName(ctx context.Context, name string, credential Credential) (string, error) {
 	switch name {
 	case "anilist":
 		var out struct {
 			Data struct {
 				Viewer struct {
-					Name string `json:"name"`
+					Name            string `json:"name"`
+					MediaListOption struct {
+						ScoreFormat string `json:"scoreFormat"`
+					} `json:"mediaListOptions"`
 				} `json:"Viewer"`
 			} `json:"data"`
 		}
 		err := bearerJSON(ctx, r.HTTP, http.MethodPost, "https://graphql.anilist.co", credential.AccessToken,
-			map[string]any{"query": "query{Viewer{name}}"}, nil, &out)
+			map[string]any{"query": "query{Viewer{name mediaListOptions{scoreFormat}}}"}, nil, &out)
+		if err == nil && out.Data.Viewer.MediaListOption.ScoreFormat != "" {
+			credential.Metadata["score_format"] = out.Data.Viewer.MediaListOption.ScoreFormat
+		}
 		return out.Data.Viewer.Name, err
 	case "myanimelist":
 		var out struct {
@@ -360,9 +368,13 @@ func (r *Registry) displayName(ctx context.Context, name string, credential Cred
 			Data struct {
 				Nickname          string `json:"nickname"`
 				PreferredUsername string `json:"preferred_username"`
+				RatingSteps       int    `json:"rating_steps"`
 			} `json:"data"`
 		}
 		err := bearerJSON(ctx, r.HTTP, http.MethodGet, "https://api.mangabaka.org/v1/my/profile", credential.AccessToken, nil, nil, &out)
+		if err == nil && out.Data.RatingSteps > 0 {
+			credential.Metadata["rating_steps"] = strconv.Itoa(out.Data.RatingSteps)
+		}
 		if err != nil {
 			return "", err
 		}

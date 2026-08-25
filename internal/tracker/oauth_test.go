@@ -149,7 +149,7 @@ func TestCompleteOAuthCapturesAccountNameAndRedirect(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`))
 		case "/v1/my/profile":
 			profileAuth = r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{"status":200,"data":{"id":"u","nickname":"baka-user"}}`))
+			_, _ = w.Write([]byte(`{"status":200,"data":{"id":"u","nickname":"baka-user","rating_steps":20}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -186,7 +186,7 @@ func TestCompleteOAuthCapturesAccountNameAndRedirect(t *testing.T) {
 	if profileAuth != "Bearer at" {
 		t.Fatalf("profile authorization = %q", profileAuth)
 	}
-	if credential.AccessToken != "at" || credential.Metadata["username"] != "baka-user" || credential.Metadata["redirect_uri"] != callback {
+	if credential.AccessToken != "at" || credential.Metadata["username"] != "baka-user" || credential.Metadata["redirect_uri"] != callback || credential.Metadata["rating_steps"] != "20" {
 		t.Fatalf("credential = %+v", credential)
 	}
 }

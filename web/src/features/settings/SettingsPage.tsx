@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, Download, FolderOpen, LoaderCircle, RefreshCw, Trash2, X } from "lucide-react";
 import { api } from "../../api";
 import type { CatalogEntry, Category, Source, TrackerInfo, TrackerSyncJob } from "../../types";
 import { Modal } from "../../components/Modal";
 import { ErrorState, PageHeader } from "../../components/States";
+import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 
 export function SettingsPage() {
   const [sources, setSources] = useState<Source[]>([]);
@@ -97,48 +98,18 @@ export function SettingsPage() {
   useEffect(() => {
     void refresh();
   }, []);
-  // Credential changes arrive over the tracker event socket, so an
-  // authorization completed in another tab reflects here without polling.
-  // The socket only refetches tracker state; the rest of the page is untouched.
-  useEffect(() => {
-    let socket: WebSocket | undefined;
-    let reconnectTimer: number | undefined;
-    let disposed = false;
-    const refreshTrackers = async () => {
-      try {
-        const [services, jobs] = await Promise.all([api.trackers(), api.syncJobs()]);
-        setTrackers(services);
-        setSyncJobs(jobs.slice(0, 5));
-      } catch {
-        // A failed background refetch keeps the previous snapshot; the next
-        // event or manual refresh reconciles.
-      }
-    };
-    const connect = () => {
-      if (disposed) return;
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const next = new WebSocket(`${protocol}//${location.host}/api/trackers/events`);
-      socket = next;
-      next.onmessage = (event) => {
-        try {
-          const message = JSON.parse(String(event.data)) as { type?: string };
-          if (message.type === "credentials") void refreshTrackers();
-        } catch {
-          // A malformed frame is skipped; the next event reconciles.
-        }
-      };
-      next.onclose = () => {
-        if (disposed) return;
-        reconnectTimer = window.setTimeout(connect, 2000);
-      };
-    };
-    connect();
-    return () => {
-      disposed = true;
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      socket?.close();
-    };
+  const refreshTrackerState = useCallback(async () => {
+    try {
+      const [services, jobs] = await Promise.all([api.trackers(), api.syncJobs()]);
+      setTrackers(services);
+      setSyncJobs(jobs.slice(0, 5));
+    } catch {
+      // Keep the current snapshot until the next event or manual refresh.
+    }
   }, []);
+  useTrackerEvents(() => {
+    void refreshTrackerState();
+  });
   // A pending authorization resolves when the tracker list reports a stored
   // credential for it, whether through the socket or a manual refresh.
   useEffect(() => {

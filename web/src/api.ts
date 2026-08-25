@@ -140,6 +140,15 @@ export const api = {
     request(`/api/manga/${idPath(mangaId)}/trackers/${encodeURIComponent(type)}`, {
       method: "DELETE",
     }),
+  updateTrackerBinding: (
+    mangaId: string,
+    type: string,
+    update: { score?: number; startedAt?: number; finishedAt?: number },
+  ) =>
+    request<Binding>(`/api/manga/${idPath(mangaId)}/trackers/${encodeURIComponent(type)}`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    }),
   trackerStatuses: (mangaId: string) =>
     request<TrackerStatus[]>(`/api/manga/${idPath(mangaId)}/trackers/status`),
   syncJobs: () => request<TrackerSyncJob[]>("/api/tracker-sync"),

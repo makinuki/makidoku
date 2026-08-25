@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Bookmark,
   Check,
   Download,
+  Ellipsis,
   ExternalLink,
   LoaderCircle,
   Play,
   RefreshCw,
   RotateCw,
+  Save,
   Tag,
   X,
 } from "lucide-react";
@@ -26,6 +28,8 @@ import { CoverImg } from "../../components/CoverImg";
 import { Modal } from "../../components/Modal";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 import { relativeTime } from "../../time";
+import { TrackerLogo, trackerLabel } from "../../components/TrackerLogo";
+import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 
 export function DetailsPage() {
   const { mangaId = "" } = useParams();
@@ -486,37 +490,95 @@ function TrackerModal({
   onChanged: () => Promise<void>;
 }) {
   const [trackers, setTrackers] = useState<TrackerInfo[]>([]);
-  const [active, setActive] = useState("");
+  const [error, setError] = useState("");
+  const [pendingOAuth, setPendingOAuth] = useState<string>();
+  const refreshTrackers = useCallback(async () => {
+    try {
+      setTrackers(await api.trackers());
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load trackers");
+    }
+  }, []);
+  useEffect(() => {
+    void refreshTrackers();
+  }, [refreshTrackers]);
+  useTrackerEvents(() => {
+    void refreshTrackers();
+  });
+  useEffect(() => {
+    if (!pendingOAuth) return;
+    if (trackers.some((tracker) => sameTracker(tracker.name, pendingOAuth) && tracker.credential)) {
+      setPendingOAuth(undefined);
+    }
+  }, [pendingOAuth, trackers]);
+  return (
+    <Modal title="Tracking" onClose={onClose}>
+      <div className="space-y-3">
+        {trackers.map((tracker) => (
+          <TrackerSection
+            key={tracker.name}
+            mangaId={mangaId}
+            tracker={tracker}
+            binding={bindings.find((binding) => sameTracker(binding.trackerType, tracker.name))}
+            pendingOAuth={sameTracker(pendingOAuth || "", tracker.name)}
+            onOAuthPending={() => setPendingOAuth(tracker.name)}
+            onCredentialsChanged={refreshTrackers}
+            onChanged={onChanged}
+          />
+        ))}
+        {!trackers.length && !error && (
+          <p className="text-sm text-zinc-500">No trackers available.</p>
+        )}
+      </div>
+      {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
+    </Modal>
+  );
+}
+
+function TrackerSection({
+  mangaId,
+  tracker,
+  binding,
+  pendingOAuth,
+  onOAuthPending,
+  onCredentialsChanged,
+  onChanged,
+}: {
+  mangaId: string;
+  tracker: TrackerInfo;
+  binding?: Binding;
+  pendingOAuth: boolean;
+  onOAuthPending: () => void;
+  onCredentialsChanged: () => Promise<void>;
+  onChanged: () => Promise<void>;
+}) {
+  const label = trackerLabel(tracker.name);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<
     Array<{ remoteId: string; title: string; status?: string }>
   >([]);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
-  const [unbinding, setUnbinding] = useState(false);
-  const [confirmUnbind, setConfirmUnbind] = useState(false);
-  const [bindingRemote, setBindingRemote] = useState<string>();
   const [searching, setSearching] = useState(false);
+  const [bindingRemote, setBindingRemote] = useState<string>();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmUnbind, setConfirmUnbind] = useState(false);
+  const [unbinding, setUnbinding] = useState(false);
+  const [refreshingStatus, setRefreshingStatus] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [liveStatus, setLiveStatus] = useState<import("../../types").TrackerStatus>();
   const searchSeq = useRef(0);
-  useEffect(() => {
-    void api
-      .trackers()
-      .then((items) => {
-        setTrackers(items);
-        setActive(items[0]?.name || "");
-      })
-      .catch((e) => setError(e.message));
-  }, []);
-  const binding = bindings.find((item) => item.trackerType === active);
   const search = async () => {
-    // Out-of-order responses are discarded so a slow older search cannot
-    // overwrite the results of a newer one.
     const seq = ++searchSeq.current;
     setSearching(true);
     setError("");
     setNote("");
     try {
-      const found = await api.trackerSearch(active, query);
+      const found = await api.trackerSearch(tracker.name, query);
       if (seq === searchSeq.current) setResults(found);
     } catch (e) {
       if (seq === searchSeq.current)
@@ -525,29 +587,12 @@ function TrackerModal({
       if (seq === searchSeq.current) setSearching(false);
     }
   };
-  // Unbinding severs the tracker link and stops syncing, so it asks for
-  // confirmation and reports its outcome inline.
-  const unbind = async () => {
-    setUnbinding(true);
-    setError("");
-    setNote("");
-    try {
-      await api.unbindTracker(mangaId, active);
-      setConfirmUnbind(false);
-      setNote(`Unbound from ${active}.`);
-      await onChanged();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to unbind tracker");
-    } finally {
-      setUnbinding(false);
-    }
-  };
   const bind = async (item: { remoteId: string; title: string; status?: string }) => {
     setBindingRemote(item.remoteId);
     setError("");
     setNote("");
     try {
-      await api.bindTracker(mangaId, active, {
+      await api.bindTracker(mangaId, tracker.name, {
         remoteId: item.remoteId,
         remoteTitle: item.title,
         remoteStatus: item.status,
@@ -561,58 +606,221 @@ function TrackerModal({
       setBindingRemote(undefined);
     }
   };
+  const unbind = async () => {
+    setUnbinding(true);
+    setError("");
+    setNote("");
+    try {
+      await api.unbindTracker(mangaId, tracker.name);
+      setConfirmUnbind(false);
+      setNote(`Unbound from ${label}.`);
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to unbind tracker");
+    } finally {
+      setUnbinding(false);
+    }
+  };
+  const refreshStatus = async () => {
+    if (!binding) return;
+    setRefreshingStatus(true);
+    setError("");
+    setNote("");
+    try {
+      const statuses = await api.trackerStatuses(mangaId);
+      const status = statuses.find((item) => item.remoteId === binding.remoteId);
+      if (!status) throw new Error(`${label} did not return tracking status`);
+      setLiveStatus(status);
+      setNote(`${label} status refreshed.`);
+      setMenuOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to refresh tracker status");
+    } finally {
+      setRefreshingStatus(false);
+    }
+  };
+  const connect = async () => {
+    setConnecting(true);
+    setError("");
+    try {
+      const { authorizationUrl } = await api.startTrackerAuth(tracker.name);
+      window.open(authorizationUrl, "_blank", "noopener,noreferrer");
+      onOAuthPending();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to start authorization");
+    } finally {
+      setConnecting(false);
+    }
+  };
+  const login = async () => {
+    setLoggingIn(true);
+    setError("");
+    try {
+      await api.trackerLogin(tracker.name, username.trim(), password);
+      setUsername("");
+      setPassword("");
+      setNote(`${label} connected.`);
+      await onCredentialsChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to sign in");
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+  const score = liveStatus?.score ?? binding?.remoteScore;
   return (
-    <Modal title="Tracking" onClose={onClose}>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {trackers.map((item) => (
-          <button
-            key={item.name}
-            onClick={() => setActive(item.name)}
-            className={`rounded-lg border p-3 text-left ${active === item.name ? "border-amber-400 bg-amber-400/10" : "border-zinc-800"}`}
-          >
-            <b className="block">{item.name}</b>
-            <small className="text-zinc-500">
-              {item.credential
-                ? "Connected"
-                : item.authType === "password"
-                  ? "Sign in to bind"
-                  : "Connect to bind"}
-            </small>
-          </button>
-        ))}
+    <section className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+      <div className="flex items-start gap-3">
+        <TrackerLogo name={tracker.name} className="size-11 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold">{label}</h3>
+            <span
+              className={`text-xs ${tracker.credential ? "text-emerald-300" : "text-zinc-500"}`}
+            >
+              {tracker.credential
+                ? tracker.connectedAs
+                  ? `Connected as ${tracker.connectedAs}`
+                  : "Connected"
+                : "Not connected"}
+            </span>
+          </div>
+          {binding && (
+            <p className="mt-0.5 truncate text-sm text-zinc-400">
+              {liveStatus?.title || binding.remoteTitle}
+            </p>
+          )}
+        </div>
+        {binding && (
+          <div className="relative">
+            <button
+              aria-label={`${label} actions`}
+              onClick={() => setMenuOpen((open) => !open)}
+              className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            >
+              <Ellipsis size={17} />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-10 z-10 w-36 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl">
+                <button
+                  onClick={() => void refreshStatus()}
+                  disabled={refreshingStatus}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  <RefreshCw size={13} className={refreshingStatus ? "animate-spin" : ""} /> Refresh
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setConfirmUnbind(true);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-red-300 hover:bg-red-950/40"
+                >
+                  <X size={13} /> Unbind
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      {active && (
-        <div className="mt-4 flex gap-2">
+      {binding ? (
+        <TrackingEditor
+          key={binding.id}
+          mangaId={mangaId}
+          tracker={tracker}
+          binding={binding}
+          status={liveStatus}
+          score={score}
+          onChanged={onChanged}
+        />
+      ) : tracker.credential ? (
+        <div className="mt-4">
+          <div className="flex gap-2">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && query.trim()) void search();
+              }}
+              aria-label={`${label} search`}
+              placeholder="Search provider"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            />
+            <button
+              onClick={() => void search()}
+              disabled={searching || !query.trim()}
+              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
+            >
+              {searching ? "Searching…" : "Search"}
+            </button>
+          </div>
+          <div className="mt-2 grid gap-2">
+            {results.map((item) => (
+              <button
+                key={item.remoteId}
+                onClick={() => void bind(item)}
+                disabled={bindingRemote !== undefined}
+                className="rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400 disabled:opacity-50"
+              >
+                <b>{item.title}</b>
+                <small className="ml-2 text-zinc-500">
+                  {bindingRemote === item.remoteId ? "Binding…" : item.remoteId}
+                </small>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : !tracker.configured ? (
+        <p className="mt-3 text-xs leading-5 text-zinc-500">{tracker.configHint}</p>
+      ) : tracker.authType === "oauth" ? (
+        <button
+          onClick={() => void connect()}
+          disabled={connecting || pendingOAuth}
+          aria-label={`Connect ${label}`}
+          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          {(connecting || pendingOAuth) && <LoaderCircle size={14} className="animate-spin" />}
+          {pendingOAuth
+            ? "Waiting for authorization"
+            : connecting
+              ? "Opening authorization"
+              : "Connect"}
+        </button>
+      ) : tracker.authType === "password" ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
           <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search provider"
-            className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            aria-label={`${label} username`}
+            placeholder="Email or username"
+            autoComplete="off"
+            className="min-w-0 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            aria-label={`${label} password`}
+            placeholder="Password"
+            autoComplete="new-password"
+            className="min-w-0 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
           />
           <button
-            onClick={() => void search()}
-            disabled={searching || !query.trim()}
+            onClick={() => void login()}
+            disabled={loggingIn || !username.trim() || !password}
+            aria-label={`Log in to ${label}`}
             className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
           >
-            {searching ? "Searching…" : "Search"}
+            {loggingIn ? "Signing in…" : "Log in"}
           </button>
         </div>
+      ) : (
+        <p className="mt-3 text-xs text-zinc-500">Connect this tracker from Settings.</p>
       )}
-      {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-      {note && !error && <p className="mt-3 text-xs text-emerald-300">{note}</p>}
-      {binding && !confirmUnbind && (
-        <button
-          onClick={() => setConfirmUnbind(true)}
-          disabled={unbinding}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-red-900 px-3 py-2 text-sm text-red-300"
-        >
-          <X size={14} /> Unbind
-        </button>
-      )}
-      {binding && confirmUnbind && (
-        <div className="mt-4 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
+      {confirmUnbind && binding && (
+        <div className="mt-4 border-t border-red-900/50 pt-4">
           <p className="text-sm text-zinc-300">
-            Unbind {active}? Reading progress stops syncing to it.
+            Unbind {label}? Reading progress stops syncing to it.
           </p>
           <div className="mt-3 flex justify-end gap-2">
             <button
@@ -632,23 +840,149 @@ function TrackerModal({
           </div>
         </div>
       )}
-      <div className="mt-4 grid gap-2">
-        {results.map((item) => (
-          <button
-            key={item.remoteId}
-            onClick={() => void bind(item)}
-            disabled={bindingRemote !== undefined}
-            className="rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400 disabled:opacity-50"
-          >
-            <b>{item.title}</b>
-            <small className="ml-2 text-zinc-500">
-              {bindingRemote === item.remoteId ? "Binding…" : item.remoteId}
-            </small>
-          </button>
-        ))}
-      </div>
-    </Modal>
+      {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
+      {note && !error && <p className="mt-3 text-xs text-emerald-300">{note}</p>}
+    </section>
   );
+}
+
+function TrackingEditor({
+  mangaId,
+  tracker,
+  binding,
+  status,
+  score,
+  onChanged,
+}: {
+  mangaId: string;
+  tracker: TrackerInfo;
+  binding: Binding;
+  status?: import("../../types").TrackerStatus;
+  score?: number;
+  onChanged: () => Promise<void>;
+}) {
+  const label = trackerLabel(tracker.name);
+  const [scoreValue, setScoreValue] = useState(score == null ? "" : String(score));
+  const [startedAt, setStartedAt] = useState(formatTrackerDate(binding.startedAt));
+  const [finishedAt, setFinishedAt] = useState(formatTrackerDate(binding.finishedAt));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    setScoreValue(score == null ? "" : String(score));
+  }, [score]);
+  const save = async () => {
+    const nextScore = scoreValue === "" ? undefined : Number(scoreValue);
+    if (
+      nextScore !== undefined &&
+      (!Number.isFinite(nextScore) || nextScore < 0 || nextScore > 10)
+    ) {
+      setError("Score must be between 0 and 10.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNote("");
+    try {
+      await api.updateTrackerBinding(mangaId, tracker.name, {
+        ...(nextScore === undefined ? {} : { score: nextScore }),
+        ...(startedAt ? { startedAt: parseTrackerDate(startedAt) } : {}),
+        ...(finishedAt ? { finishedAt: parseTrackerDate(finishedAt) } : {}),
+      });
+      await onChanged();
+      setNote(`${label} tracking updated.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to update tracking");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const progress = status?.progress ?? binding.lastSyncedChapter;
+  const total = status?.totalChapters ?? binding.totalRemoteChapters;
+  return (
+    <div className="mt-4">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-4 border-y border-zinc-800 py-4 sm:grid-cols-5">
+        <TrackerStat label="Status" value={status?.status || binding.remoteStatus || "Unknown"} />
+        <TrackerStat
+          label="Progress"
+          value={`${formatTrackerNumber(progress)}${total == null ? "" : ` / ${total}`}`}
+        />
+        <label className="min-w-0">
+          <span className="block text-[11px] uppercase text-zinc-500">Score</span>
+          <input
+            type="number"
+            min="0"
+            max="10"
+            step="0.1"
+            value={scoreValue}
+            onChange={(event) => setScoreValue(event.target.value)}
+            aria-label={`${label} score`}
+            className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-sm"
+          />
+        </label>
+        <label className="min-w-0">
+          <span className="block text-[11px] uppercase text-zinc-500">Started</span>
+          <input
+            type="date"
+            value={startedAt}
+            onChange={(event) => setStartedAt(event.target.value)}
+            aria-label={`${label} start date`}
+            className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs"
+          />
+        </label>
+        <label className="min-w-0">
+          <span className="block text-[11px] uppercase text-zinc-500">Finished</span>
+          <input
+            type="date"
+            value={finishedAt}
+            onChange={(event) => setFinishedAt(event.target.value)}
+            aria-label={`${label} finish date`}
+            className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs"
+          />
+        </label>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <div>
+          {error && <p className="text-xs text-red-300">{error}</p>}
+          {note && !error && <p className="text-xs text-emerald-300">{note}</p>}
+        </div>
+        <button
+          onClick={() => void save()}
+          disabled={saving}
+          aria-label={`Save ${label} tracking`}
+          className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold disabled:opacity-50"
+        >
+          {saving ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TrackerStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <span className="block text-[11px] uppercase text-zinc-500">{label}</span>
+      <b className="mt-1 block truncate text-sm font-medium text-zinc-200">{value}</b>
+    </div>
+  );
+}
+
+function sameTracker(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function formatTrackerDate(value?: number) {
+  return value ? new Date(value * 1000).toISOString().slice(0, 10) : "";
+}
+
+function parseTrackerDate(value: string) {
+  return Date.parse(`${value}T00:00:00Z`) / 1000;
+}
+
+function formatTrackerNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function MigrationModal({

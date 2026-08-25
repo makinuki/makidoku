@@ -166,11 +166,9 @@ describe("MakiDoku app shell", () => {
     expect(await screen.findByText("MangaDex · completed")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Tracking" }));
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
-    // The modal renders the full provider list with connection states and can
-    // switch the active provider.
-    expect(screen.getByRole("button", { name: /anilist/ })).toHaveTextContent("Connected");
-    await user.click(screen.getByRole("button", { name: /kitsu/ }));
-    expect(screen.getByPlaceholderText("Search provider")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AniList" })).toBeInTheDocument();
+    expect(screen.getAllByText("Connected as example-reader").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText("Kitsu username")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Migrate" }));
     expect(screen.getByRole("heading", { name: "Migrate plugin" })).toBeInTheDocument();
@@ -1343,7 +1341,8 @@ describe("tracker binding feedback", () => {
     );
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Tracking" }));
-    await user.click(await screen.findByRole("button", { name: /Unbind/ }));
+    await user.click(await screen.findByRole("button", { name: "AniList actions" }));
+    await user.click(screen.getByRole("button", { name: "Unbind" }));
     // The destructive step asks first.
     expect(unbindCalls).toBe(0);
     await user.click(screen.getByRole("button", { name: "Confirm unbind" }));
@@ -1459,7 +1458,7 @@ describe("tracker binding feedback", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(await screen.findByRole("button", { name: /Unbind/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "AniList actions" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
     expect(await screen.findByText("Bound to Yosuga no Sora.")).toBeInTheDocument();
   });
@@ -1533,6 +1532,221 @@ describe("tracker binding feedback", () => {
     });
     expect(await screen.findByRole("button", { name: /Yosuga no Sora 42/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Search" })).toBeEnabled();
+  });
+
+  it("renders bound tracker status, progress, score, and dates", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "anilist",
+              capabilities: { oauth: true, token: true },
+              credential: true,
+              authType: "oauth",
+              configured: true,
+              connectedAs: "example-reader",
+            },
+          ]);
+        }
+        if (path === `/api/manga/${mangaId}`) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: `/api/manga/${mangaId}/cover`,
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [],
+            trackers: [
+              {
+                id: 1,
+                mangaId,
+                trackerType: "anilist",
+                remoteId: "45821",
+                remoteTitle: "Yosuga no Sora",
+                remoteScore: 7.5,
+                remoteStatus: "CURRENT",
+                lastSyncedChapter: 8,
+                totalRemoteChapters: 12,
+                startedAt: Date.parse("2024-01-02T00:00:00Z") / 1000,
+                finishedAt: Date.parse("2024-02-01T00:00:00Z") / 1000,
+              },
+            ],
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+
+    expect(screen.getByRole("img", { name: "AniList logo" })).toBeInTheDocument();
+    expect(screen.getAllByText("Yosuga no Sora").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("CURRENT")).toBeInTheDocument();
+    expect(screen.getByText("8 / 12")).toBeInTheDocument();
+    expect(screen.getByLabelText("AniList score")).toHaveValue(7.5);
+    expect(screen.getByLabelText("AniList start date")).toHaveValue("2024-01-02");
+    expect(screen.getByLabelText("AniList finish date")).toHaveValue("2024-02-01");
+  });
+
+  it("updates tracker score and dates in one request", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let updateBody: Record<string, unknown> | undefined;
+    let updated = false;
+    const binding = () => ({
+      id: 1,
+      mangaId,
+      trackerType: "anilist",
+      remoteId: "45821",
+      remoteTitle: "Yosuga no Sora",
+      remoteScore: updated ? 8.5 : 7.5,
+      remoteStatus: "CURRENT",
+      lastSyncedChapter: 8,
+      totalRemoteChapters: 12,
+      startedAt: Date.parse(updated ? "2024-01-03T00:00:00Z" : "2024-01-02T00:00:00Z") / 1000,
+      finishedAt: Date.parse(updated ? "2024-02-02T00:00:00Z" : "2024-02-01T00:00:00Z") / 1000,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "anilist",
+              capabilities: { oauth: true, token: true },
+              credential: true,
+              authType: "oauth",
+              configured: true,
+            },
+          ]);
+        }
+        if (path === `/api/manga/${mangaId}/trackers/anilist`) {
+          updateBody = JSON.parse(String(init?.body));
+          updated = true;
+          return Response.json(binding());
+        }
+        if (path === `/api/manga/${mangaId}`) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: `/api/manga/${mangaId}/cover`,
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [],
+            trackers: [binding()],
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    const score = screen.getByLabelText("AniList score");
+    await user.clear(score);
+    await user.type(score, "8.5");
+    fireEvent.change(screen.getByLabelText("AniList start date"), {
+      target: { value: "2024-01-03" },
+    });
+    fireEvent.change(screen.getByLabelText("AniList finish date"), {
+      target: { value: "2024-02-02" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save AniList tracking" }));
+
+    await waitFor(() =>
+      expect(updateBody).toEqual({
+        score: 8.5,
+        startedAt: Date.parse("2024-01-03T00:00:00Z") / 1000,
+        finishedAt: Date.parse("2024-02-02T00:00:00Z") / 1000,
+      }),
+    );
+    expect(await screen.findByText("AniList tracking updated.")).toBeInTheDocument();
+  });
+
+  it("shows OAuth and password connection controls for unconnected trackers", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "anilist",
+              capabilities: { oauth: true, token: true },
+              credential: false,
+              authType: "oauth",
+              configured: true,
+            },
+            {
+              name: "kitsu",
+              capabilities: { oauth: false, token: true },
+              credential: false,
+              authType: "password",
+              configured: true,
+            },
+          ]);
+        }
+        if (path === `/api/manga/${mangaId}`) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: `/api/manga/${mangaId}/cover`,
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [],
+            trackers: [],
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+
+    expect(screen.getByRole("button", { name: "Connect AniList" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Kitsu username")).toBeInTheDocument();
+    expect(screen.getByLabelText("Kitsu password")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log in to Kitsu" })).toBeDisabled();
   });
 });
 
@@ -2406,7 +2620,7 @@ describe("search robustness", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Search titles" }));
     const input = await screen.findAllByPlaceholderText("Search your library");
     fireEvent.change(input[input.length - 1], { target: { value: "anything" } });
-    expect(await screen.findByText("database busy")).toBeInTheDocument();
+    expect((await screen.findAllByText("database busy")).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("No library matches.")).not.toBeInTheDocument();
   });
 

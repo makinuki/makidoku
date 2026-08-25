@@ -46,6 +46,8 @@ export type Binding = {
   remoteStatus?: string;
   lastSyncedChapter: number;
   totalRemoteChapters?: number;
+  startedAt?: number;
+  finishedAt?: number;
 };
 export type TrackerAuthType = "oauth" | "password" | "token";
 
@@ -175,10 +177,12 @@ export type DownloadSnapshot = {
 export type DownloadEvent = { type: string; item: QueueItem; stats: DownloadSnapshot["stats"] };
 export type TrackerStatus = {
   trackerType?: string;
-  remoteID?: string;
+  remoteId: string;
+  title: string;
   status?: string;
   score?: number;
-  chapter?: number;
+  progress: number;
+  totalChapters?: number;
 };
 export type TrackerSyncJob = {
   id: number;

@@ -491,7 +491,6 @@ function TrackerModal({
 }) {
   const [trackers, setTrackers] = useState<TrackerInfo[]>([]);
   const [error, setError] = useState("");
-  const [pendingOAuth, setPendingOAuth] = useState<string>();
   const refreshTrackers = useCallback(async () => {
     try {
       setTrackers(await api.trackers());
@@ -506,28 +505,20 @@ function TrackerModal({
   useTrackerEvents(() => {
     void refreshTrackers();
   });
-  useEffect(() => {
-    if (!pendingOAuth) return;
-    if (trackers.some((tracker) => sameTracker(tracker.name, pendingOAuth) && tracker.credential)) {
-      setPendingOAuth(undefined);
-    }
-  }, [pendingOAuth, trackers]);
+  const visibleTrackers = trackers.filter((tracker) => tracker.configured && tracker.credential);
   return (
     <Modal title="Tracking" onClose={onClose}>
       <div className="space-y-3">
-        {trackers.map((tracker) => (
+        {visibleTrackers.map((tracker) => (
           <TrackerSection
             key={tracker.name}
             mangaId={mangaId}
             tracker={tracker}
             binding={bindings.find((binding) => sameTracker(binding.trackerType, tracker.name))}
-            pendingOAuth={sameTracker(pendingOAuth || "", tracker.name)}
-            onOAuthPending={() => setPendingOAuth(tracker.name)}
-            onCredentialsChanged={refreshTrackers}
             onChanged={onChanged}
           />
         ))}
-        {!trackers.length && !error && (
+        {!visibleTrackers.length && !error && (
           <p className="text-sm text-zinc-500">No trackers available.</p>
         )}
       </div>
@@ -540,17 +531,11 @@ function TrackerSection({
   mangaId,
   tracker,
   binding,
-  pendingOAuth,
-  onOAuthPending,
-  onCredentialsChanged,
   onChanged,
 }: {
   mangaId: string;
   tracker: TrackerInfo;
   binding?: Binding;
-  pendingOAuth: boolean;
-  onOAuthPending: () => void;
-  onCredentialsChanged: () => Promise<void>;
   onChanged: () => Promise<void>;
 }) {
   const label = trackerLabel(tracker.name);
@@ -566,10 +551,6 @@ function TrackerSection({
   const [confirmUnbind, setConfirmUnbind] = useState(false);
   const [unbinding, setUnbinding] = useState(false);
   const [refreshingStatus, setRefreshingStatus] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [liveStatus, setLiveStatus] = useState<import("../../types").TrackerStatus>();
   const searchSeq = useRef(0);
   const search = async () => {
@@ -639,34 +620,6 @@ function TrackerSection({
       setRefreshingStatus(false);
     }
   };
-  const connect = async () => {
-    setConnecting(true);
-    setError("");
-    try {
-      const { authorizationUrl } = await api.startTrackerAuth(tracker.name);
-      window.open(authorizationUrl, "_blank", "noopener,noreferrer");
-      onOAuthPending();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to start authorization");
-    } finally {
-      setConnecting(false);
-    }
-  };
-  const login = async () => {
-    setLoggingIn(true);
-    setError("");
-    try {
-      await api.trackerLogin(tracker.name, username.trim(), password);
-      setUsername("");
-      setPassword("");
-      setNote(`${label} connected.`);
-      await onCredentialsChanged();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to sign in");
-    } finally {
-      setLoggingIn(false);
-    }
-  };
   const score = liveStatus?.score ?? binding?.remoteScore;
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
@@ -675,14 +628,8 @@ function TrackerSection({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold">{label}</h3>
-            <span
-              className={`text-xs ${tracker.credential ? "text-emerald-300" : "text-zinc-500"}`}
-            >
-              {tracker.credential
-                ? tracker.connectedAs
-                  ? `Connected as ${tracker.connectedAs}`
-                  : "Connected"
-                : "Not connected"}
+            <span className="text-xs text-emerald-300">
+              {tracker.connectedAs ? `Connected as ${tracker.connectedAs}` : "Connected"}
             </span>
           </div>
           {binding && (
@@ -733,7 +680,7 @@ function TrackerSection({
           score={score}
           onChanged={onChanged}
         />
-      ) : tracker.credential ? (
+      ) : (
         <div className="mt-4">
           <div className="flex gap-2">
             <input
@@ -770,52 +717,6 @@ function TrackerSection({
             ))}
           </div>
         </div>
-      ) : !tracker.configured ? (
-        <p className="mt-3 text-xs leading-5 text-zinc-500">{tracker.configHint}</p>
-      ) : tracker.authType === "oauth" ? (
-        <button
-          onClick={() => void connect()}
-          disabled={connecting || pendingOAuth}
-          aria-label={`Connect ${label}`}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
-        >
-          {(connecting || pendingOAuth) && <LoaderCircle size={14} className="animate-spin" />}
-          {pendingOAuth
-            ? "Waiting for authorization"
-            : connecting
-              ? "Opening authorization"
-              : "Connect"}
-        </button>
-      ) : tracker.authType === "password" ? (
-        <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            aria-label={`${label} username`}
-            placeholder="Email or username"
-            autoComplete="off"
-            className="min-w-0 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-          />
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            aria-label={`${label} password`}
-            placeholder="Password"
-            autoComplete="new-password"
-            className="min-w-0 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-          />
-          <button
-            onClick={() => void login()}
-            disabled={loggingIn || !username.trim() || !password}
-            aria-label={`Log in to ${label}`}
-            className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
-          >
-            {loggingIn ? "Signing in…" : "Log in"}
-          </button>
-        </div>
-      ) : (
-        <p className="mt-3 text-xs text-zinc-500">Connect this tracker from Settings.</p>
       )}
       {confirmUnbind && binding && (
         <div className="mt-4 border-t border-red-900/50 pt-4">

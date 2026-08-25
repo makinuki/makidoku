@@ -168,7 +168,7 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "AniList" })).toBeInTheDocument();
     expect(screen.getAllByText("Connected as example-reader").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByLabelText("Kitsu username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Kitsu" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Migrate" }));
     expect(screen.getByRole("heading", { name: "Migrate plugin" })).toBeInTheDocument();
@@ -1366,6 +1366,7 @@ describe("tracker binding feedback", () => {
                 token: true,
               },
               credential: true,
+              configured: true,
             },
           ]);
         if (path === `/api/manga/${mangaId}`) {
@@ -1425,6 +1426,7 @@ describe("tracker binding feedback", () => {
                   token: true,
                 },
                 credential: true,
+                configured: true,
               },
             ]),
           );
@@ -1534,6 +1536,7 @@ describe("tracker binding feedback", () => {
                   token: true,
                 },
                 credential: true,
+                configured: true,
               },
             ]),
           );
@@ -1741,7 +1744,7 @@ describe("tracker binding feedback", () => {
     expect(await screen.findByText("AniList tracking updated.")).toBeInTheDocument();
   });
 
-  it("shows OAuth and password connection controls for unconnected trackers", async () => {
+  it("hides trackers unless they are configured and connected", async () => {
     window.history.pushState({}, "", `/manga/${mangaId}`);
     vi.stubGlobal(
       "fetch",
@@ -1762,6 +1765,13 @@ describe("tracker binding feedback", () => {
               credential: false,
               authType: "password",
               configured: true,
+            },
+            {
+              name: "mangaupdates",
+              capabilities: { oauth: false, token: true },
+              credential: true,
+              authType: "password",
+              configured: false,
             },
           ]);
         }
@@ -1794,10 +1804,10 @@ describe("tracker binding feedback", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Tracking" }));
 
-    expect(screen.getByRole("button", { name: "Connect AniList" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Kitsu username")).toBeInTheDocument();
-    expect(screen.getByLabelText("Kitsu password")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log in to Kitsu" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "AniList" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Kitsu" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "MangaUpdates" })).not.toBeInTheDocument();
+    expect(screen.getByText("No trackers available.")).toBeInTheDocument();
   });
 });
 

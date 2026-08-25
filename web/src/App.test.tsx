@@ -1478,6 +1478,8 @@ describe("settings credential feedback", () => {
                 token: true,
               },
               credential: false,
+              authType: "oauth",
+              configured: true,
             },
           ]);
         }
@@ -1502,7 +1504,7 @@ describe("settings credential feedback", () => {
       </BrowserRouter>,
     );
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /AniList/ }));
+    await user.click(await screen.findByRole("button", { name: "Paste token manually" }));
     const tokenInput = await screen.findByPlaceholderText("AniList access token");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
@@ -1514,7 +1516,8 @@ describe("settings credential feedback", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("AniList credentials saved.")).toBeInTheDocument();
-    expect(tokenInput).toHaveValue("");
+    // A successful save closes the manual entry panel and clears the value.
+    expect(screen.queryByPlaceholderText("AniList access token")).not.toBeInTheDocument();
   });
 
   // Recent tracker sync outcomes are visible so failures are not silent.
@@ -1566,20 +1569,24 @@ describe("settings credential feedback", () => {
         return Response.json([
           {
             name: "AniList",
-            capabilities: { search: true, status: true, scrobble: true, oauth: false, token: true },
+            capabilities: { search: true, status: true, scrobble: true, oauth: true, token: true },
             credential: true,
+            authType: "oauth",
+            configured: true,
           },
           {
             name: "Kitsu",
             capabilities: { search: true, status: true, scrobble: true, oauth: true, token: true },
             credential: false,
+            authType: "oauth",
+            configured: true,
           },
         ]);
       }
       if (path === "/api/trackers/Kitsu/auth/start") {
         return Response.json({
           authorizationUrl: "https://kitsu.test/auth",
-          redirectUri: "http://127.0.0.1:8080/api/trackers/kitsu/auth/callback",
+          redirectUri: "http://127.0.0.1:6254/api/trackers/kitsu/auth/callback",
         });
       }
       if (path === "/api/trackers/AniList/credentials") {
@@ -1611,7 +1618,7 @@ describe("settings credential feedback", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/trackers/Kitsu/auth/start", expect.anything());
     expect(open).toHaveBeenCalledWith("https://kitsu.test/auth", "_blank", "noopener");
-    expect(await screen.findByText("Opening Kitsu authorization.")).toBeInTheDocument();
+    expect(await screen.findByText(/Waiting for authorization/)).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
     expect(await screen.findByText("AniList disconnected.")).toBeInTheDocument();
@@ -1621,6 +1628,182 @@ describe("settings credential feedback", () => {
     } else {
       delete (window as { open?: unknown }).open;
     }
+  });
+
+  it("explains unconfigured browser authorization instead of offering connect", async () => {
+    window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "MangaBaka",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: false,
+              authType: "oauth",
+              configured: false,
+              configHint: "Set MANGABAKA_CLIENT_ID",
+            },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText(/Set MANGABAKA_CLIENT_ID/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+  });
+
+  it("signs in to a username and password tracker and surfaces rejections", async () => {
+    window.history.pushState({}, "", "/settings");
+    let loginCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "kitsu",
+              capabilities: {
+                search: true,
+                status: false,
+                scrobble: false,
+                oauth: false,
+                token: true,
+              },
+              credential: false,
+              authType: "password",
+              configured: true,
+            },
+          ]);
+        }
+        if (path === "/api/trackers/kitsu/login") {
+          loginCalls++;
+          if (loginCalls === 1) {
+            return Response.json(
+              { error: { message: "the tracker rejected these credentials" } },
+              { status: 401 },
+            );
+          }
+          return new Response(null, { status: 204 });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    const loginButton = await screen.findByRole("button", { name: "Log in" });
+    expect(loginButton).toBeDisabled();
+    await user.type(screen.getByLabelText("kitsu username"), "user@example.com");
+    await user.type(screen.getByLabelText("kitsu password"), "secret");
+    fireEvent.click(loginButton);
+    expect(await screen.findByText("the tracker rejected these credentials")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Log in" }));
+    expect(await screen.findByText("kitsu connected.")).toBeInTheDocument();
+    expect(loginCalls).toBe(2);
+  });
+
+  it("resolves a pending authorization when the daemon broadcasts the credential event", async () => {
+    class FakeSocket {
+      static instances: FakeSocket[] = [];
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor(public url: string) {
+        FakeSocket.instances.push(this);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+
+    const open = vi.fn();
+    const originalOpen = Object.getOwnPropertyDescriptor(window, "open");
+    Object.defineProperty(window, "open", { value: open, configurable: true, writable: true });
+
+    let connected = false;
+    let socketRef: FakeSocket | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/tracker-sync") return Response.json([]);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "AniList",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: connected,
+              authType: "oauth",
+              configured: true,
+              ...(connected ? { connectedAs: "viewer-user" } : {}),
+            },
+          ]);
+        }
+        if (path === "/api/trackers/AniList/auth/start") {
+          return Response.json({
+            authorizationUrl: "https://anilist.test/auth",
+            redirectUri: "http://127.0.0.1:6254/api/trackers/anilist/auth/callback",
+          });
+        }
+        return Response.json([]);
+      }),
+    );
+
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(
+        FakeSocket.instances.some((socket) => socket.url.includes("/api/trackers/events")),
+      ).toBe(true),
+    );
+    expect(open).toHaveBeenCalledWith("https://anilist.test/auth", "_blank", "noopener");
+    expect(await screen.findByText(/Waiting for authorization/)).toBeInTheDocument();
+
+    connected = true;
+    socketRef = FakeSocket.instances.find((entry) => entry.url.includes("/api/trackers/events"));
+    await act(async () => {
+      socketRef?.onmessage?.({ data: JSON.stringify({ type: "credentials", tracker: "anilist" }) });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(await screen.findByText(/Connected as viewer-user/)).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for authorization/)).not.toBeInTheDocument();
+
+    if (originalOpen) {
+      Object.defineProperty(window, "open", originalOpen);
+    } else {
+      delete (window as { open?: unknown }).open;
+    }
+    vi.unstubAllGlobals();
   });
 
   it("removes a category after confirmation", async () => {

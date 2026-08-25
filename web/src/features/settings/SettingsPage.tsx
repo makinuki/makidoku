@@ -12,9 +12,13 @@ export function SettingsPage() {
   const [trackers, setTrackers] = useState<TrackerInfo[]>([]);
   const [syncJobs, setSyncJobs] = useState<TrackerSyncJob[]>([]);
   const [name, setName] = useState("");
-  const [tokenType, setTokenType] = useState("");
   const [token, setToken] = useState("");
   const [pat, setPat] = useState(false);
+  const [advanced, setAdvanced] = useState<string>();
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPass, setLoginPass] = useState("");
+  const [loggingIn, setLoggingIn] = useState<string>();
+  const [pendingOAuth, setPendingOAuth] = useState<string>();
   const [cookieSource, setCookieSource] = useState("");
   const [cookie, setCookie] = useState("");
   const [userAgent, setUserAgent] = useState("");
@@ -92,6 +96,56 @@ export function SettingsPage() {
   useEffect(() => {
     void refresh();
   }, []);
+  // Credential changes arrive over the tracker event socket, so an
+  // authorization completed in another tab reflects here without polling.
+  // The socket only refetches tracker state; the rest of the page is untouched.
+  useEffect(() => {
+    let socket: WebSocket | undefined;
+    let reconnectTimer: number | undefined;
+    let disposed = false;
+    const refreshTrackers = async () => {
+      try {
+        const [services, jobs] = await Promise.all([api.trackers(), api.syncJobs()]);
+        setTrackers(services);
+        setSyncJobs(jobs.slice(0, 5));
+      } catch {
+        // A failed background refetch keeps the previous snapshot; the next
+        // event or manual refresh reconciles.
+      }
+    };
+    const connect = () => {
+      if (disposed) return;
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const next = new WebSocket(`${protocol}//${location.host}/api/trackers/events`);
+      socket = next;
+      next.onmessage = (event) => {
+        try {
+          const message = JSON.parse(String(event.data)) as { type?: string };
+          if (message.type === "credentials") void refreshTrackers();
+        } catch {
+          // A malformed frame is skipped; the next event reconciles.
+        }
+      };
+      next.onclose = () => {
+        if (disposed) return;
+        reconnectTimer = window.setTimeout(connect, 2000);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, []);
+  // A pending authorization resolves when the tracker list reports a stored
+  // credential for it, whether through the socket or a manual refresh.
+  useEffect(() => {
+    if (!pendingOAuth) return;
+    if (trackers.some((tracker) => tracker.name === pendingOAuth && tracker.credential)) {
+      setPendingOAuth(undefined);
+    }
+  }, [trackers, pendingOAuth]);
   // Importing overwrites library, progress and categories, so the file is
   // only picked after an explicit confirmation. Failures land in the banner
   // and a success re-reads everything the restore may have changed.
@@ -156,18 +210,19 @@ export function SettingsPage() {
       setClearing(false);
     }
   };
-  const saveToken = async () => {
-    if (!tokenType) return;
+  const saveToken = async (trackerName: string) => {
+    if (!token) return;
     setSavingToken(true);
     setError("");
     try {
       await api.saveTrackerToken(
-        tokenType,
+        trackerName,
         token,
-        tokenType === "mangabaka" && pat ? { auth: "pat" } : undefined,
+        trackerName === "mangabaka" && pat ? { auth: "pat" } : undefined,
       );
       setToken("");
-      setStatus(`${tokenType} credentials saved.`);
+      setAdvanced(undefined);
+      setStatus(`${trackerName} credentials saved.`);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save credentials");
@@ -176,15 +231,33 @@ export function SettingsPage() {
     }
   };
   // OAuth hands off to the provider in a new tab; the daemon completes the
-  // flow through its callback endpoint.
+  // flow through its callback endpoint while this page listens for the
+  // credential event on the tracker websocket.
   const connectOAuth = async (tracker: TrackerInfo) => {
     setError("");
     try {
       const { authorizationUrl } = await api.startTrackerAuth(tracker.name);
       window.open(authorizationUrl, "_blank", "noopener");
-      setStatus(`Opening ${tracker.name} authorization.`);
+      setPendingOAuth(tracker.name);
+      setStatus(`Waiting for ${tracker.name} authorization.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to start OAuth");
+      setError(e instanceof Error ? e.message : "Unable to start authorization");
+    }
+  };
+  const login = async (tracker: TrackerInfo) => {
+    if (!loginUser.trim() || !loginPass) return;
+    setLoggingIn(tracker.name);
+    setError("");
+    try {
+      await api.trackerLogin(tracker.name, loginUser.trim(), loginPass);
+      setStatus(`${tracker.name} connected.`);
+      setLoginUser("");
+      setLoginPass("");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to sign in");
+    } finally {
+      setLoggingIn(undefined);
     }
   };
   const disconnectTracker = async (tracker: TrackerInfo) => {
@@ -424,69 +497,129 @@ export function SettingsPage() {
       </section>
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
         <h2 className="font-semibold">Trackers</h2>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {trackers.map((tracker) => (
-            <div key={tracker.name} className="space-y-2">
-              <button
-                onClick={() => setTokenType(tracker.name)}
-                className="w-full rounded-lg border border-zinc-800 p-3 text-left hover:border-amber-400"
-              >
-                <b className="block">{tracker.name}</b>
-                <small className="text-zinc-500">
-                  {tracker.credential
-                    ? "Connected"
-                    : tracker.capabilities.oauth
-                      ? "Token or OAuth"
-                      : "Token required"}
-                </small>
-              </button>
-              <div className="flex gap-2">
-                {!tracker.credential && tracker.capabilities.oauth && (
-                  <button
-                    onClick={() => void connectOAuth(tracker)}
-                    className="rounded-lg border border-amber-400 px-2 py-1 text-xs text-amber-300"
-                  >
-                    Connect
-                  </button>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {trackers.map((tracker) => {
+            const callbackUrl = `${window.location.origin}/api/trackers/${tracker.name}/auth/callback`;
+            return (
+              <div key={tracker.name} className="space-y-2 rounded-lg border border-zinc-800 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <b className="block">{tracker.name}</b>
+                  {tracker.credential ? (
+                    <small className="shrink-0 text-emerald-300">
+                      Connected{tracker.connectedAs ? ` as ${tracker.connectedAs}` : ""}
+                    </small>
+                  ) : tracker.authType === "oauth" && !tracker.configured ? (
+                    <small className="shrink-0 text-zinc-500">Not configured</small>
+                  ) : pendingOAuth === tracker.name ? (
+                    <small className="flex shrink-0 items-center gap-1 text-amber-300">
+                      <LoaderCircle size={12} className="animate-spin" /> Waiting for authorization
+                    </small>
+                  ) : null}
+                </div>
+                {tracker.credential ? (
+                  <div>
+                    <button
+                      onClick={() => void disconnectTracker(tracker)}
+                      disabled={disconnecting === tracker.name}
+                      className="rounded-lg border border-red-900 px-2 py-1 text-xs text-red-300 disabled:opacity-50"
+                    >
+                      {disconnecting === tracker.name ? "Disconnecting…" : "Disconnect"}
+                    </button>
+                  </div>
+                ) : tracker.authType === "password" ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        value={loginUser}
+                        onChange={(e) => setLoginUser(e.target.value)}
+                        placeholder="Email or username"
+                        aria-label={`${tracker.name} username`}
+                        autoComplete="off"
+                        className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                      />
+                      <input
+                        type="password"
+                        value={loginPass}
+                        onChange={(e) => setLoginPass(e.target.value)}
+                        placeholder="Password"
+                        aria-label={`${tracker.name} password`}
+                        autoComplete="new-password"
+                        className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <button
+                      onClick={() => void login(tracker)}
+                      disabled={loggingIn === tracker.name || !loginUser.trim() || !loginPass}
+                      className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 disabled:opacity-40"
+                    >
+                      {loggingIn === tracker.name ? "Signing in…" : "Log in"}
+                    </button>
+                  </div>
+                ) : tracker.authType === "oauth" ? (
+                  tracker.configured ? (
+                    <div>
+                      <button
+                        onClick={() => void connectOAuth(tracker)}
+                        className="rounded-lg border border-amber-400 px-2 py-1 text-xs text-amber-300"
+                      >
+                        Connect
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-xs leading-relaxed text-zinc-500">
+                      {tracker.configHint} on the server, registering{" "}
+                      <code className="text-zinc-400">{callbackUrl}</code> as the redirect URI.
+                    </p>
+                  )
+                ) : (
+                  <p className="text-xs text-zinc-500">Paste an access token below.</p>
                 )}
-                {tracker.credential && (
-                  <button
-                    onClick={() => void disconnectTracker(tracker)}
-                    disabled={disconnecting === tracker.name}
-                    className="rounded-lg border border-red-900 px-2 py-1 text-xs text-red-300 disabled:opacity-50"
-                  >
-                    {disconnecting === tracker.name ? "Disconnecting…" : "Disconnect"}
-                  </button>
+                {!tracker.credential && (
+                  <div>
+                    <button
+                      onClick={() =>
+                        setAdvanced(advanced === tracker.name ? undefined : tracker.name)
+                      }
+                      className="text-xs text-zinc-500 underline hover:text-zinc-300"
+                    >
+                      Paste token manually
+                    </button>
+                  </div>
+                )}
+                {advanced === tracker.name && !tracker.credential && (
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      type="password"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                      placeholder={`${tracker.name} access token`}
+                      aria-label={`${tracker.name} access token`}
+                      className="min-w-55 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={() => void saveToken(tracker.name)}
+                      disabled={savingToken || !token}
+                      className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
+                    >
+                      <Check size={14} className="mr-1 inline" />
+                      {savingToken ? "Saving…" : "Save"}
+                    </button>
+                    {tracker.name === "mangabaka" && (
+                      <label className="flex items-center gap-2 text-xs text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={pat}
+                          onChange={(e) => setPat(e.target.checked)}
+                        />{" "}
+                        Personal access token
+                      </label>
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        {tokenType && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={`${tokenType} access token`}
-              className="min-w-55 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-            />
-            <button
-              onClick={() => void saveToken()}
-              disabled={savingToken || !token}
-              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
-            >
-              <Check size={14} className="mr-1 inline" />
-              {savingToken ? "Saving…" : "Save"}
-            </button>
-            {tokenType === "mangabaka" && (
-              <label className="flex items-center gap-2 text-xs text-zinc-400">
-                <input type="checkbox" checked={pat} onChange={(e) => setPat(e.target.checked)} />{" "}
-                Personal access token
-              </label>
-            )}
-          </div>
-        )}
         {syncJobs.length > 0 && (
           <div className="mt-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">

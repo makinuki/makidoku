@@ -47,6 +47,8 @@ export type Binding = {
   lastSyncedChapter: number;
   totalRemoteChapters?: number;
 };
+export type TrackerAuthType = "oauth" | "password" | "token";
+
 export type TrackerInfo = {
   name: string;
   capabilities: {
@@ -57,6 +59,10 @@ export type TrackerInfo = {
     token: boolean;
   };
   credential: boolean;
+  authType: TrackerAuthType;
+  configured: boolean;
+  configHint?: string;
+  connectedAs?: string;
 };
 export type TrackerSearchResult = {
   remoteId: string;

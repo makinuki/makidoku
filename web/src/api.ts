@@ -114,6 +114,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ accessToken, metadata }),
     }),
+  trackerLogin: (type: string, username: string, password: string) =>
+    request<void>(`/api/trackers/${encodeURIComponent(type)}/login`, {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
   deleteTrackerCredentials: (type: string) =>
     request<void>(`/api/trackers/${encodeURIComponent(type)}/credentials`, { method: "DELETE" }),
   startTrackerAuth: (type: string) =>

@@ -15,8 +15,9 @@ export function SettingsPage() {
   const [token, setToken] = useState("");
   const [pat, setPat] = useState(false);
   const [advanced, setAdvanced] = useState<string>();
-  const [loginUser, setLoginUser] = useState("");
-  const [loginPass, setLoginPass] = useState("");
+  // Sign-in forms are scoped per tracker so two password providers never
+  // mirror each other's input.
+  const [loginForms, setLoginForms] = useState<Record<string, { user: string; pass: string }>>({});
   const [loggingIn, setLoggingIn] = useState<string>();
   const [pendingOAuth, setPendingOAuth] = useState<string>();
   const [cookieSource, setCookieSource] = useState("");
@@ -244,15 +245,25 @@ export function SettingsPage() {
       setError(e instanceof Error ? e.message : "Unable to start authorization");
     }
   };
+  const updateLogin = (trackerName: string, patch: Partial<{ user: string; pass: string }>) => {
+    setLoginForms((forms) => ({
+      ...forms,
+      [trackerName]: {
+        user: forms[trackerName]?.user ?? "",
+        pass: forms[trackerName]?.pass ?? "",
+        ...patch,
+      },
+    }));
+  };
   const login = async (tracker: TrackerInfo) => {
-    if (!loginUser.trim() || !loginPass) return;
+    const form = loginForms[tracker.name];
+    if (!form?.user.trim() || !form.pass) return;
     setLoggingIn(tracker.name);
     setError("");
     try {
-      await api.trackerLogin(tracker.name, loginUser.trim(), loginPass);
+      await api.trackerLogin(tracker.name, form.user.trim(), form.pass);
       setStatus(`${tracker.name} connected.`);
-      setLoginUser("");
-      setLoginPass("");
+      updateLogin(tracker.name, { user: "", pass: "" });
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to sign in");
@@ -541,8 +552,8 @@ export function SettingsPage() {
                   <div className="space-y-2">
                     <div className="flex flex-wrap gap-2">
                       <input
-                        value={loginUser}
-                        onChange={(e) => setLoginUser(e.target.value)}
+                        value={loginForms[tracker.name]?.user ?? ""}
+                        onChange={(e) => updateLogin(tracker.name, { user: e.target.value })}
                         placeholder="Email or username"
                         aria-label={`${tracker.name} username`}
                         autoComplete="off"
@@ -550,8 +561,8 @@ export function SettingsPage() {
                       />
                       <input
                         type="password"
-                        value={loginPass}
-                        onChange={(e) => setLoginPass(e.target.value)}
+                        value={loginForms[tracker.name]?.pass ?? ""}
+                        onChange={(e) => updateLogin(tracker.name, { pass: e.target.value })}
                         placeholder="Password"
                         aria-label={`${tracker.name} password`}
                         autoComplete="new-password"
@@ -560,7 +571,11 @@ export function SettingsPage() {
                     </div>
                     <button
                       onClick={() => void login(tracker)}
-                      disabled={loggingIn === tracker.name || !loginUser.trim() || !loginPass}
+                      disabled={
+                        loggingIn === tracker.name ||
+                        !loginForms[tracker.name]?.user.trim() ||
+                        !loginForms[tracker.name]?.pass
+                      }
                       className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-semibold text-zinc-950 disabled:opacity-40"
                     >
                       {loggingIn === tracker.name ? "Signing in…" : "Log in"}

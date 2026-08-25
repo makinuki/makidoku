@@ -46,7 +46,78 @@ describe("MakiDoku app shell", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path === "/api/trackers") return Response.json([]);
+        if (path === "/api/trackers") {
+          return Response.json([
+            {
+              name: "anilist",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: true,
+              authType: "oauth",
+              configured: true,
+              connectedAs: "example-reader",
+            },
+            {
+              name: "kitsu",
+              capabilities: {
+                search: true,
+                status: false,
+                scrobble: false,
+                oauth: false,
+                token: true,
+              },
+              credential: false,
+              authType: "password",
+              configured: true,
+            },
+            {
+              name: "mangabaka",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: true,
+              authType: "oauth",
+              configured: true,
+              connectedAs: "example-reader",
+            },
+            {
+              name: "mangaupdates",
+              capabilities: {
+                search: true,
+                status: false,
+                scrobble: false,
+                oauth: false,
+                token: true,
+              },
+              credential: false,
+              authType: "password",
+              configured: true,
+            },
+            {
+              name: "myanimelist",
+              capabilities: {
+                search: true,
+                status: true,
+                scrobble: true,
+                oauth: true,
+                token: true,
+              },
+              credential: true,
+              authType: "oauth",
+              configured: true,
+              connectedAs: "example-reader",
+            },
+          ]);
+        }
         if (path.includes("/migration/candidates")) {
           return Response.json({ candidates: [], failedSources: 0, searched: 0 });
         }
@@ -81,6 +152,11 @@ describe("MakiDoku app shell", () => {
     expect(await screen.findByText("MangaDex · completed")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Tracking" }));
     expect(screen.getByRole("heading", { name: "Tracking" })).toBeInTheDocument();
+    // The modal renders the full provider list with connection states and can
+    // switch the active provider.
+    expect(screen.getByRole("button", { name: /anilist/ })).toHaveTextContent("Connected");
+    await user.click(screen.getByRole("button", { name: /kitsu/ }));
+    expect(screen.getByPlaceholderText("Search provider")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Migrate" }));
     expect(screen.getByRole("heading", { name: "Migrate plugin" })).toBeInTheDocument();
@@ -1725,6 +1801,19 @@ describe("settings credential feedback", () => {
               authType: "password",
               configured: true,
             },
+            {
+              name: "mangaupdates",
+              capabilities: {
+                search: true,
+                status: false,
+                scrobble: false,
+                oauth: false,
+                token: true,
+              },
+              credential: false,
+              authType: "password",
+              configured: true,
+            },
           ]);
         }
         if (path === "/api/trackers/kitsu/login") {
@@ -1746,16 +1835,22 @@ describe("settings credential feedback", () => {
       </BrowserRouter>,
     );
     const user = userEvent.setup();
-    const loginButton = await screen.findByRole("button", { name: "Log in" });
-    expect(loginButton).toBeDisabled();
+    const loginButtons = await screen.findAllByRole("button", { name: "Log in" });
+    expect(loginButtons).toHaveLength(2);
+    const kitsuLogin = loginButtons[0];
+    expect(kitsuLogin).toBeDisabled();
     await user.type(screen.getByLabelText("kitsu username"), "user@example.com");
     await user.type(screen.getByLabelText("kitsu password"), "secret");
-    fireEvent.click(loginButton);
+    // Each provider owns its form state; typing into one card never fills the other.
+    expect(screen.getByLabelText("mangaupdates username")).toHaveValue("");
+    expect(screen.getByLabelText("mangaupdates password")).toHaveValue("");
+    fireEvent.click(kitsuLogin);
     expect(await screen.findByText("the tracker rejected these credentials")).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Log in" }));
+    fireEvent.click(kitsuLogin);
     expect(await screen.findByText("kitsu connected.")).toBeInTheDocument();
     expect(loginCalls).toBe(2);
+    expect(screen.getByLabelText("kitsu username")).toHaveValue("");
   });
 
   it("resolves a pending authorization when the daemon broadcasts the credential event", async () => {

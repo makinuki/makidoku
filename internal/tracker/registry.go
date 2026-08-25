@@ -175,6 +175,33 @@ func (r *Registry) credential(name string) (Credential, error) {
 	return refreshed, nil
 }
 
+// OAuthConfigured reports whether browser authorization for a tracker can
+// start, meaning its provider application credentials are present on the
+// server. Trackers that do not use browser authorization are always
+// configured.
+func (r *Registry) OAuthConfigured(name string) bool {
+	provider := oauthProviders()[name]
+	if provider.authorizeURL == "" {
+		return true
+	}
+	return provider.clientID() != ""
+}
+
+// OAuthConfigHint names the environment variables a tracker needs before its
+// browser authorization can start.
+func (r *Registry) OAuthConfigHint(name string) string {
+	switch name {
+	case "anilist":
+		return "Set ANILIST_CLIENT_ID and ANILIST_CLIENT_SECRET"
+	case "myanimelist":
+		return "Set MYANIMELIST_CLIENT_ID"
+	case "mangabaka":
+		return "Set MANGABAKA_CLIENT_ID"
+	default:
+		return ""
+	}
+}
+
 // Credential returns the current credential for a provider, refreshing an
 // expiring token when the provider supports refresh tokens.
 func (r *Registry) Credential(name string) (Credential, error) {

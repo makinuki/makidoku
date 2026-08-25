@@ -30,13 +30,14 @@ type downloadQueue interface {
 
 // Server holds the dependencies shared by the REST handlers.
 type Server struct {
-	repo       *db.Repository
-	engine     *engine.Engine
-	downloads  downloadQueue
-	trackers   *tracker.Registry
-	syncer     *tracker.SyncWorker
-	imageCache *imagecache.Cache
-	lifetime   atomic.Pointer[context.Context]
+	repo          *db.Repository
+	engine        *engine.Engine
+	downloads     downloadQueue
+	trackers      *tracker.Registry
+	syncer        *tracker.SyncWorker
+	imageCache    *imagecache.Cache
+	trackerEvents *trackerBroker
+	lifetime      atomic.Pointer[context.Context]
 }
 
 // Lifetime returns the daemon run context when available, falling back to a
@@ -49,7 +50,7 @@ func (s *Server) Lifetime() context.Context {
 }
 
 func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQueue) *Server {
-	server := &Server{repo: repo, engine: eng}
+	server := &Server{repo: repo, engine: eng, trackerEvents: newTrackerBroker()}
 	if len(downloads) > 0 && downloads[0] != nil {
 		server.downloads = downloads[0]
 	}

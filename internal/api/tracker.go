@@ -3,12 +3,15 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"html"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/makinuki/makidoku/internal/db"
@@ -17,8 +20,10 @@ import (
 
 func (s *Server) mountTrackers(r chi.Router) {
 	r.Get("/trackers", s.listTrackers)
+	r.Get("/trackers/events", s.trackerEventsHandler)
 	r.Get("/trackers/{trackerType}/search", s.trackerSearch)
 	r.Post("/trackers/{trackerType}/token", s.saveTrackerToken)
+	r.Post("/trackers/{trackerType}/login", s.loginTracker)
 	r.Delete("/trackers/{trackerType}/credentials", s.deleteTrackerCredentials)
 	r.Get("/trackers/{trackerType}/auth/start", s.startTrackerAuth)
 	r.Get("/trackers/{trackerType}/auth/callback", s.trackerAuthCallback)
@@ -34,16 +39,48 @@ func (s *Server) mountTrackers(r chi.Router) {
 	r.Post("/progress/complete", s.completeProgress)
 }
 
+// trackerAuthType classifies how a tracker connects: directly with a username
+// and password, through browser authorization, or by pasting a token.
+func trackerAuthType(t tracker.Tracker) string {
+	if _, ok := t.(tracker.PasswordLogin); ok {
+		return "password"
+	}
+	if t.Capabilities().OAuth {
+		return "oauth"
+	}
+	return "token"
+}
+
 func (s *Server) listTrackers(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		Name         string               `json:"name"`
 		Capabilities tracker.Capabilities `json:"capabilities"`
 		Credential   bool                 `json:"credential"`
+		AuthType     string               `json:"authType"`
+		Configured   bool                 `json:"configured"`
+		ConfigHint   string               `json:"configHint,omitempty"`
+		ConnectedAs  string               `json:"connectedAs,omitempty"`
 	}
 	items := make([]item, 0)
 	for _, t := range s.trackers.List() {
-		_, err := s.trackers.Store.Load(t.Name())
-		items = append(items, item{Name: t.Name(), Capabilities: t.Capabilities(), Credential: err == nil})
+		name := t.Name()
+		entry := item{
+			Name:         name,
+			Capabilities: t.Capabilities(),
+			AuthType:     trackerAuthType(t),
+			Configured:   true,
+		}
+		credential, err := s.trackers.Store.Load(name)
+		if err != nil {
+			entry.Configured = s.trackers.OAuthConfigured(name)
+			if !entry.Configured {
+				entry.ConfigHint = s.trackers.OAuthConfigHint(name)
+			}
+		} else {
+			entry.Credential = true
+			entry.ConnectedAs = credential.Metadata["username"]
+		}
+		items = append(items, entry)
 	}
 	writeJSON(w, http.StatusOK, items)
 }
@@ -103,15 +140,62 @@ func (s *Server) saveTrackerToken(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.publishTrackerCredentials(typ)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) deleteTrackerCredentials(w http.ResponseWriter, r *http.Request) {
-	if err := s.trackers.Repo.DeleteTrackerCredential(chi.URLParam(r, "trackerType")); err != nil {
+	typ := chi.URLParam(r, "trackerType")
+	if err := s.trackers.Repo.DeleteTrackerCredential(typ); err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.publishTrackerCredentials(typ)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// loginTracker exchanges a username and password pair for trackers that
+// authenticate directly. Credentials travel only over the local loopback and
+// are never logged.
+func (s *Server) loginTracker(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	typ := chi.URLParam(r, "trackerType")
+	if _, ok := s.trackers.Get(typ); !ok {
+		writeBadRequest(w, "unknown tracker")
+		return
+	}
+	username := strings.TrimSpace(body.Username)
+	if username == "" || body.Password == "" {
+		writeBadRequest(w, "username and password are required")
+		return
+	}
+	if err := s.trackers.Login(r.Context(), typ, username, body.Password); err != nil {
+		var httpErr *tracker.HTTPError
+		if errors.As(err, &httpErr) && (httpErr.Status == http.StatusUnauthorized || httpErr.Status == http.StatusForbidden || httpErr.Status == http.StatusBadRequest) {
+			writeLocalError(w, http.StatusUnauthorized, errors.New("the tracker rejected these credentials"))
+			return
+		}
+		if errors.Is(err, tracker.ErrUnsupported) {
+			writeLocalError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeTrackerError(w, err)
+		return
+	}
+	s.publishTrackerCredentials(typ)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// publishTrackerCredentials notifies websocket subscribers that stored
+// credentials for one tracker changed.
+func (s *Server) publishTrackerCredentials(trackerType string) {
+	s.trackerEvents.publish(TrackerEvent{Type: trackerEventCredentials, Tracker: trackerType})
 }
 
 func (s *Server) startTrackerAuth(w http.ResponseWriter, r *http.Request) {
@@ -131,17 +215,69 @@ func (s *Server) startTrackerAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": url, "redirectUri": redirect})
 }
+// trackerCallbackPage renders the page a provider redirects back to after the
+// user authorizes. The tab has no API client attached, so it speaks HTML and
+// tells the user they can close it while the websocket notifies the app.
+func trackerCallbackPage(w http.ResponseWriter, status int, title, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	page := `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>MakiDoku</title></head>
+<body style="margin:0;height:100vh;display:grid;place-items:center;background:#09090b;color:#e4e4e7;font-family:system-ui,sans-serif">
+<div style="text-align:center;max-width:28rem;padding:1rem">
+<h1 style="font-size:1.25rem">` + html.EscapeString(title) + `</h1>
+<p style="color:#a1a1aa">` + html.EscapeString(detail) + `</p>
+</div>
+</body>
+</html>`
+	_, _ = w.Write([]byte(page))
+}
+
 func (s *Server) trackerAuthCallback(w http.ResponseWriter, r *http.Request) {
 	typ := chi.URLParam(r, "trackerType")
 	if errValue := r.URL.Query().Get("error"); errValue != "" {
-		writeLocalError(w, http.StatusBadRequest, errors.New(errValue))
+		trackerCallbackPage(w, http.StatusBadRequest, "Authorization failed", "The provider reported: "+errValue)
+		return
+	}
+	if _, ok := s.trackers.Get(typ); !ok {
+		trackerCallbackPage(w, http.StatusNotFound, "Unknown tracker", typ+" is not registered on this server.")
 		return
 	}
 	if err := s.trackers.CompleteOAuth(r.Context(), typ, r.URL.Query().Get("code"), r.URL.Query().Get("state"), ""); err != nil {
-		writeLocalError(w, http.StatusBadRequest, err)
+		trackerCallbackPage(w, http.StatusBadRequest, "Authorization failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tracker": typ})
+	s.publishTrackerCredentials(typ)
+	trackerCallbackPage(w, http.StatusOK, "Authorization complete", strings.ToUpper(typ[:1])+typ[1:]+" is now connected. You can close this tab.")
+}
+
+// trackerEventsHandler streams credential-change events so open clients
+// refresh their tracker state the moment an authorization completes.
+func (s *Server) trackerEventsHandler(w http.ResponseWriter, r *http.Request) {
+	connection, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer connection.CloseNow()
+
+	ctx := connection.CloseRead(s.Lifetime())
+	events, unsubscribe := s.trackerEvents.subscribe()
+	defer unsubscribe()
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				_ = connection.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+			if err := wsjson.Write(ctx, connection, event); err != nil {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *Server) listBindings(w http.ResponseWriter, r *http.Request) {

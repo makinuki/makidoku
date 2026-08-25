@@ -2,8 +2,10 @@ package tracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/makinuki/makidoku/internal/db"
 )
@@ -15,6 +17,37 @@ func NewMangaUpdates(httpClient *http.Client, token func() (Credential, error)) 
 }
 func (m *MangaUpdates) Name() string               { return "mangaupdates" }
 func (m *MangaUpdates) Capabilities() Capabilities { return Capabilities{Search: true, Token: true} }
+
+// Login authenticates a username and password pair and stores the session
+// token returned by the account endpoint. The session token does not expire,
+// so no refresh handling exists for this tracker.
+func (m *MangaUpdates) Login(ctx context.Context, username, password string) (Credential, error) {
+	var out struct {
+		Context struct {
+			SessionToken string `json:"session_token"`
+		} `json:"context"`
+	}
+	if err := m.Client.do(ctx, http.MethodPut, "/account/login", map[string]any{"username": username, "password": password}, &out, false); err != nil {
+		return Credential{}, err
+	}
+	if out.Context.SessionToken == "" {
+		return Credential{}, errors.New("mangaupdates login did not return a session token")
+	}
+	credential := Credential{AccessToken: out.Context.SessionToken}
+	if name, err := m.accountName(ctx, credential.AccessToken); err == nil && name != "" {
+		credential.Metadata = map[string]string{"username": name}
+	}
+	return credential, nil
+}
+
+func (m *MangaUpdates) accountName(ctx context.Context, token string) (string, error) {
+	var out struct {
+		Username string `json:"username"`
+	}
+	err := bearerJSON(ctx, m.Client.HTTP, http.MethodGet, strings.TrimRight(m.Client.BaseURL, "/")+"/account/profile", token, nil, nil, &out)
+	return out.Username, err
+}
+
 func (m *MangaUpdates) Search(ctx context.Context, text string) ([]SearchResult, error) {
 	var out struct {
 		Results []struct {

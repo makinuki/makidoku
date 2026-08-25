@@ -3,6 +3,7 @@ package tracker
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,81 @@ import (
 
 	"github.com/makinuki/makidoku/internal/db"
 )
+
+func TestKitsuLoginPasswordGrantContract(t *testing.T) {
+	var gotForm url.Values
+	var gotGraphQLAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/oauth/token":
+			_ = r.ParseForm()
+			gotForm = r.PostForm
+			_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`))
+		case "/api/graphql":
+			gotGraphQLAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"data":{"currentAccount":{"profile":{"name":"kitsu-user"}}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewKitsu(server.Client(), func() (Credential, error) { return Credential{}, nil })
+	provider.TokenURL = server.URL + "/api/oauth/token"
+	provider.GraphQLURL = server.URL + "/api/graphql"
+	credential, err := provider.Login(context.Background(), "user@example.com", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotForm.Get("grant_type") != "password" || gotForm.Get("username") != "user@example.com" || gotForm.Get("password") != "secret" || gotForm.Get("client_id") != kitsuClientID || gotForm.Get("client_secret") != kitsuClientSecret {
+		t.Fatalf("token request form = %v", gotForm)
+	}
+	if credential.AccessToken != "at" || credential.RefreshToken != "rt" || credential.ExpiresAt == nil || credential.Metadata["username"] != "kitsu-user" {
+		t.Fatalf("credential = %+v", credential)
+	}
+	if gotGraphQLAuth != "Bearer at" {
+		t.Fatalf("graphql authorization = %q", gotGraphQLAuth)
+	}
+}
+
+func TestMangaUpdatesLoginSessionTokenContract(t *testing.T) {
+	var loginMethod, loginBody, profileAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/account/login":
+			loginMethod = r.Method
+			raw, _ := io.ReadAll(r.Body)
+			loginBody = string(raw)
+			_, _ = w.Write([]byte(`{"context":{"session_token":"st-123"}}`))
+		case "/account/profile":
+			profileAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"username":"mu-user","user_id":7}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewMangaUpdates(server.Client(), func() (Credential, error) { return Credential{}, nil })
+	provider.Client.BaseURL = server.URL
+	credential, err := provider.Login(context.Background(), "mu", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loginPayload map[string]any
+	if err := json.Unmarshal([]byte(loginBody), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if loginMethod != http.MethodPut || loginPayload["username"] != "mu" || loginPayload["password"] != "pw" {
+		t.Fatalf("login request = %s %s", loginMethod, loginBody)
+	}
+	if credential.AccessToken != "st-123" || credential.ExpiresAt != nil || credential.RefreshToken != "" || credential.Metadata["username"] != "mu-user" {
+		t.Fatalf("credential = %+v", credential)
+	}
+	if profileAuth != "Bearer st-123" {
+		t.Fatalf("profile authorization = %q", profileAuth)
+	}
+}
 
 func TestMangaBakaContractUsesDocumentedShapes(t *testing.T) {
 	var gotPath, gotQuery, gotAuth, gotBody string
@@ -203,18 +279,19 @@ func TestKitsuContractNormalizesSearchRating(t *testing.T) {
 func TestMangaBakaUsesOIDCRefreshEndpoint(t *testing.T) {
 	repo := trackerRepo(t)
 	t.Setenv("MAKIDOKU_SECRET", "refresh-secret")
-	t.Setenv("MAKIDOKU_MANGABAKA_CLIENT_ID", "baka-client")
-	t.Setenv("MAKIDOKU_MANGABAKA_CLIENT_SECRET", "baka-secret")
+	t.Setenv("MANGABAKA_CLIENT_ID", "baka-client")
 	expired := time.Now().Add(-time.Minute)
 	registry := NewRegistry(repo)
-	if err := registry.Store.Save("mangabaka", Credential{AccessToken: "old", RefreshToken: "refresh", ExpiresAt: &expired}); err != nil {
+	if err := registry.Store.Save("mangabaka", Credential{AccessToken: "old", RefreshToken: "refresh", ExpiresAt: &expired, Metadata: map[string]string{"redirect_uri": "http://127.0.0.1:6254/callback"}}); err != nil {
 		t.Fatal(err)
 	}
 	var gotURL string
 	var gotGrant string
+	var gotRedirect string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		gotGrant = r.Form.Get("grant_type")
+		gotRedirect = r.Form.Get("redirect_uri")
 		_, _ = w.Write([]byte(`{"access_token":"new","refresh_token":"next","expires_in":3600}`))
 	}))
 	defer server.Close()
@@ -233,15 +310,15 @@ func TestMangaBakaUsesOIDCRefreshEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotURL != "https://mangabaka.org/auth/oauth2/token" || gotGrant != "refresh_token" || credential.AccessToken != "new" || credential.RefreshToken != "next" {
-		t.Fatalf("url=%q grant=%q credential=%+v", gotURL, gotGrant, credential)
+	if gotURL != "https://mangabaka.org/auth/oauth2/token" || gotGrant != "refresh_token" || gotRedirect != "http://127.0.0.1:6254/callback" || credential.AccessToken != "new" || credential.RefreshToken != "next" {
+		t.Fatalf("url=%q grant=%q redirect=%q credential=%+v", gotURL, gotGrant, gotRedirect, credential)
 	}
 }
 
 func TestCredentialRefreshIsSerialized(t *testing.T) {
 	repo := trackerRepo(t)
 	t.Setenv("MAKIDOKU_SECRET", "refresh-secret")
-	t.Setenv("MAKIDOKU_MANGABAKA_CLIENT_ID", "baka-client")
+	t.Setenv("MANGABAKA_CLIENT_ID", "baka-client")
 	expired := time.Now().Add(-time.Minute)
 	registry := NewRegistry(repo)
 	if err := registry.Store.Save("mangabaka", Credential{AccessToken: "old", RefreshToken: "refresh", ExpiresAt: &expired}); err != nil {

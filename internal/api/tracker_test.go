@@ -39,7 +39,7 @@ func TestTrackerAuthRejectsNonLoopbackRedirect(t *testing.T) {
 }
 
 func TestTrackerAuthAcceptsLoopbackRedirect(t *testing.T) {
-	t.Setenv("MAKIDOKU_ANILIST_CLIENT_ID", "client")
+	t.Setenv("ANILIST_CLIENT_ID", "client")
 	h := trackerAPIHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/trackers/anilist/auth/start?redirect=http%3A%2F%2F127.0.0.1%3A8080%2Fapi%2Ftrackers%2Fanilist%2Fauth%2Fcallback", nil)
 	rec := httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestTrackerAuthAcceptsLoopbackRedirect(t *testing.T) {
 }
 
 func TestTrackerAuthDefaultsToRequestLoopbackPort(t *testing.T) {
-	t.Setenv("MAKIDOKU_ANILIST_CLIENT_ID", "client")
+	t.Setenv("ANILIST_CLIENT_ID", "client")
 	h := trackerAPIHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/trackers/anilist/auth/start", nil)
 	req.Host = "127.0.0.1:9090"
@@ -62,7 +62,7 @@ func TestTrackerAuthDefaultsToRequestLoopbackPort(t *testing.T) {
 }
 
 func TestTrackerAuthRejectsNonLoopbackRequestHost(t *testing.T) {
-	t.Setenv("MAKIDOKU_ANILIST_CLIENT_ID", "client")
+	t.Setenv("ANILIST_CLIENT_ID", "client")
 	h := trackerAPIHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/trackers/anilist/auth/start", nil)
 	req.Host = "example.test:9090"

@@ -145,3 +145,55 @@ func (c Client) request(ctx context.Context, method, path string, body io.Reader
 func (c Client) doForm(ctx context.Context, method, path string, form url.Values, out any, auth bool) error {
 	return c.request(ctx, method, path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", out, auth)
 }
+
+// bearerJSON performs a JSON request against a provider API authorized by an
+// explicit access token. Unlike Client it does not consult the stored
+// credential, which makes it suitable for identity lookups that run while a
+// freshly obtained token is not yet persisted.
+func bearerJSON(ctx context.Context, client *http.Client, method, endpoint, token string, body any, headers map[string]string, out any) error {
+	var reader io.Reader
+	contentType := ""
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = strings.NewReader(string(raw))
+		contentType = "application/json"
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	httpClient := client
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var msg struct {
+			Message string `json:"message"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&msg)
+		if msg.Message == "" {
+			msg.Message = resp.Status
+		}
+		return &HTTPError{Status: resp.StatusCode, Message: msg.Message}
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}

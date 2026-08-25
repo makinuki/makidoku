@@ -3,6 +3,7 @@ package tracker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -40,8 +41,9 @@ func (k *Kitsu) Name() string               { return "kitsu" }
 func (k *Kitsu) Capabilities() Capabilities { return Capabilities{Search: true, Token: true} }
 
 // Login exchanges an email and password pair for an OAuth credential through
-// Kitsu's public password-grant client. The account name is resolved as part
-// of connecting; a lookup failure keeps the credential without a display name.
+// Kitsu's public password-grant client. The account name and rating system
+// are resolved as part of connecting; a lookup failure keeps the credential
+// without a display name.
 func (k *Kitsu) Login(ctx context.Context, username, password string) (Credential, error) {
 	form := url.Values{
 		"username":      {username},
@@ -63,25 +65,36 @@ func (k *Kitsu) Login(ctx context.Context, username, password string) (Credentia
 	}
 	expires := time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	credential := Credential{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, ExpiresAt: &expires}
-	if name, err := k.accountName(ctx, credential); err == nil && name != "" {
-		credential.Metadata = map[string]string{"username": name}
+	if name, ratingSystem, err := k.account(ctx, credential); err == nil {
+		metadata := map[string]string{}
+		if name != "" {
+			metadata["username"] = name
+		}
+		if ratingSystem != "" {
+			metadata["rating_system"] = ratingSystem
+		}
+		credential.Metadata = metadata
 	}
 	return credential, nil
 }
 
-func (k *Kitsu) accountName(ctx context.Context, credential Credential) (string, error) {
+// account resolves the display name and the account's rating system. Kitsu
+// scores live on a 20 point scale for advanced accounts and 10 point
+// otherwise; the rating system decides valid increments, not the wire scale.
+func (k *Kitsu) account(ctx context.Context, credential Credential) (string, string, error) {
 	var out struct {
 		Data struct {
 			CurrentAccount struct {
-				Profile struct {
+				RatingSystem string `json:"ratingSystem"`
+				Profile      struct {
 					Name string `json:"name"`
 				} `json:"profile"`
 			} `json:"currentAccount"`
 		} `json:"data"`
 	}
 	err := bearerJSON(ctx, k.Client.HTTP, http.MethodPost, k.GraphQLURL, credential.AccessToken,
-		map[string]any{"query": "query{currentAccount{id profile{name}}}"}, nil, &out)
-	return out.Data.CurrentAccount.Profile.Name, err
+		map[string]any{"query": "query{currentAccount{id ratingSystem profile{name}}}"}, nil, &out)
+	return out.Data.CurrentAccount.Profile.Name, out.Data.CurrentAccount.RatingSystem, err
 }
 
 func (k *Kitsu) Search(ctx context.Context, text string) ([]SearchResult, error) {
@@ -112,9 +125,149 @@ func (k *Kitsu) Search(ctx context.Context, text string) ([]SearchResult, error)
 	}
 	return r, nil
 }
-func (k *Kitsu) FetchUserStatus(context.Context, db.TrackerBinding, Credential) (Status, error) {
-	return Status{}, ErrUnsupported
+// kitsuLibraryEntry is the library entry payload shared by the status read
+// and the scrobble lookup.
+type kitsuLibraryEntry struct {
+	ID       string `json:"id"`
+	Progress int    `json:"progress"`
+	Rating   *int   `json:"rating"`
+	Status   string `json:"status"`
 }
-func (k *Kitsu) ScrobbleProgress(context.Context, db.TrackerBinding, float64, Credential) error {
-	return ErrUnsupported
+
+// kitsuLibraryQuery fetches the local library entry for one manga together
+// with the chapter count needed for progress display.
+const kitsuLibraryQuery = `query($id:ID!){findMangaById(id:$id){titles{preferred} chapterCount myLibraryEntry{id progress rating status}}}`
+
+func (k *Kitsu) findLibraryEntry(ctx context.Context, credential Credential, remoteID string) (*kitsuLibraryEntry, string, *int, error) {
+	var out struct {
+		Data struct {
+			FindMangaById *struct {
+				Titles struct {
+					Preferred string `json:"preferred"`
+				} `json:"titles"`
+				ChapterCount   *int               `json:"chapterCount"`
+				MyLibraryEntry *kitsuLibraryEntry `json:"myLibraryEntry"`
+			} `json:"findMangaById"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := bearerJSON(ctx, k.Client.HTTP, http.MethodPost, k.GraphQLURL, credential.AccessToken,
+		map[string]any{"query": kitsuLibraryQuery, "variables": map[string]any{"id": remoteID}}, nil, &out); err != nil {
+		return nil, "", nil, err
+	}
+	if len(out.Errors) > 0 {
+		return nil, "", nil, fmt.Errorf("kitsu GraphQL: %s", out.Errors[0].Message)
+	}
+	if out.Data.FindMangaById == nil {
+		return nil, "", nil, fmt.Errorf("kitsu has no manga with id %s", remoteID)
+	}
+	return out.Data.FindMangaById.MyLibraryEntry, out.Data.FindMangaById.Titles.Preferred, out.Data.FindMangaById.ChapterCount, nil
+}
+
+// normalizeKitsuRating maps the account rating onto the 0 to 10 convention.
+// Advanced accounts rate on 20 points, everyone else on 10; the wire value
+// itself decides, so no metadata is needed on the read path.
+func normalizeKitsuRating(rating int) float64 {
+	if rating > 10 {
+		return float64(rating) / 2
+	}
+	return float64(rating)
+}
+
+func (k *Kitsu) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Credential) (Status, error) {
+	entry, title, chapterCount, err := k.findLibraryEntry(ctx, c, b.RemoteID)
+	if err != nil {
+		return Status{}, err
+	}
+	if title == "" {
+		title = b.RemoteTitle
+	}
+	status := Status{RemoteID: b.RemoteID, Title: title, TotalChapters: chapterCount}
+	if entry != nil {
+		status.Status = entry.Status
+		status.Progress = float64(entry.Progress)
+		if entry.Rating != nil {
+			score := normalizeKitsuRating(*entry.Rating)
+			status.Score = &score
+		}
+	}
+	return status, nil
+}
+
+// ScrobbleProgress pushes the floored chapter count into the library entry,
+// creating one when the manga is not in the library yet. The entry's existing
+// reading status is preserved.
+func (k *Kitsu) ScrobbleProgress(ctx context.Context, b db.TrackerBinding, ch float64, c Credential) error {
+	entry, _, _, err := k.findLibraryEntry(ctx, c, b.RemoteID)
+	if err != nil {
+		return err
+	}
+	progress := scrobbleProgress(ch)
+	if entry == nil {
+		return k.createLibraryEntry(ctx, c, b.RemoteID, progress)
+	}
+	return k.updateLibraryEntry(ctx, c, entry.ID, entry.Status, progress)
+}
+
+func (k *Kitsu) createLibraryEntry(ctx context.Context, credential Credential, remoteID string, progress int) error {
+	var out struct {
+		Data struct {
+			LibraryEntry struct {
+				Create struct {
+					Errors []struct {
+						Message string `json:"message"`
+					} `json:"errors"`
+				} `json:"create"`
+			} `json:"libraryEntry"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	query := `mutation($media_id:ID!,$progress:Int!){libraryEntry{create(input:{mediaId:$media_id,mediaType:MANGA,status:CURRENT,progress:$progress,private:false}){errors{message} libraryEntry{id}}}}`
+	if err := bearerJSON(ctx, k.Client.HTTP, http.MethodPost, k.GraphQLURL, credential.AccessToken,
+		map[string]any{"query": query, "variables": map[string]any{"media_id": remoteID, "progress": progress}}, nil, &out); err != nil {
+		return err
+	}
+	if len(out.Errors) > 0 {
+		return fmt.Errorf("kitsu GraphQL: %s", out.Errors[0].Message)
+	}
+	if len(out.Data.LibraryEntry.Create.Errors) > 0 {
+		return fmt.Errorf("kitsu create failed: %s", out.Data.LibraryEntry.Create.Errors[0].Message)
+	}
+	return nil
+}
+
+func (k *Kitsu) updateLibraryEntry(ctx context.Context, credential Credential, entryID, status string, progress int) error {
+	if status == "" {
+		status = "CURRENT"
+	}
+	var out struct {
+		Data struct {
+			LibraryEntry struct {
+				Update struct {
+					Errors []struct {
+						Message string `json:"message"`
+					} `json:"errors"`
+				} `json:"update"`
+			} `json:"libraryEntry"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	query := `mutation($id:ID!,$status:LibraryEntryStatusEnum!,$progress:Int!){libraryEntry{update(input:{id:$id,status:$status,progress:$progress}){errors{message} libraryEntry{id}}}}`
+	if err := bearerJSON(ctx, k.Client.HTTP, http.MethodPost, k.GraphQLURL, credential.AccessToken,
+		map[string]any{"query": query, "variables": map[string]any{"id": entryID, "status": status, "progress": progress}}, nil, &out); err != nil {
+		return err
+	}
+	if len(out.Errors) > 0 {
+		return fmt.Errorf("kitsu GraphQL: %s", out.Errors[0].Message)
+	}
+	if len(out.Data.LibraryEntry.Update.Errors) > 0 {
+		return fmt.Errorf("kitsu update failed: %s", out.Data.LibraryEntry.Update.Errors[0].Message)
+	}
+	return nil
 }

@@ -27,7 +27,7 @@ func TestKitsuLoginPasswordGrantContract(t *testing.T) {
 			_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`))
 		case "/api/graphql":
 			gotGraphQLAuth = r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{"data":{"currentAccount":{"profile":{"name":"kitsu-user"}}}}`))
+			_, _ = w.Write([]byte(`{"data":{"currentAccount":{"ratingSystem":"advanced","profile":{"name":"kitsu-user"}}}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -44,11 +44,94 @@ func TestKitsuLoginPasswordGrantContract(t *testing.T) {
 	if gotForm.Get("grant_type") != "password" || gotForm.Get("username") != "user@example.com" || gotForm.Get("password") != "secret" || gotForm.Get("client_id") != kitsuClientID || gotForm.Get("client_secret") != kitsuClientSecret {
 		t.Fatalf("token request form = %v", gotForm)
 	}
-	if credential.AccessToken != "at" || credential.RefreshToken != "rt" || credential.ExpiresAt == nil || credential.Metadata["username"] != "kitsu-user" {
+	if credential.AccessToken != "at" || credential.RefreshToken != "rt" || credential.ExpiresAt == nil || credential.Metadata["username"] != "kitsu-user" || credential.Metadata["rating_system"] != "advanced" {
 		t.Fatalf("credential = %+v", credential)
 	}
 	if gotGraphQLAuth != "Bearer at" {
 		t.Fatalf("graphql authorization = %q", gotGraphQLAuth)
+	}
+}
+
+func TestKitsuStatusReadsLibraryEntry(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query string `json:"query"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		gotQuery = payload.Query
+		_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":{"id":"entry-9","progress":7,"rating":16,"status":"CURRENT"}}}}`))
+	}))
+	defer server.Close()
+
+	provider := NewKitsu(server.Client(), func() (Credential, error) { return Credential{AccessToken: "tok"}, nil })
+	provider.GraphQLURL = server.URL + "/api/graphql"
+	status, err := provider.FetchUserStatus(context.Background(), db.TrackerBinding{RemoteID: "1703", RemoteTitle: "fallback"}, Credential{AccessToken: "tok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotQuery, "findMangaById") || !strings.Contains(gotQuery, "myLibraryEntry") {
+		t.Fatalf("query = %s", gotQuery)
+	}
+	if status.Title != "Yosuga no Sora" || status.Progress != 7 || status.Status != "CURRENT" || status.Score == nil || *status.Score != 8 || status.TotalChapters == nil || *status.TotalChapters != 14 {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestKitsuScrobbleUpdatesExistingEntry(t *testing.T) {
+	var mutations []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if strings.Contains(payload.Query, "findMangaById") {
+			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":{"id":"entry-9","progress":7,"status":"CURRENT"}}}}`))
+			return
+		}
+		mutations = append(mutations, payload.Variables)
+		_, _ = w.Write([]byte(`{"data":{"libraryEntry":{"update":{"errors":[],"libraryEntry":{"id":"entry-9"}}}}}`))
+	}))
+	defer server.Close()
+
+	provider := NewKitsu(server.Client(), func() (Credential, error) { return Credential{AccessToken: "tok"}, nil })
+	provider.GraphQLURL = server.URL + "/api/graphql"
+	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "1703"}, 8.9, Credential{AccessToken: "tok"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(mutations) != 1 {
+		t.Fatalf("mutations = %d", len(mutations))
+	}
+	if mutations[0]["id"] != "entry-9" || mutations[0]["status"] != "CURRENT" || mutations[0]["progress"] != float64(8) {
+		t.Fatalf("update variables = %#v", mutations[0])
+	}
+}
+
+func TestKitsuScrobbleCreatesMissingEntry(t *testing.T) {
+	var createVars map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if strings.Contains(payload.Query, "findMangaById") {
+			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":null}}}`))
+			return
+		}
+		createVars = payload.Variables
+		_, _ = w.Write([]byte(`{"data":{"libraryEntry":{"create":{"errors":[],"libraryEntry":{"id":"new-1"}}}}}`))
+	}))
+	defer server.Close()
+
+	provider := NewKitsu(server.Client(), func() (Credential, error) { return Credential{AccessToken: "tok"}, nil })
+	provider.GraphQLURL = server.URL + "/api/graphql"
+	if err := provider.ScrobbleProgress(context.Background(), db.TrackerBinding{RemoteID: "1703"}, 3, Credential{AccessToken: "tok"}); err != nil {
+		t.Fatal(err)
+	}
+	if createVars["media_id"] != "1703" || createVars["progress"] != float64(3) {
+		t.Fatalf("create variables = %#v", createVars)
 	}
 }
 

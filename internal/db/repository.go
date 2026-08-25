@@ -431,6 +431,17 @@ func (r *Repository) GetMangaAggregate(id string) (MangaAggregate, error) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return MangaAggregate{}, err
 	}
+	// Nil slices marshal as JSON null, which the web client renders as absent
+	// collections and crashes on; the aggregate contract is always an array.
+	if categories == nil {
+		categories = []Category{}
+	}
+	if chapters == nil {
+		chapters = []Chapter{}
+	}
+	if trackers == nil {
+		trackers = []TrackerBinding{}
+	}
 	return MangaAggregate{Manga: manga, Categories: categories, Chapters: chapters, Progress: progress, Trackers: trackers}, nil
 }
 

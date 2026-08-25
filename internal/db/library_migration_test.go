@@ -1,6 +1,8 @@
 package db
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +40,32 @@ func TestLibraryRepositoryPersistsMembershipCategoriesAndAggregate(t *testing.T)
 	}
 	if len(aggregate.Chapters) != 1 || len(aggregate.Categories) != 1 || !aggregate.Manga.InLibrary {
 		t.Fatalf("aggregate = %#v", aggregate)
+	}
+}
+
+func TestGetMangaAggregateMarshalsEmptyCollectionsAsArrays(t *testing.T) {
+	repo := testRepository(t)
+
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "bare", Title: "Bare", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := repo.GetMangaAggregate(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nil slices marshal as null; the web client expects arrays.
+	if aggregate.Chapters == nil || aggregate.Categories == nil || aggregate.Trackers == nil {
+		t.Fatalf("nil collection in aggregate: chapters=%v categories=%v trackers=%v", aggregate.Chapters == nil, aggregate.Categories == nil, aggregate.Trackers == nil)
+	}
+	encoded, err := json.Marshal(aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"chapters":[]`, `"categories":[]`, `"trackers":[]`} {
+		if !strings.Contains(string(encoded), field) {
+			t.Fatalf("aggregate JSON missing %s: %s", field, encoded)
+		}
 	}
 }
 

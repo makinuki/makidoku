@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "./app/AppShell";
 import { BrowsePage } from "./features/browse/BrowsePage";
 import { DownloadsPage } from "./features/downloads/DownloadsPage";
@@ -9,9 +9,11 @@ import { LibraryPage } from "./features/library/LibraryPage";
 import { ReaderPage } from "./features/reader/ReaderPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { GlobalSearch } from "./features/search/GlobalSearch";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
+  const routeLocation = useLocation();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -25,18 +27,20 @@ export default function App() {
   }, []);
   return (
     <AppShell onSearch={() => setSearchOpen(true)}>
-      <Routes>
-        <Route path="/" element={<LibraryPage />} />
-        <Route path="/library" element={<LibraryPage />} />
-        <Route path="/browse" element={<BrowsePage />} />
-        <Route path="/manga/:mangaId" element={<DetailsPage />} />
-        <Route path="/downloads" element={<DownloadsPage />} />
-        <Route path="/history" element={<HistoryPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
-        <Route path="/reader" element={<ReaderPage />} />
-      </Routes>
-      {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}
+      <ErrorBoundary key={routeLocation.pathname}>
+        <Routes>
+          <Route path="/" element={<LibraryPage />} />
+          <Route path="/library" element={<LibraryPage />} />
+          <Route path="/browse" element={<BrowsePage />} />
+          <Route path="/manga/:mangaId" element={<DetailsPage />} />
+          <Route path="/downloads" element={<DownloadsPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
+          <Route path="/reader" element={<ReaderPage />} />
+        </Routes>
+        {searchOpen && <GlobalSearch onClose={() => setSearchOpen(false)} />}
+      </ErrorBoundary>
     </AppShell>
   );
 }

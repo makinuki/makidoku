@@ -258,9 +258,9 @@ func TestSyncWorkerRunStopsCleanlyOnCancellation(t *testing.T) {
 	}
 }
 
-// Bindings on providers without scrobble support must not create sync jobs:
-// every reading session would otherwise queue a guaranteed failure.
-func TestProgressSkipsNonScrobbleTrackers(t *testing.T) {
+// Every bound provider receives a sync job: tracking support is part of the
+// tracker contract, so there are no scrobble-less bindings to skip.
+func TestProgressEnqueuesEveryBoundTracker(t *testing.T) {
 	repo := trackerRepo(t)
 	now := time.Now().Unix()
 	_, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('sk','S','1',1,'en','https://x','x',?)`, now)
@@ -293,10 +293,13 @@ func TestProgressSkipsNonScrobbleTrackers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs) != 1 || jobs[0].BindingID != anilist.ID {
-		t.Fatalf("jobs = %+v, want exactly the anilist binding %d", jobs, anilist.ID)
+	if len(jobs) != 2 {
+		t.Fatalf("jobs = %+v, want one per binding (%d, %d)", jobs, kitsu.ID, anilist.ID)
 	}
-	_ = kitsu
+	bindings := map[int64]bool{jobs[0].BindingID: true, jobs[1].BindingID: true}
+	if !bindings[kitsu.ID] || !bindings[anilist.ID] {
+		t.Fatalf("jobs = %+v, want bindings %d and %d", jobs, kitsu.ID, anilist.ID)
+	}
 }
 
 // A storage failure while claiming work must not end the sync loop: the

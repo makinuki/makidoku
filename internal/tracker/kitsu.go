@@ -38,7 +38,7 @@ func NewKitsu(httpClient *http.Client, token func() (Credential, error)) *Kitsu 
 	}
 }
 func (k *Kitsu) Name() string               { return "kitsu" }
-func (k *Kitsu) Capabilities() Capabilities { return Capabilities{Search: true, Token: true} }
+func (k *Kitsu) Capabilities() Capabilities { return Capabilities{Token: true} }
 
 // Login exchanges an email and password pair for an OAuth credential through
 // Kitsu's public password-grant client. The account name and rating system

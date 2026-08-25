@@ -112,10 +112,6 @@ func (s *Server) trackerSearch(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, "unknown tracker")
 		return
 	}
-	if !provider.Capabilities().Search {
-		writeLocalError(w, http.StatusNotImplemented, tracker.ErrUnsupported)
-		return
-	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
 		writeBadRequest(w, "q is required")
@@ -375,10 +371,6 @@ func (s *Server) trackerStatuses(w http.ResponseWriter, r *http.Request) {
 		p, ok := s.trackers.Get(b.TrackerType)
 		if !ok {
 			writeBadRequest(w, "unknown tracker: "+b.TrackerType)
-			return
-		}
-		if !p.Capabilities().Status {
-			writeLocalError(w, http.StatusNotImplemented, tracker.ErrUnsupported)
 			return
 		}
 		c, e := s.trackers.Credential(b.TrackerType)

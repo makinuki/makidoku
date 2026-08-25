@@ -17,11 +17,8 @@ import (
 var ErrUnsupported = errors.New("tracker operation is not supported")
 
 type Capabilities struct {
-	Search   bool `json:"search"`
-	Status   bool `json:"status"`
-	Scrobble bool `json:"scrobble"`
-	OAuth    bool `json:"oauth"`
-	Token    bool `json:"token"`
+	OAuth bool `json:"oauth"`
+	Token bool `json:"token"`
 }
 
 type SearchResult struct {

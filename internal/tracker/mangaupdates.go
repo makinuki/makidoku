@@ -19,7 +19,7 @@ func NewMangaUpdates(httpClient *http.Client, token func() (Credential, error)) 
 	return &MangaUpdates{Client: Client{HTTP: httpClient, BaseURL: "https://api.mangaupdates.com/v1", Token: token}}
 }
 func (m *MangaUpdates) Name() string               { return "mangaupdates" }
-func (m *MangaUpdates) Capabilities() Capabilities { return Capabilities{Search: true, Token: true} }
+func (m *MangaUpdates) Capabilities() Capabilities { return Capabilities{Token: true} }
 
 // Login authenticates a username and password pair and stores the session
 // token returned by the account endpoint. The session token does not expire,

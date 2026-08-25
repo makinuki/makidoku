@@ -5,9 +5,23 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import App from "./App";
 import { resumeIndex } from "./features/reader/ReaderPage";
 
+// A socket that never opens. Components subscribing to daemon events must not
+// drag real connection attempts and reconnect timers into the test run; tests
+// that need events install their own capturing stub.
+class InertSocket {
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  constructor(public url: string) {}
+  close() {}
+  send() {}
+}
+vi.stubGlobal("WebSocket", InertSocket);
+
 describe("MakiDoku app shell", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.stubGlobal("WebSocket", InertSocket);
   });
   const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
   const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";

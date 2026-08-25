@@ -22,7 +22,7 @@ func NewMangaBaka(httpClient *http.Client, token func() (Credential, error)) *Ma
 }
 func (m *MangaBaka) Name() string { return "mangabaka" }
 func (m *MangaBaka) Capabilities() Capabilities {
-	return Capabilities{Search: true, Status: true, Scrobble: true, Token: true, OAuth: true}
+	return Capabilities{OAuth: true, Token: true}
 }
 func (m *MangaBaka) Search(ctx context.Context, text string) ([]SearchResult, error) {
 	var out struct {

@@ -17,7 +17,7 @@ func NewAniList(httpClient *http.Client, token func() (Credential, error)) *AniL
 }
 func (a *AniList) Name() string { return "anilist" }
 func (a *AniList) Capabilities() Capabilities {
-	return Capabilities{Search: true, Status: true, Scrobble: true, OAuth: true, Token: true}
+	return Capabilities{OAuth: true, Token: true}
 }
 
 func (a *AniList) query(ctx context.Context, q string, vars map[string]any, out any, auth bool) error {

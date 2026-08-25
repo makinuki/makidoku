@@ -130,7 +130,7 @@ func TestTrackerAuthRejectsNonLoopbackRequestHost(t *testing.T) {
 	}
 }
 
-func TestTrackerStatusRejectsBindingWithoutStatusCapability(t *testing.T) {
+func TestTrackerStatusSkipsBindingsWithoutStatusCapability(t *testing.T) {
 	handle, err := db.Open(filepath.Join(t.TempDir(), "status.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,8 @@ func TestTrackerStatusRejectsBindingWithoutStatusCapability(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/manga/"+manga.ID+"/trackers/status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotImplemented {
+	// A search-only binding contributes nothing instead of failing the list.
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

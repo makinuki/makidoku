@@ -52,9 +52,6 @@ export type TrackerAuthType = "oauth" | "password" | "token";
 export type TrackerInfo = {
   name: string;
   capabilities: {
-    search: boolean;
-    status: boolean;
-    scrobble: boolean;
     oauth: boolean;
     token: boolean;
   };

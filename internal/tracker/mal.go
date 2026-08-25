@@ -19,7 +19,7 @@ func NewMyAnimeList(httpClient *http.Client, clientID string, token func() (Cred
 }
 func (m *MyAnimeList) Name() string { return "myanimelist" }
 func (m *MyAnimeList) Capabilities() Capabilities {
-	return Capabilities{Search: true, Status: true, Scrobble: true, OAuth: true, Token: true}
+	return Capabilities{OAuth: true, Token: true}
 }
 func (m *MyAnimeList) Search(ctx context.Context, text string) ([]SearchResult, error) {
 	path := "/manga?q=" + url.QueryEscape(text) + "&limit=20&fields=mean,num_chapters,status,main_picture"

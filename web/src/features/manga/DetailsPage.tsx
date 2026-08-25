@@ -574,17 +574,14 @@ function TrackerModal({
             <small className="text-zinc-500">
               {item.credential
                 ? "Connected"
-                : item.capabilities.oauth
-                  ? "OAuth available"
-                  : "Token required"}
+                : item.authType === "password"
+                  ? "Sign in to bind"
+                  : "Connect to bind"}
             </small>
           </button>
         ))}
       </div>
-      {active && !trackers.find((item) => item.name === active)?.capabilities.search && (
-        <p className="mt-4 text-sm text-zinc-400">This provider does not support title search.</p>
-      )}
-      {active && trackers.find((item) => item.name === active)?.capabilities.search && (
+      {active && (
         <div className="mt-4 flex gap-2">
           <input
             value={query}

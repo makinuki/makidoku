@@ -83,10 +83,6 @@ func (w *SyncWorker) ProcessOne(ctx context.Context, trackerType string) (bool, 
 		w.failJob(job.ID, false, "unknown tracker: "+binding.TrackerType)
 		return true, nil
 	}
-	if !provider.Capabilities().Scrobble {
-		w.failJob(job.ID, false, ErrUnsupported.Error())
-		return true, nil
-	}
 	cred, err := w.Registry.Credential(binding.TrackerType)
 	if err != nil {
 		// Missing credentials are permanent until the user connects the
@@ -144,11 +140,6 @@ func (w *SyncWorker) EnqueueForProgress(mangaID, chapterID string, completed boo
 		return err
 	}
 	for _, binding := range bindings {
-		// Providers without scrobble support would fail every job; skip them
-		// instead of queueing guaranteed failures.
-		if provider, ok := w.Registry.Get(binding.TrackerType); ok && !provider.Capabilities().Scrobble {
-			continue
-		}
 		if _, err := w.Repo.EnqueueTrackerSync(mangaID, binding.ID, *chapter.ChapterNumber); err != nil {
 			return err
 		}

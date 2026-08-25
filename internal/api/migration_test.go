@@ -87,6 +87,21 @@ func TestApplyMigrationRetiresOldChapters(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
+	var payload struct {
+		Manga struct {
+			Manga      db.Manga `json:"manga"`
+			SourceName string   `json:"sourceName"`
+		} `json:"manga"`
+		Source     string `json:"source"`
+		ChapterMap map[string]string
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The response must present the replacement plugin, not the retired one.
+	if payload.Source != newSource || payload.Manga.Manga.SourceID != newSource || payload.Manga.SourceName != "Replacement" {
+		t.Fatalf("payload source = %q/%q/%q, want the replacement", payload.Source, payload.Manga.Manga.SourceID, payload.Manga.SourceName)
+	}
 	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
 		t.Fatalf("artifact still on disk: %v", err)
 	}

@@ -689,6 +689,15 @@ func TestMigrateMangaSourceRetiresAndAttaches(t *testing.T) {
 	if err != nil || source.SourceID != "asura" {
 		t.Fatalf("primary source = %+v, err = %v", source, err)
 	}
+	// The canonical row itself must move so name resolution and exports
+	// reflect the replacement everywhere.
+	stored, err := repo.GetManga(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SourceID != "asura" {
+		t.Fatalf("canonical source id = %q, want asura", stored.SourceID)
+	}
 }
 
 // A failed attach must roll the retirement back too: the title keeps its

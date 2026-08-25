@@ -107,6 +107,9 @@ func (r *Repository) attachSourceInTx(tx *sqlx.Tx, targetID, discoveredID string
 	if _, err := tx.Exec(`UPDATE manga_sources SET is_primary=0 WHERE manga_id=? AND source_id<>?`, targetID, source.SourceID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`UPDATE manga SET source_id=?, updated_at=? WHERE id=?`, source.SourceID, time.Now().Unix(), targetID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE chapters SET manga_id=? WHERE manga_id=?`, targetID, discoveredID); err != nil {
 		return err
 	}

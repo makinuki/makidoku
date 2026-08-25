@@ -178,6 +178,9 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The response must reflect the replacement plugin, matching what a
+	// fresh read of the title would return.
+	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
 
 	// Remap reading state and report the old-to-new chapter matches.
 	chapterMap := map[string]string{}

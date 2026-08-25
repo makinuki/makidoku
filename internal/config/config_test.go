@@ -22,6 +22,21 @@ func TestDownloadDefaultsFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestDefaultPortPrefersEnvironmentWithStableFallback(t *testing.T) {
+	t.Setenv("MAKIDOKU_PORT", "7000")
+	if got := DefaultPort(); got != 7000 {
+		t.Fatalf("port = %d", got)
+	}
+	t.Setenv("MAKIDOKU_PORT", "not-a-port")
+	if got := DefaultPort(); got != 6254 {
+		t.Fatalf("port = %d", got)
+	}
+	t.Setenv("MAKIDOKU_PORT", "")
+	if got := DefaultPort(); got != 6254 {
+		t.Fatalf("port = %d", got)
+	}
+}
+
 func TestResolveDownloadDirDefaultsUnderDataDir(t *testing.T) {
 	dataDir := t.TempDir()
 	got, err := ResolveDownloadDir("", dataDir)

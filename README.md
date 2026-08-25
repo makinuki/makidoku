@@ -52,9 +52,9 @@ must be the loopback URL shown by the API. MangaBaka also accepts an explicit
 PAT through MakiDoku's local credential endpoint:
 
 ```bash
-curl http://127.0.0.1:8080/api/trackers
-curl 'http://127.0.0.1:8080/api/trackers/anilist/auth/start'
-curl -X POST http://127.0.0.1:8080/api/trackers/mangabaka/token \
+curl http://127.0.0.1:6254/api/trackers
+curl 'http://127.0.0.1:6254/api/trackers/anilist/auth/start'
+curl -X POST http://127.0.0.1:6254/api/trackers/mangabaka/token \
   -H 'Content-Type: application/json' \
   -d '{"accessToken":"mb-your-personal-access-token","metadata":{"auth":"pat"}}'
 go run . sync --tracker anilist
@@ -72,8 +72,8 @@ Kitsu currently expose search only and report unsupported write capabilities.
 
 ```bash
 go run . --help
-go run . serve --port 8080 --bind 127.0.0.1
-curl http://127.0.0.1:8080/api/health
+go run . serve --port 6254 --bind 127.0.0.1
+curl http://127.0.0.1:6254/api/health
 ```
 
 Data is stored in `./data/makidoku.db` (WAL mode). Override with `--data-dir` or `MAKIDOKU_DATA_DIR`.
@@ -88,19 +88,19 @@ go run . install mangadex
 go run . install --path /path/to/mangadex.wasm
 
 # The daemon exposes the same operations when it is running.
-curl http://127.0.0.1:8080/api/sources/catalog
-curl -X POST http://127.0.0.1:8080/api/sources/install -d '{"id":"mangadex"}'
-curl -X POST http://127.0.0.1:8080/api/sources/install -d '{"path":"/path/to/mangadex.wasm"}'
+curl http://127.0.0.1:6254/api/sources/catalog
+curl -X POST http://127.0.0.1:6254/api/sources/install -d '{"id":"mangadex"}'
+curl -X POST http://127.0.0.1:6254/api/sources/install -d '{"path":"/path/to/mangadex.wasm"}'
 
 # List installed sources and remove one.
-curl http://127.0.0.1:8080/api/sources
-curl -X DELETE http://127.0.0.1:8080/api/sources/mangadex
+curl http://127.0.0.1:6254/api/sources
+curl -X DELETE http://127.0.0.1:6254/api/sources/mangadex
 
 # Browse a source. Title and chapter identifiers travel as query parameters.
-curl http://127.0.0.1:8080/api/sources/mangadex/filters
-curl 'http://127.0.0.1:8080/api/sources/mangadex/search?q=Yosuga+no+Sora&page=1'
-curl 'http://127.0.0.1:8080/api/sources/mangadex/details?mangaId=<id>'
-curl 'http://127.0.0.1:8080/api/sources/mangadex/pages?chapterId=<id>'
+curl http://127.0.0.1:6254/api/sources/mangadex/filters
+curl 'http://127.0.0.1:6254/api/sources/mangadex/search?q=Yosuga+no+Sora&page=1'
+curl 'http://127.0.0.1:6254/api/sources/mangadex/details?mangaId=<id>'
+curl 'http://127.0.0.1:6254/api/sources/mangadex/pages?chapterId=<id>'
 ```
 
 Requests run through the daemon's own network stack, so plugins are not subject to browser restrictions and send their headers unchanged. Upstream status codes reach the plugin verbatim; failures arrive as one of the standardized error codes, which the API reports as `{"error":{"code":"...","message":"..."}}`.
@@ -124,25 +124,25 @@ go run . download 'mangadex:<manga-id>' --chapters 1-5 \
 The daemon exposes queue snapshots, enqueue controls and a WebSocket event stream:
 
 ```bash
-curl http://127.0.0.1:8080/api/download
+curl http://127.0.0.1:6254/api/download
 
-curl -X POST http://127.0.0.1:8080/api/download \
+curl -X POST http://127.0.0.1:6254/api/download \
   -H 'Content-Type: application/json' \
   -d '{"mangaId":"mangadex:<manga-id>","range":"1-10","format":"cbz"}'
 
-curl -X POST http://127.0.0.1:8080/api/download/1/pause
-curl -X POST http://127.0.0.1:8080/api/download/1/resume
-curl -X POST http://127.0.0.1:8080/api/download/1/cancel
+curl -X POST http://127.0.0.1:6254/api/download/1/pause
+curl -X POST http://127.0.0.1:6254/api/download/1/resume
+curl -X POST http://127.0.0.1:6254/api/download/1/cancel
 ```
 
-Connect to `ws://127.0.0.1:8080/api/download/events` for queued, progress, paused, resumed, canceled, completed and failed events. Each event includes the current queue item and aggregate downloader counters.
+Connect to `ws://127.0.0.1:6254/api/download/events` for queued, progress, paused, resumed, canceled, completed and failed events. Each event includes the current queue item and aggregate downloader counters.
 
 ## Anti-bot challenges
 
 When a source answers with an anti-bot challenge, the request fails with `CLOUDFLARE_BLOCKED`. To get past it, open the source in a normal browser, solve the challenge, then submit the resulting `cf_clearance` cookie together with that browser's user agent:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/sources/asurascans/clearance \
+curl -X POST http://127.0.0.1:6254/api/sources/asurascans/clearance \
   -d '{"cookie":"<cf_clearance value>","userAgent":"<browser user agent>"}'
 ```
 

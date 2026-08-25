@@ -80,6 +80,18 @@ func ResolveDownloadDir(dir, dataDir string) (string, error) {
 	return abs, nil
 }
 
+// DefaultPort returns the HTTP port from the environment. The fallback of
+// 6254 is an uncommon port chosen to avoid collisions with common local
+// services; OAuth redirect registrations are port specific, so deployments
+// should keep one stable value.
+func DefaultPort() int {
+	port, err := strconv.Atoi(os.Getenv("MAKIDOKU_PORT"))
+	if err != nil || port < 1 || port > 65535 {
+		return 6254
+	}
+	return port
+}
+
 func DefaultDownloadWorkers() int {
 	workers, err := strconv.Atoi(os.Getenv("MAKIDOKU_DOWNLOAD_WORKERS"))
 	if err != nil || workers < 1 {

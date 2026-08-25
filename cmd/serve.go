@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/makinuki/makidoku/internal/app"
+	"github.com/makinuki/makidoku/internal/config"
 )
 
 var serveTray bool
@@ -37,7 +38,7 @@ var serveCmd = &cobra.Command{
 }
 
 func init() {
-	serveCmd.Flags().IntVar(&cfg.Port, "port", 8080, "HTTP port")
+	serveCmd.Flags().IntVar(&cfg.Port, "port", config.DefaultPort(), "HTTP port")
 	serveCmd.Flags().StringVar(&cfg.Bind, "bind", "127.0.0.1", "bind address")
 	serveCmd.Flags().BoolVar(&serveTray, "tray", false, "run with system tray (requires tray build tag)")
 	rootCmd.AddCommand(serveCmd)

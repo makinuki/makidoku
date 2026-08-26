@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -326,7 +326,7 @@ func (r *Registry) CompleteOAuth(ctx context.Context, name, code, state, redirec
 	// Resolve the account name so the UI can show who connected. A failed
 	// lookup must not discard an otherwise valid credential.
 	if display, err := r.displayName(ctx, name, credential); err != nil {
-		log.Printf("tracker: resolving %s account name failed: %v", name, err)
+		slog.Warn("tracker resolving account name failed", "tracker", name, "err", err)
 	} else if display != "" {
 		credential.Metadata["username"] = display
 	}

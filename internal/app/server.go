@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -15,12 +15,16 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/makinuki/makidoku/internal/api"
+	"github.com/makinuki/makidoku/internal/backup"
 	"github.com/makinuki/makidoku/internal/config"
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
 	"github.com/makinuki/makidoku/internal/imagecache"
+	"github.com/makinuki/makidoku/internal/logger"
+	"github.com/makinuki/makidoku/internal/settings"
 	"github.com/makinuki/makidoku/internal/tracker"
+	"github.com/makinuki/makidoku/internal/updater"
 	"github.com/makinuki/makidoku/web"
 )
 
@@ -33,6 +37,8 @@ type Server struct {
 	downloads *downloader.Queue
 	trackers  *tracker.Registry
 	syncer    *tracker.SyncWorker
+	updater   *updater.Service
+	settings  *settings.Service
 	http      *http.Server
 	api       *api.Server
 }
@@ -74,8 +80,19 @@ func New(cfg config.Config) (*Server, error) {
 		RegistryURL:   cfg.RegistryURL,
 		ChallengeWait: cfg.ChallengeWait,
 	})
+	repo := db.NewRepository(database)
+	preferences := settings.New(repo)
+	if rawLevel, err := preferences.Get("advanced.log_level"); err == nil {
+		if setErr := logger.SetLevelFromRaw(rawLevel); setErr != nil {
+			slog.Warn("daemon log level invalid, using info", "err", setErr)
+		}
+	}
+	workers := cfg.DownloadWorkers
+	if configuredWorkers, settingErr := preferences.Int("downloads.concurrent"); settingErr == nil && configuredWorkers > 0 {
+		workers = configuredWorkers
+	}
 	downloads := downloader.NewQueue(db.NewRepository(database), eng, downloader.Options{
-		Workers: cfg.DownloadWorkers, PageInterval: cfg.PageInterval,
+		Workers: workers, PageInterval: cfg.PageInterval,
 		DownloadDir: cfg.DownloadDir, MaxRetries: 3,
 	})
 
@@ -86,23 +103,33 @@ func New(cfg config.Config) (*Server, error) {
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
-	repo := db.NewRepository(database)
 	trackers := tracker.NewRegistry(repo)
 	// Credential storage is unavailable without the encryption secret, so the
 	// condition is reported at boot rather than when a user is halfway through
 	// a provider authorization.
 	if err := trackers.CredentialsReady(); err != nil {
-		log.Printf("tracker credentials disabled: %v", err)
+		slog.Warn("tracker credentials disabled", "err", err)
 	}
-	syncer := &tracker.SyncWorker{Repo: repo, Registry: trackers}
+	syncer := &tracker.SyncWorker{Repo: repo, Registry: trackers, Settings: preferences}
 	if cfg.ImageCacheMaxBytes == 0 {
 		cfg.ImageCacheMaxBytes = config.DefaultImageCacheMaxBytes()
 	}
-	if cfg.ImageCacheMaxAge == 0 {
+	if configuredDays, settingErr := preferences.Int("advanced.image_cache_days"); settingErr == nil && configuredDays > 0 {
+		cfg.ImageCacheMaxAge = time.Duration(configuredDays) * 24 * time.Hour
+	} else if cfg.ImageCacheMaxAge == 0 {
 		cfg.ImageCacheMaxAge = config.DefaultImageCacheMaxAge()
 	}
 	imageCache := imagecache.New(filepath.Join(cfg.DataDir, "image-cache"), cfg.ImageCacheMaxBytes, cfg.ImageCacheMaxAge)
 	server := api.NewTrackerServer(repo, eng, downloads, trackers)
+	server.SetSettings(preferences)
+	updateService := updater.New(repo, func(ctx context.Context, mangaID string) ([]string, error) {
+		return server.RefreshManga(ctx, mangaID)
+	})
+	updateService.SetEnqueue(func(ctx context.Context, mangaID string, chapterIDs []string) error {
+		_, err := downloads.EnqueueManga(ctx, mangaID, downloader.ChapterSelection{IDs: chapterIDs}, "")
+		return err
+	})
+	server.SetUpdater(updateService)
 	server.SetImageCache(imageCache)
 	sweepOnce(imageCache, repo.ListCachedPaths)
 	server.Mount(router)
@@ -115,6 +142,8 @@ func New(cfg config.Config) (*Server, error) {
 		downloads: downloads,
 		trackers:  trackers,
 		syncer:    syncer,
+		updater:   updateService,
+		settings:  preferences,
 		api:       server,
 		http: &http.Server{
 			Addr:              net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port)),
@@ -132,7 +161,7 @@ func (s *Server) Addr() string { return s.http.Addr }
 func sweepOnce(cache *imagecache.Cache, keep func() ([]string, error)) {
 	paths, err := keep()
 	if err != nil {
-		log.Printf("image cache sweep skipped: %v", err)
+		slog.Warn("image cache sweep skipped", "err", err)
 		return
 	}
 	keepSet := make(map[string]bool, len(paths))
@@ -140,7 +169,7 @@ func sweepOnce(cache *imagecache.Cache, keep func() ([]string, error)) {
 		keepSet[path] = true
 	}
 	if err := cache.Sweep(keepSet); err != nil {
-		log.Printf("image cache sweep failed: %v", err)
+		slog.Warn("image cache sweep failed", "err", err)
 	}
 }
 
@@ -150,10 +179,26 @@ func (s *Server) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.api.SetLifetimeContext(runCtx)
+	interval, err := s.settings.Duration("library.update_interval")
+	if err != nil {
+		return fmt.Errorf("library update interval: %w", err)
+	}
+	updateOnLaunch, err := s.settings.Bool("library.update_on_launch")
+	if err != nil {
+		return fmt.Errorf("library update on launch: %w", err)
+	}
+	backupInterval, err := s.settings.Duration("backup.auto_interval")
+	if err != nil {
+		return fmt.Errorf("backup interval: %w", err)
+	}
+	backupKeep, err := s.settings.Int("backup.auto_keep")
+	if err != nil {
+		return fmt.Errorf("backup retention: %w", err)
+	}
 
 	errs := make(chan error, 1)
 	go func() {
-		log.Printf("makidoku listening on http://%s (data: %s)", s.http.Addr, s.cfg.DataDir)
+		slog.Info("makidoku listening", "addr", s.http.Addr, "data", s.cfg.DataDir)
 		if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errs <- err
 			return
@@ -164,6 +209,17 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() { downloadErrs <- s.downloads.Run(runCtx) }()
 	syncErrs := make(chan error, 1)
 	go func() { syncErrs <- s.syncer.Run(runCtx) }()
+	if updateOnLaunch {
+		go func() {
+			if _, err := s.updater.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("library update on launch failed", "err", err)
+			}
+		}()
+	}
+	updateErrs := make(chan error, 1)
+	go func() { updateErrs <- s.updater.RunTicker(runCtx, interval) }()
+	backupErrs := make(chan error, 1)
+	go func() { backupErrs <- backup.RunTicker(runCtx, s.db, s.cfg.DataDir, backupInterval, backupKeep) }()
 
 	select {
 	case err := <-errs:
@@ -172,6 +228,8 @@ func (s *Server) Run(ctx context.Context) error {
 		defer shutdownCancel()
 		_ = s.http.Shutdown(shutdownCtx)
 		_ = waitForBackground(downloadErrs, syncErrs, false, false)
+		<-updateErrs
+		<-backupErrs
 		return err
 	case err := <-downloadErrs:
 		cancel()
@@ -179,6 +237,8 @@ func (s *Server) Run(ctx context.Context) error {
 		defer shutdownCancel()
 		shutdownErr := s.http.Shutdown(shutdownCtx)
 		backgroundErr := waitForBackground(downloadErrs, syncErrs, true, false)
+		<-updateErrs
+		<-backupErrs
 		if err != nil {
 			return fmt.Errorf("downloader: %w", err)
 		}
@@ -192,6 +252,8 @@ func (s *Server) Run(ctx context.Context) error {
 		defer shutdownCancel()
 		shutdownErr := s.http.Shutdown(shutdownCtx)
 		backgroundErr := waitForBackground(downloadErrs, syncErrs, false, true)
+		<-updateErrs
+		<-backupErrs
 		if err != nil && !errors.Is(err, context.Canceled) {
 			return fmt.Errorf("tracker sync: %w", err)
 		}
@@ -202,14 +264,17 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	log.Printf("shutting down")
+	slog.Info("shutting down")
 	cancel()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := s.http.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
-	return waitForBackground(downloadErrs, syncErrs, false, false)
+	backgroundErr := waitForBackground(downloadErrs, syncErrs, false, false)
+	<-updateErrs
+	<-backupErrs
+	return backgroundErr
 }
 
 // close releases the engine and the database. Plugins are released before the
@@ -219,6 +284,6 @@ func (s *Server) close() {
 	defer cancel()
 	s.engine.Close(ctx)
 	if err := s.db.Close(); err != nil {
-		log.Printf("closing database failed: %v", err)
+		slog.Error("closing database failed", "err", err)
 	}
 }

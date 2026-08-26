@@ -133,11 +133,13 @@ type kitsuLibraryEntry struct {
 	Progress int    `json:"progress"`
 	Rating   *int   `json:"rating"`
 	Status   string `json:"status"`
+	StartedAt string `json:"startedAt"`
+	FinishedAt string `json:"finishedAt"`
 }
 
 // kitsuLibraryQuery fetches the local library entry for one manga together
 // with the chapter count needed for progress display.
-const kitsuLibraryQuery = `query($id:ID!){findMangaById(id:$id){titles{preferred} chapterCount myLibraryEntry{id progress rating status}}}`
+const kitsuLibraryQuery = `query($id:ID!){findMangaById(id:$id){titles{preferred} chapterCount myLibraryEntry{id progress rating status startedAt finishedAt}}}`
 
 func (k *Kitsu) findLibraryEntry(ctx context.Context, credential Credential, remoteID string) (*kitsuLibraryEntry, string, *int, error) {
 	var out struct {
@@ -193,6 +195,8 @@ func (k *Kitsu) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Cred
 			score := normalizeKitsuRating(*entry.Rating)
 			status.Score = &score
 		}
+		status.StartedAt = parseTrackerDateTime(entry.StartedAt)
+		status.FinishedAt = parseTrackerDateTime(entry.FinishedAt)
 	}
 	return status, nil
 }

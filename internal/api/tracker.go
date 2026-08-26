@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"html"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/tracker"
 )
 
@@ -35,6 +36,7 @@ func (s *Server) mountTrackers(r chi.Router) {
 		manga.Delete("/{trackerType}", s.deleteBinding)
 		manga.Get("/status", s.trackerStatuses)
 	})
+	r.Get("/manga/{mangaID}/suggestions", s.suggestions)
 	r.Get("/tracker-sync", s.listSyncJobs)
 	r.Get("/progress/{mangaID}", s.getProgress)
 	r.Post("/progress", s.updateProgress)
@@ -243,6 +245,7 @@ func (s *Server) startTrackerAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": url, "redirectUri": redirect})
 }
+
 // trackerCallbackPage renders the page a provider redirects back to after the
 // user authorizes. The tab has no API client attached, so it speaks HTML and
 // tells the user they can close it while the websocket notifies the app.
@@ -354,6 +357,7 @@ func (s *Server) bindTracker(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, b)
 }
+
 // updateTrackerBinding applies a user's score and date edits: the values are
 // pushed to the provider in its expected scale first and only persisted when
 // that succeeds, so local state never claims an update the provider rejected.
@@ -477,6 +481,10 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request, complete bool)
 	if !decodeBody(w, r, &body) {
 		return
 	}
+	if body.SessionSeconds < 0 || body.SessionSeconds > 300 {
+		writeBadRequest(w, "sessionSeconds must be between 0 and 300")
+		return
+	}
 	if complete {
 		body.IsCompleted = true
 	}
@@ -489,8 +497,11 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request, complete bool)
 		// Tracker enqueue failures must not fail the progress write, but they
 		// stay visible in the logs instead of vanishing.
 		if err := s.syncer.EnqueueForProgress(body.MangaID, body.LastReadChapterID, body.IsCompleted, body.LastReadPage, body.TotalPages); err != nil {
-			log.Printf("tracker: enqueueing sync jobs failed: %v", err)
+			slog.Warn("tracker enqueueing sync jobs failed", "err", err)
 		}
+	}
+	if s.downloads != nil && s.settings != nil && body.LastReadPage*100 >= body.TotalPages*80 {
+		go s.enqueueAhead(s.Lifetime(), body)
 	}
 	if body.IsCompleted {
 		// Completion records the finish date on providers that support dates.
@@ -498,6 +509,56 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request, complete bool)
 		go s.pushFinishDates(s.Lifetime(), body)
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) suggestions(w http.ResponseWriter, r *http.Request) {
+	binding, err := s.repo.GetTrackerBinding(chi.URLParam(r, "mangaID"), "anilist")
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusOK, []tracker.Recommendation{})
+			return
+		}
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	provider, ok := s.trackers.Get("anilist")
+	if !ok {
+		writeJSON(w, http.StatusOK, []tracker.Recommendation{})
+		return
+	}
+	recommendations, ok := provider.(tracker.RecommendationsProvider)
+	if !ok {
+		writeJSON(w, http.StatusOK, []tracker.Recommendation{})
+		return
+	}
+	credential, err := s.trackers.Credential("anilist")
+	if err != nil {
+		writeJSON(w, http.StatusOK, []tracker.Recommendation{})
+		return
+	}
+	items, err := recommendations.Recommendations(r.Context(), binding, credential)
+	if err != nil {
+		writeTrackerError(w, err)
+		return
+	}
+	if items == nil {
+		items = []tracker.Recommendation{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) enqueueAhead(ctx context.Context, progress db.ReadingProgress) {
+	count, err := s.settings.Int("downloads.download_ahead")
+	if err != nil || count <= 0 {
+		return
+	}
+	chapterIDs, err := s.repo.NextChapterIDs(progress.MangaID, progress.LastReadChapterID, count)
+	if err != nil || len(chapterIDs) == 0 {
+		return
+	}
+	if _, err := s.downloads.EnqueueManga(ctx, progress.MangaID, downloader.ChapterSelection{IDs: chapterIDs}, ""); err != nil {
+		slog.Warn("downloader enqueueing chapters ahead failed", "err", err)
+	}
 }
 
 // pushFinishDates marks completion on every bound provider. Failures are
@@ -524,7 +585,7 @@ func (s *Server) pushFinishDates(ctx context.Context, body db.ReadingProgress) {
 		}
 		update := tracker.TrackingUpdate{Chapter: *chapter.ChapterNumber, FinishedAt: &finished}
 		if err := provider.UpdateTracking(ctx, binding, update, cred); err != nil {
-			log.Printf("tracker: recording finish on %s failed: %v", binding.TrackerType, err)
+			slog.Warn("tracker recording finish failed", "tracker", binding.TrackerType, "err", err)
 		}
 	}
 }

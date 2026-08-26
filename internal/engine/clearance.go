@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -59,13 +59,11 @@ func (b *ClearanceBroker) Resolve(ctx context.Context, sourceID, usedCookie stri
 		return true
 	}
 	if b.wait <= 0 {
-		log.Printf("engine: %s blocked by an anti-bot challenge at %s; submit clearance to POST /api/sources/%s/clearance",
-			sourceID, challenge.URL, sourceID)
+		slog.Warn("engine blocked by anti-bot challenge", "source", sourceID, "url", challenge.URL)
 		return false
 	}
 
-	log.Printf("engine: %s blocked by an anti-bot challenge at %s; waiting up to %s for clearance on POST /api/sources/%s/clearance",
-		sourceID, challenge.URL, b.wait, sourceID)
+	slog.Info("engine blocked by anti-bot challenge, waiting for clearance", "source", sourceID, "url", challenge.URL, "wait", b.wait)
 	deadline := time.NewTimer(b.wait)
 	defer deadline.Stop()
 

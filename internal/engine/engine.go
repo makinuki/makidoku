@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -62,6 +62,8 @@ type InstalledSource struct {
 	Loaded       bool     `json:"loaded"`
 	HasClearance bool     `json:"hasClearance"`
 	AllowedHosts []string `json:"allowedHosts,omitempty"`
+	Pinned       bool     `json:"pinned"`
+	LastUsedAt   *int64   `json:"lastUsedAt,omitempty"`
 }
 
 // CatalogEntry is a registry entry annotated with local state.
@@ -71,6 +73,7 @@ type CatalogEntry struct {
 	InstalledVersion string `json:"installedVersion,omitempty"`
 	Compatible       bool   `json:"compatible"`
 	Incompatibility  string `json:"incompatibility,omitempty"`
+	UpdateAvailable  bool   `json:"updateAvailable"`
 }
 
 func New(db *sqlx.DB, opts Options) *Engine {
@@ -105,7 +108,7 @@ func (e *Engine) Close(ctx context.Context) {
 	e.mu.Unlock()
 	for _, p := range loaded {
 		if err := p.close(ctx); err != nil {
-			log.Printf("engine: releasing %s failed: %v", p.id, err)
+			slog.Warn("engine releasing failed", "plugin", p.id, "err", err)
 		}
 	}
 }
@@ -154,6 +157,11 @@ func (e *Engine) Catalog(ctx context.Context, refresh bool) ([]CatalogEntry, err
 		if version, ok := installed[entry.ID]; ok {
 			item.Installed = true
 			item.InstalledVersion = version
+			if current, parseErr := parseSemver(version); parseErr == nil {
+				if available, parseErr := parseSemver(entry.Version); parseErr == nil {
+					item.UpdateAvailable = compareSemver(current, available) < 0
+				}
+			}
 		}
 		if err := validateEntry(entry); err != nil {
 			item.Compatible = false
@@ -228,8 +236,8 @@ func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath str
 		}
 	}
 	_, err := e.db.Exec(
-		`INSERT INTO sources(id, plugin_key, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed, installed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+		`INSERT INTO sources(id, plugin_key, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed, nsfw, installed_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 		 ON CONFLICT(plugin_key) DO UPDATE SET
 		   id = excluded.id,
 		   name = excluded.name,
@@ -239,8 +247,9 @@ func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath str
 		   base_url = excluded.base_url,
 		   icon_url = excluded.icon_url,
 		   wasm_path = excluded.wasm_path,
+		   nsfw = excluded.nsfw,
 		   installed = 1`,
-		sourceID, meta.ID, meta.Name, meta.Version, meta.ABIVersion, meta.Lang, meta.BaseURL, icon, wasmPath, time.Now().Unix())
+		sourceID, meta.ID, meta.Name, meta.Version, meta.ABIVersion, meta.Lang, meta.BaseURL, icon, wasmPath, meta.NSFW, time.Now().Unix())
 	if err != nil {
 		return InstalledSource{}, fmt.Errorf("record source %s: %w", meta.ID, err)
 	}
@@ -266,7 +275,7 @@ func (e *Engine) Uninstall(ctx context.Context, id string) error {
 	}
 	if row.WasmPath != "" && filepath.Dir(row.WasmPath) == filepath.Join(e.dataDir, "wasm") {
 		if err := os.Remove(row.WasmPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Printf("engine: removing %s failed: %v", row.WasmPath, err)
+			slog.Warn("engine removing failed", "path", row.WasmPath, "err", err)
 		}
 	}
 	return nil
@@ -474,7 +483,7 @@ func (e *Engine) load(ctx context.Context, sourceID string) (*loadedPlugin, erro
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("engine: loaded %s", p)
+	slog.Info("engine loaded", "plugin", p)
 	return p, nil
 }
 
@@ -486,7 +495,7 @@ func (e *Engine) unload(ctx context.Context, sourceID string) {
 	e.mu.Unlock()
 	if ok {
 		if err := p.close(ctx); err != nil {
-			log.Printf("engine: releasing %s failed: %v", sourceID, err)
+			slog.Warn("engine releasing failed", "plugin", sourceID, "err", err)
 		}
 	}
 }
@@ -504,9 +513,12 @@ type sourceRow struct {
 	WasmPath    string  `db:"wasm_path"`
 	Installed   bool    `db:"installed"`
 	InstalledAt int64   `db:"installed_at"`
+	Pinned      bool    `db:"pinned"`
+	LastUsedAt  *int64  `db:"last_used_at"`
+	NSFW        bool    `db:"nsfw"`
 }
 
-const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at`
+const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at, pinned, last_used_at, nsfw`
 
 func (e *Engine) rows() ([]sourceRow, error) {
 	var out []sourceRow
@@ -540,6 +552,9 @@ func (e *Engine) describe(row sourceRow) InstalledSource {
 		BaseURL:      row.BaseURL,
 		InstalledAt:  row.InstalledAt,
 		HasClearance: e.clearance.HasClearance(row.ID),
+		Pinned:       row.Pinned,
+		LastUsedAt:   row.LastUsedAt,
+		NSFW:         row.NSFW,
 	}
 	if row.IconURL != nil {
 		out.IconURL = *row.IconURL
@@ -554,6 +569,26 @@ func (e *Engine) describe(row sourceRow) InstalledSource {
 		out.AllowedHosts = p.meta.AllowedHosts
 	}
 	return out
+}
+
+func (e *Engine) SetSourcePinned(id string, pinned bool) (InstalledSource, error) {
+	row, err := e.row(id)
+	if err != nil {
+		return InstalledSource{}, err
+	}
+	if _, err := e.db.Exec(`UPDATE sources SET pinned=? WHERE id=?`, pinned, row.ID); err != nil {
+		return InstalledSource{}, err
+	}
+	return e.Get(row.ID)
+}
+
+func (e *Engine) TouchSource(id string) error {
+	row, err := e.row(id)
+	if err != nil {
+		return err
+	}
+	_, err = e.db.Exec(`UPDATE sources SET last_used_at=? WHERE id=?`, time.Now().Unix(), row.ID)
+	return err
 }
 
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }

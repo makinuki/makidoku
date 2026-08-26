@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 
 	extism "github.com/extism/go-sdk"
@@ -30,7 +30,7 @@ func hostFunctions(sourceID string, fetcher *Fetcher, storage Storage) []extism.
 		offsetFunction("makinuki_storage_get", func(ctx context.Context, p *extism.CurrentPlugin, input string) uint64 {
 			value, found, err := storage.Get(sourceID, storageKey(input))
 			if err != nil {
-				log.Printf("engine: %s storage read failed: %v", sourceID, err)
+				slog.Warn("engine storage read failed", "source", sourceID, "err", err)
 				return 0
 			}
 			// A missing key yields offset 0, which PDKs map to null. An empty
@@ -60,11 +60,15 @@ func hostFunctions(sourceID string, fetcher *Fetcher, storage Storage) []extism.
 			}
 			level := strings.ToLower(entry.Level)
 			switch level {
-			case "debug", "info", "warn", "error":
+			case "debug":
+				slog.Debug("plugin log", "source", sourceID, "msg", entry.Message)
+			case "warn":
+				slog.Warn("plugin log", "source", sourceID, "msg", entry.Message)
+			case "error":
+				slog.Error("plugin log", "source", sourceID, "msg", entry.Message)
 			default:
-				level = "info"
+				slog.Info("plugin log", "source", sourceID, "msg", entry.Message)
 			}
-			log.Printf("plugin %s [%s] %s", sourceID, level, entry.Message)
 			return 0
 		}),
 	}
@@ -126,7 +130,7 @@ func storageKey(input string) string {
 func writeOffset(p *extism.CurrentPlugin, payload []byte) uint64 {
 	offset, err := p.WriteBytes(payload)
 	if err != nil {
-		log.Printf("engine: writing %d bytes into plugin memory failed: %v", len(payload), err)
+		slog.Warn("engine writing into plugin memory failed", "bytes", len(payload), "err", err)
 		return 0
 	}
 	return offset

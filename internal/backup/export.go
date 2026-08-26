@@ -20,6 +20,12 @@ type Document struct {
 	ChapterSources  []any     `json:"chapterSources"`
 	Progress        []any     `json:"progress"`
 	Trackers        []any     `json:"trackers"`
+	Settings        []any     `json:"settings"`
+	ReadStates      []any     `json:"readStates"`
+	HistoryEvents   []any     `json:"historyEvents"`
+	UpdateLogs      []any     `json:"updateLogs"`
+	UpdateStates    []any     `json:"updateStates"`
+	ReadingSessions []any     `json:"readingSessions"`
 }
 
 func Export(db *sqlx.DB) ([]byte, error) {
@@ -35,6 +41,12 @@ func Export(db *sqlx.DB) ([]byte, error) {
 		ChapterSources:  []any{},
 		Progress:        []any{},
 		Trackers:        []any{},
+		Settings:        []any{},
+		ReadStates:      []any{},
+		HistoryEvents:   []any{},
+		UpdateLogs:      []any{},
+		UpdateStates:    []any{},
+		ReadingSessions: []any{},
 	}
 
 	// Helper to select into []map[string]any for forward-compatible export.
@@ -85,6 +97,24 @@ func Export(db *sqlx.DB) ([]byte, error) {
 		return nil, err
 	}
 	if err := query(`SELECT * FROM tracker_bindings`, &doc.Trackers); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM settings ORDER BY key`, &doc.Settings); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM chapter_read_state ORDER BY chapter_id`, &doc.ReadStates); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM history_events ORDER BY occurred_at,id`, &doc.HistoryEvents); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM update_log ORDER BY seen_at,id`, &doc.UpdateLogs); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM library_update_state`, &doc.UpdateStates); err != nil {
+		return nil, err
+	}
+	if err := query(`SELECT * FROM reading_sessions ORDER BY occurred_at,id`, &doc.ReadingSessions); err != nil {
 		return nil, err
 	}
 	return json.MarshalIndent(doc, "", "  ")

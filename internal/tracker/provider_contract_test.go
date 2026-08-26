@@ -60,7 +60,7 @@ func TestKitsuStatusReadsLibraryEntry(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&payload)
 		gotQuery = payload.Query
-		_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":{"id":"entry-9","progress":7,"rating":16,"status":"CURRENT"}}}}`))
+		_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":{"id":"entry-9","progress":7,"rating":16,"status":"CURRENT","startedAt":"2024-01-02T00:00:00Z","finishedAt":"2024-02-03T00:00:00Z"}}}}`))
 	}))
 	defer server.Close()
 
@@ -76,6 +76,9 @@ func TestKitsuStatusReadsLibraryEntry(t *testing.T) {
 	if status.Title != "Yosuga no Sora" || status.Progress != 7 || status.Status != "CURRENT" || status.Score == nil || *status.Score != 8 || status.TotalChapters == nil || *status.TotalChapters != 14 {
 		t.Fatalf("status = %+v", status)
 	}
+	if status.StartedAt == nil || time.Unix(*status.StartedAt, 0).UTC().Format("2006-01-02") != "2024-01-02" || status.FinishedAt == nil || time.Unix(*status.FinishedAt, 0).UTC().Format("2006-01-02") != "2024-02-03" {
+		t.Fatalf("status dates = %+v", status)
+	}
 }
 
 func TestKitsuScrobbleUpdatesExistingEntry(t *testing.T) {
@@ -87,7 +90,7 @@ func TestKitsuScrobbleUpdatesExistingEntry(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&payload)
 		if strings.Contains(payload.Query, "findMangaById") {
-			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":{"id":"entry-9","progress":7,"status":"CURRENT"}}}}`))
+			_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"Yosuga no Sora"},"chapterCount":14,"myLibraryEntry":{"id":"entry-9","progress":7,"rating":16,"status":"CURRENT","startedAt":"2024-01-02T00:00:00Z","finishedAt":"2024-02-03T00:00:00Z"}}}}`))
 			return
 		}
 		mutations = append(mutations, payload.Variables)
@@ -184,7 +187,7 @@ func TestMangaBakaContractUsesDocumentedShapes(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/my/library/123" {
-			_, _ = w.Write([]byte(`{"status":200,"data":{"id":7,"series_id":123,"user_id":"u","state":"reading","progress_chapter":12.5,"rating":80}}`))
+			_, _ = w.Write([]byte(`{"status":200,"data":{"id":7,"series_id":123,"user_id":"u","state":"reading","progress_chapter":12.5,"rating":80,"start_date":"2024-01-02","finish_date":"2024-02-03"}}`))
 			return
 		}
 		if r.Method == http.MethodPatch && r.URL.Path == "/v1/my/library/123" {
@@ -215,6 +218,9 @@ func TestMangaBakaContractUsesDocumentedShapes(t *testing.T) {
 	status, err := provider.FetchUserStatus(context.Background(), db.TrackerBinding{RemoteID: "123"}, Credential{})
 	if err != nil || status.Progress != 12.5 || status.Status != "reading" || status.Score == nil || *status.Score != 8 {
 		t.Fatalf("status = %+v, err=%v", status, err)
+	}
+	if status.StartedAt == nil || time.Unix(*status.StartedAt, 0).UTC().Format("2006-01-02") != "2024-01-02" || status.FinishedAt == nil || time.Unix(*status.FinishedAt, 0).UTC().Format("2006-01-02") != "2024-02-03" {
+		t.Fatalf("status dates = %+v", status)
 	}
 	if err := provider.UpdateTracking(context.Background(), db.TrackerBinding{RemoteID: "123"}, TrackingUpdate{Chapter: 13, Score: floatPtr(8)}, Credential{}); err != nil {
 		t.Fatal(err)
@@ -247,7 +253,7 @@ func TestAniListContractUsesAuthenticatedListEntry(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"SaveMediaListEntry":{"id":9,"progress":8,"status":"CURRENT"}}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":{"Media":{"id":45821,"title":{"english":"Yosuga no Sora","romaji":"Yosuga no Sora","native":"ヨスガノソラ"},"chapters":14,"mediaListEntry":{"status":"CURRENT","score":7.5,"progress":7}}}}`))
+		_, _ = w.Write([]byte(`{"data":{"Media":{"id":45821,"title":{"english":"Yosuga no Sora","romaji":"Yosuga no Sora","native":"ヨスガノソラ"},"chapters":14,"mediaListEntry":{"status":"CURRENT","score":7.5,"progress":7,"startedAt":{"year":2024,"month":1,"day":2},"completedAt":{"year":2024,"month":2,"day":3}}}}}`))
 	}))
 	defer server.Close()
 
@@ -262,6 +268,9 @@ func TestAniListContractUsesAuthenticatedListEntry(t *testing.T) {
 	if status.Progress != 7 || status.Status != "CURRENT" || status.Score == nil || *status.Score != 7.5 {
 		t.Fatalf("status = %+v", status)
 	}
+	if status.StartedAt == nil || time.Unix(*status.StartedAt, 0).UTC().Format("2006-01-02") != "2024-01-02" || status.FinishedAt == nil || time.Unix(*status.FinishedAt, 0).UTC().Format("2006-01-02") != "2024-02-03" {
+		t.Fatalf("status dates = %+v", status)
+	}
 	if query, _ := requests[0]["query"].(string); !strings.Contains(query, "score(format:POINT_10)") {
 		t.Fatalf("status query did not request a stable score format: %s", query)
 	}
@@ -272,9 +281,25 @@ func TestAniListContractUsesAuthenticatedListEntry(t *testing.T) {
 	if variables["mediaId"] != float64(45821) || variables["progress"] != float64(8) || variables["score"] != "85" {
 		t.Fatalf("variables = %#v", variables)
 	}
-	finishedAt, ok := variables["finishedAt"].(float64)
-	if !ok || int(finishedAt) != finished.Year()*10000+int(finished.Month())*100+finished.Day() {
-		t.Fatalf("finishedAt = %#v", variables["finishedAt"])
+	completedAt, ok := variables["completedAt"].(float64)
+	if !ok || int(completedAt) != finished.Year()*10000+int(finished.Month())*100+finished.Day() {
+		t.Fatalf("completedAt = %#v", variables["completedAt"])
+	}
+}
+
+func TestAniListRecommendationsReadAuthenticatedNodes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"data":{"Media":{"recommendations":{"nodes":[{"media":{"id":99,"title":{"english":"Recommended","romaji":"Recommended","native":""},"averageScore":85,"chapters":12,"status":"FINISHED","coverImage":{"large":"https://img"}}}]}}}}`))
+	}))
+	defer server.Close()
+	provider := NewAniList(server.Client(), func() (Credential, error) { return Credential{AccessToken: "token"}, nil })
+	provider.Client.BaseURL = server.URL
+	items, err := provider.Recommendations(context.Background(), db.TrackerBinding{RemoteID: "1"}, Credential{})
+	if err != nil || len(items) != 1 || items[0].RemoteID != "99" || items[0].Title != "Recommended" || items[0].Score == nil || *items[0].Score != 8.5 {
+		t.Fatalf("recommendations = %+v err=%v", items, err)
 	}
 }
 
@@ -331,7 +356,7 @@ func TestMyAnimeListStatusUsesListEntryProgress(t *testing.T) {
 		if r.URL.Path != "/manga/45821" || !strings.Contains(r.URL.RawQuery, "my_list_status") {
 			t.Fatalf("url = %q", r.URL.String())
 		}
-		_, _ = w.Write([]byte(`{"title":"Yosuga no Sora","mean":8.2,"num_chapters":14,"status":"finished","my_list_status":{"num_chapters_read":6,"score":9,"status":"reading"}}`))
+		_, _ = w.Write([]byte(`{"title":"Yosuga no Sora","mean":8.2,"num_chapters":14,"status":"finished","my_list_status":{"num_chapters_read":6,"score":9,"status":"reading","start_date":"2024-01-02","finish_date":"2024-02-03"}}`))
 	}))
 	defer server.Close()
 	provider := NewMyAnimeList(server.Client(), "client", func() (Credential, error) { return Credential{AccessToken: "token"}, nil })
@@ -339,6 +364,9 @@ func TestMyAnimeListStatusUsesListEntryProgress(t *testing.T) {
 	status, err := provider.FetchUserStatus(context.Background(), db.TrackerBinding{RemoteID: "45821"}, Credential{})
 	if err != nil || status.Progress != 6 || status.Status != "reading" || status.Score == nil || *status.Score != 9 || status.TotalChapters == nil || *status.TotalChapters != 14 {
 		t.Fatalf("status=%+v err=%v", status, err)
+	}
+	if status.StartedAt == nil || time.Unix(*status.StartedAt, 0).UTC().Format("2006-01-02") != "2024-01-02" || status.FinishedAt == nil || time.Unix(*status.FinishedAt, 0).UTC().Format("2006-01-02") != "2024-02-03" {
+		t.Fatalf("status dates = %+v", status)
 	}
 }
 

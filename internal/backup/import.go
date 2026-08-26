@@ -33,8 +33,34 @@ func Import(db *sqlx.DB, data []byte) error {
 	categoryIDs := map[int64]int64{}
 	for _, raw := range doc.Sources {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at,installed) VALUES(?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url`, stringValue(m["id"]), nullableString(m["plugin_key"]), stringValue(m["name"]), stringValue(m["version"]), intValue(m["abi_version"]), stringValue(m["lang"]), stringValue(m["base_url"]), nullableString(m["icon_url"]), nil, int64Value(m["installed_at"])); err != nil {
-			return fmt.Errorf("import source %q: %w", stringValue(m["id"]), err)
+		_, hasPinned := m["pinned"]
+		_, hasLastUsed := m["last_used_at"]
+		id := stringValue(m["id"])
+		pluginKey := nullableString(m["plugin_key"])
+		name := stringValue(m["name"])
+		version := stringValue(m["version"])
+		abiVersion := intValue(m["abi_version"])
+		lang := stringValue(m["lang"])
+		baseURL := stringValue(m["base_url"])
+		iconURL := nullableString(m["icon_url"])
+		installedAt := int64Value(m["installed_at"])
+		nsfw := boolValue(m["nsfw"])
+		if hasPinned && hasLastUsed {
+			if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at,installed,nsfw,pinned,last_used_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,nsfw=excluded.nsfw,pinned=excluded.pinned,last_used_at=excluded.last_used_at`, id, pluginKey, name, version, abiVersion, lang, baseURL, iconURL, nil, installedAt, nsfw, boolValue(m["pinned"]), nullableInt(m["last_used_at"])); err != nil {
+				return fmt.Errorf("import source %q: %w", id, err)
+			}
+		} else if hasPinned {
+			if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at,installed,nsfw,pinned) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,nsfw=excluded.nsfw,pinned=excluded.pinned`, id, pluginKey, name, version, abiVersion, lang, baseURL, iconURL, nil, installedAt, nsfw, boolValue(m["pinned"])); err != nil {
+				return fmt.Errorf("import source %q: %w", id, err)
+			}
+		} else if hasLastUsed {
+			if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at,installed,nsfw,last_used_at) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,nsfw=excluded.nsfw,last_used_at=excluded.last_used_at`, id, pluginKey, name, version, abiVersion, lang, baseURL, iconURL, nil, installedAt, nsfw, nullableInt(m["last_used_at"])); err != nil {
+				return fmt.Errorf("import source %q: %w", id, err)
+			}
+		} else {
+			if _, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,icon_url,wasm_path,installed_at,installed,nsfw) VALUES(?,?,?,?,?,?,?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,version=excluded.version,abi_version=excluded.abi_version,lang=excluded.lang,base_url=excluded.base_url,icon_url=excluded.icon_url,nsfw=excluded.nsfw`, id, pluginKey, name, version, abiVersion, lang, baseURL, iconURL, nil, installedAt, nsfw); err != nil {
+				return fmt.Errorf("import source %q: %w", id, err)
+			}
 		}
 	}
 	// Categories: preserve the exported ID where possible and map it when a
@@ -56,9 +82,9 @@ func Import(db *sqlx.DB, data []byte) error {
 	}
 	for _, raw := range doc.Manga {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO manga(id,source_id,source_manga_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,alt_titles=excluded.alt_titles,description=excluded.description,authors=excluded.authors,artists=excluded.artists,genres=excluded.genres,status=excluded.status,cover_url=excluded.cover_url,in_library=excluded.in_library,download_format=excluded.download_format,updated_at=excluded.updated_at`,
-			stringValue(m["id"]), stringValue(m["source_id"]), stringValue(m["source_manga_id"]), stringValue(m["title"]), nullableString(m["alt_titles"]), nullableString(m["description"]), nullableString(m["authors"]), nullableString(m["artists"]), nullableString(m["genres"]), stringValue(m["status"]), stringValue(m["cover_url"]), boolValue(m["in_library"]), stringValueDefault(m["download_format"], "cbz"), int64Value(m["created_at"]), int64Value(m["updated_at"])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO manga(id,source_id,source_manga_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,download_new_chapters,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,alt_titles=excluded.alt_titles,description=excluded.description,authors=excluded.authors,artists=excluded.artists,genres=excluded.genres,status=excluded.status,cover_url=excluded.cover_url,in_library=excluded.in_library,download_format=excluded.download_format,download_new_chapters=excluded.download_new_chapters,updated_at=excluded.updated_at`,
+			stringValue(m["id"]), stringValue(m["source_id"]), stringValue(m["source_manga_id"]), stringValue(m["title"]), nullableString(m["alt_titles"]), nullableString(m["description"]), nullableString(m["authors"]), nullableString(m["artists"]), nullableString(m["genres"]), stringValue(m["status"]), stringValue(m["cover_url"]), boolValue(m["in_library"]), stringValueDefault(m["download_format"], "cbz"), boolValue(m["download_new_chapters"]), int64Value(m["created_at"]), int64Value(m["updated_at"])); err != nil {
 			return fmt.Errorf("import manga %q: %w", stringValue(m["id"]), err)
 		}
 	}
@@ -143,8 +169,44 @@ func Import(db *sqlx.DB, data []byte) error {
 	}
 	for _, raw := range doc.Trackers {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO tracker_bindings(manga_id,tracker_type,remote_id,remote_title,remote_score,remote_status,last_synced_chapter,total_remote_chapters) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(manga_id,tracker_type) DO UPDATE SET remote_id=excluded.remote_id,remote_title=excluded.remote_title,remote_score=excluded.remote_score,remote_status=excluded.remote_status,last_synced_chapter=excluded.last_synced_chapter,total_remote_chapters=excluded.total_remote_chapters`, stringValue(m["manga_id"]), stringValue(m["tracker_type"]), stringValue(m["remote_id"]), stringValue(m["remote_title"]), nullableFloat(m["remote_score"]), nullableString(m["remote_status"]), floatValue(m["last_synced_chapter"]), nullableInt(m["total_remote_chapters"])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO tracker_bindings(manga_id,tracker_type,remote_id,remote_title,remote_score,remote_status,last_synced_chapter,total_remote_chapters,started_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(manga_id,tracker_type) DO UPDATE SET remote_id=excluded.remote_id,remote_title=excluded.remote_title,remote_score=excluded.remote_score,remote_status=excluded.remote_status,last_synced_chapter=excluded.last_synced_chapter,total_remote_chapters=excluded.total_remote_chapters,started_at=excluded.started_at,finished_at=excluded.finished_at`, stringValue(m["manga_id"]), stringValue(m["tracker_type"]), stringValue(m["remote_id"]), stringValue(m["remote_title"]), nullableFloat(m["remote_score"]), nullableString(m["remote_status"]), floatValue(m["last_synced_chapter"]), nullableInt(m["total_remote_chapters"]), nullableInt(m["started_at"]), nullableInt(m["finished_at"])); err != nil {
 			return fmt.Errorf("import tracker binding: %w", err)
+		}
+	}
+	for _, raw := range doc.Settings {
+		m, _ := raw.(map[string]any)
+		if _, err := tx.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stringValue(m["key"]), stringValue(m["value"])); err != nil {
+			return fmt.Errorf("import setting: %w", err)
+		}
+	}
+	for _, raw := range doc.ReadStates {
+		m, _ := raw.(map[string]any)
+		if _, err := tx.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at) VALUES(?,?,?,?) ON CONFLICT(chapter_id) DO UPDATE SET manga_id=excluded.manga_id,read=excluded.read,read_at=excluded.read_at`, stringValue(m["chapter_id"]), stringValue(m["manga_id"]), boolValue(m["read"]), nullableInt(m["read_at"])); err != nil {
+			return fmt.Errorf("import chapter read state: %w", err)
+		}
+	}
+	for _, raw := range doc.HistoryEvents {
+		m, _ := raw.(map[string]any)
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO history_events(id,manga_id,chapter_id,page,occurred_at) VALUES(?,?,?,?,?)`, stringValue(m["id"]), stringValue(m["manga_id"]), nullableString(m["chapter_id"]), nullableInt(m["page"]), int64Value(m["occurred_at"])); err != nil {
+			return fmt.Errorf("import history event: %w", err)
+		}
+	}
+	for _, raw := range doc.UpdateLogs {
+		m, _ := raw.(map[string]any)
+		if _, err := tx.Exec(`INSERT INTO update_log(id,manga_id,chapter_id,seen_at,acknowledged) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET manga_id=excluded.manga_id,chapter_id=excluded.chapter_id,seen_at=excluded.seen_at,acknowledged=excluded.acknowledged`, stringValue(m["id"]), stringValue(m["manga_id"]), stringValue(m["chapter_id"]), int64Value(m["seen_at"]), boolValue(m["acknowledged"])); err != nil {
+			return fmt.Errorf("import update log: %w", err)
+		}
+	}
+	for _, raw := range doc.UpdateStates {
+		m, _ := raw.(map[string]any)
+		if _, err := tx.Exec(`INSERT INTO library_update_state(id,last_run_at,last_status) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET last_run_at=excluded.last_run_at,last_status=excluded.last_status`, int64Value(m["id"]), nullableInt(m["last_run_at"]), stringValue(m["last_status"])); err != nil {
+			return fmt.Errorf("import update state: %w", err)
+		}
+	}
+	for _, raw := range doc.ReadingSessions {
+		m, _ := raw.(map[string]any)
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO reading_sessions(id,manga_id,seconds,occurred_at) VALUES(?,?,?,?)`, stringValue(m["id"]), stringValue(m["manga_id"]), intValue(m["seconds"]), int64Value(m["occurred_at"])); err != nil {
+			return fmt.Errorf("import reading session: %w", err)
 		}
 	}
 

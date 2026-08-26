@@ -145,3 +145,84 @@ func TestImportKeepsLocalSourceInstallState(t *testing.T) {
 		t.Fatalf("unknown source imported with wasm path %q", wasmPath)
 	}
 }
+
+func TestExportImportPreservesRuntimeState(t *testing.T) {
+	first, err := db.Open(filepath.Join(t.TempDir(), "one.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.NewRepository(first)
+	if _, err := first.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','s','Source','1',1,'en','https://source.test','s.wasm',?)`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "State", Status: "ongoing", InLibrary: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: "c", ChapterNumber: floatPtr(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, finished := int64(1704153600), int64(1706832000)
+	binding, err := repo.UpsertTrackerBinding(db.TrackerBinding{MangaID: manga.ID, TrackerType: "anilist", RemoteID: "1", RemoteTitle: "State"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpdateTrackerTracking(manga.ID, binding.TrackerType, floatPtr(8.5), &started, &finished); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetChapterRead(chapter.ID, manga.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(db.ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 2, TotalPages: 2, SessionSeconds: 37, IsCompleted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RecordUpdate(manga.ID, chapter.ID, 1707000000); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetLibraryUpdateState("completed", 1707000001); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSetting("appearance.date_format", `"absolute"`); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := Export(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Close()
+
+	second, err := db.Open(filepath.Join(t.TempDir(), "two.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if err := Import(second, payload); err != nil {
+		t.Fatal(err)
+	}
+	secondRepo := db.NewRepository(second)
+	gotBinding, err := secondRepo.GetTrackerBinding(manga.ID, "anilist")
+	if err != nil || gotBinding.RemoteScore == nil || *gotBinding.RemoteScore != 8.5 || gotBinding.StartedAt == nil || *gotBinding.StartedAt != started || gotBinding.FinishedAt == nil || *gotBinding.FinishedAt != finished {
+		t.Fatalf("binding = %+v, err=%v", gotBinding, err)
+	}
+	state, err := secondRepo.GetChapterRead(chapter.ID)
+	if err != nil || !state.Read {
+		t.Fatalf("read state = %+v, err=%v", state, err)
+	}
+	seconds, err := secondRepo.ReadingSeconds(manga.ID)
+	if err != nil || seconds != 37 {
+		t.Fatalf("reading seconds = %d, err=%v", seconds, err)
+	}
+	setting, err := secondRepo.GetSetting("appearance.date_format")
+	if err != nil || setting.Value != `"absolute"` {
+		t.Fatalf("setting = %+v, err=%v", setting, err)
+	}
+	updates, err := secondRepo.ListUpdateLogs(true)
+	if err != nil || len(updates) != 1 {
+		t.Fatalf("updates = %+v, err=%v", updates, err)
+	}
+	updateState, err := secondRepo.GetLibraryUpdateState()
+	if err != nil || updateState.LastStatus != "completed" {
+		t.Fatalf("update state = %+v, err=%v", updateState, err)
+	}
+}

@@ -30,6 +30,19 @@ type SearchResult struct {
 	CoverURL string   `json:"coverUrl,omitempty"`
 }
 
+type Recommendation struct {
+	RemoteID string   `json:"remoteId"`
+	Title    string   `json:"title"`
+	Score    *float64 `json:"score,omitempty"`
+	Chapters *int     `json:"chapters,omitempty"`
+	Status   string   `json:"status,omitempty"`
+	CoverURL string   `json:"coverUrl,omitempty"`
+}
+
+type RecommendationsProvider interface {
+	Recommendations(context.Context, db.TrackerBinding, Credential) ([]Recommendation, error)
+}
+
 type Status struct {
 	TrackerType   string   `json:"trackerType,omitempty"`
 	RemoteID      string   `json:"remoteId"`
@@ -38,6 +51,32 @@ type Status struct {
 	Score         *float64 `json:"score,omitempty"`
 	Progress      float64  `json:"progress"`
 	TotalChapters *int     `json:"totalChapters,omitempty"`
+	StartedAt     *int64   `json:"startedAt,omitempty"`
+	FinishedAt    *int64   `json:"finishedAt,omitempty"`
+}
+
+func parseTrackerDate(value string) *int64 {
+	if value == "" {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil
+	}
+	stamp := t.Unix()
+	return &stamp
+}
+
+func parseTrackerDateTime(value string) *int64 {
+	if value == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return parseTrackerDate(value)
+	}
+	stamp := t.Unix()
+	return &stamp
 }
 
 type Credential struct {

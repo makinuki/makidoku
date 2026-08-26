@@ -64,6 +64,8 @@ func (m *MangaBaka) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c 
 			State           string   `json:"state"`
 			ProgressChapter *float64 `json:"progress_chapter"`
 			Rating          *float64 `json:"rating"`
+			StartDate       string   `json:"start_date"`
+			FinishDate      string   `json:"finish_date"`
 		}
 	}
 	if err := m.Client.do(ctx, http.MethodGet, "/v1/my/library/"+strconv.FormatInt(id, 10), nil, &out, true); err != nil {
@@ -73,7 +75,7 @@ func (m *MangaBaka) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c 
 	if out.Data.ProgressChapter != nil {
 		progress = *out.Data.ProgressChapter
 	}
-	return Status{RemoteID: strconv.FormatInt(id, 10), Title: b.RemoteTitle, Status: out.Data.State, Score: normalizeHundredPointScore(out.Data.Rating), Progress: progress, TotalChapters: b.TotalRemoteChapters}, nil
+	return Status{RemoteID: strconv.FormatInt(id, 10), Title: b.RemoteTitle, Status: out.Data.State, Score: normalizeHundredPointScore(out.Data.Rating), Progress: progress, TotalChapters: b.TotalRemoteChapters, StartedAt: parseTrackerDate(out.Data.StartDate), FinishedAt: parseTrackerDate(out.Data.FinishDate)}, nil
 }
 // UpdateTracking patches the library entry. MangaBaka rates on a 0 to 100
 // wire scale regardless of the account's step size, and stores ISO dates.

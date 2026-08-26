@@ -13,7 +13,9 @@ import (
 	"github.com/makinuki/makidoku/internal/downloader"
 	"github.com/makinuki/makidoku/internal/engine"
 	"github.com/makinuki/makidoku/internal/imagecache"
+	"github.com/makinuki/makidoku/internal/settings"
 	"github.com/makinuki/makidoku/internal/tracker"
+	"github.com/makinuki/makidoku/internal/updater"
 )
 
 type downloadQueue interface {
@@ -37,6 +39,8 @@ type Server struct {
 	syncer        *tracker.SyncWorker
 	imageCache    *imagecache.Cache
 	trackerEvents *trackerBroker
+	settings      *settings.Service
+	updater       *updater.Service
 	lifetime      atomic.Pointer[context.Context]
 }
 
@@ -77,11 +81,21 @@ func NewTrackerServer(repo *db.Repository, eng *engine.Engine, downloads downloa
 	return server
 }
 
+func (s *Server) SetSettings(service *settings.Service) { s.settings = service }
+
+func (s *Server) SetUpdater(service *updater.Service) { s.updater = service }
+
 // Mount registers the local REST API under /api.
 func (s *Server) Mount(r chi.Router) {
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/health", s.health)
 		s.mountLibrary(api)
+		if s.settings != nil {
+			s.mountSettings(api)
+		}
+		if s.updater != nil {
+			s.mountUpdates(api)
+		}
 		s.mountBackup(api)
 		s.mountSources(api)
 		api.Get("/chapters/{chapterID}/pages", s.materializePages)

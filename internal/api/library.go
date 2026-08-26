@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -16,6 +17,46 @@ import (
 	"github.com/makinuki/makidoku/internal/engine"
 )
 
+// RefreshManga refreshes one library title and returns canonical chapter IDs
+// that were not present before the refresh. It is shared by the HTTP refresh
+// endpoint and the background updater.
+func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, error) {
+	source, err := s.repo.GetMangaSource(mangaID)
+	if err != nil {
+		return nil, err
+	}
+	before, err := s.repo.ListChapters(mangaID)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(before))
+	for _, chapter := range before {
+		known[chapter.ID] = struct{}{}
+	}
+	details, err := s.engine.Details(ctx, source.SourceID, source.SourceMangaID)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	if err != nil {
+		return nil, err
+	}
+	newIDs := []string{}
+	for _, item := range details.Chapters {
+		chapter, err := s.repo.UpsertChapter(db.Chapter{MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)})
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := known[chapter.ID]; !ok {
+			newIDs = append(newIDs, chapter.ID)
+		}
+	}
+	if err := s.repo.SetMangaDetailsFetched(updated.ID, time.Now().Unix()); err != nil {
+		return nil, err
+	}
+	return newIDs, nil
+}
+
 // mountLibrary registers the local library endpoints. The library grows with
 // the download and tracking subsystems; category management is what the reader
 // needs today.
@@ -25,14 +66,43 @@ func (s *Server) mountLibrary(r chi.Router) {
 	r.Get("/manga/{mangaID}/cover", s.mangaCover)
 	r.Post("/manga/{mangaID}/library", s.addMangaByID)
 	r.Delete("/manga/{mangaID}/library", s.removeMangaByID)
+	r.Patch("/manga/{mangaID}/downloads", s.updateMangaDownloads)
 	r.Post("/manga/{mangaID}/refresh", s.refreshManga)
 	r.Post("/manga/{mangaID}/categories/{categoryID}", s.addMangaCategoryByID)
 	r.Delete("/manga/{mangaID}/categories/{categoryID}", s.removeMangaCategoryByID)
 	r.Get("/history", s.listHistory)
+	r.Get("/stats", s.stats)
+	r.Delete("/history/{eventID}", s.deleteHistoryEvent)
+	r.Post("/chapters/{chapterID}/read", s.setChapterRead)
+	r.Post("/manga/{mangaID}/chapters/read", s.setMangaChaptersRead)
 	r.Get("/categories", s.listCategories)
 	r.Post("/categories", s.createCategory)
 	r.Patch("/categories/{categoryID}", s.updateCategory)
 	r.Delete("/categories/{categoryID}", s.deleteCategory)
+}
+
+func (s *Server) updateMangaDownloads(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	manga, err := s.repo.SetMangaDownloadNewChapters(chi.URLParam(r, "mangaID"), body.Enabled)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, manga)
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.repo.ReadingStats()
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 // getManga is local-first: stored details serve the read directly so the
@@ -61,6 +131,7 @@ func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
+	aggregate.SourceURL = s.sourceURL(aggregate.Manga.SourceID)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -68,21 +139,22 @@ func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
 // the previously stored aggregate intact for the next cache read.
 func (s *Server) refreshManga(w http.ResponseWriter, r *http.Request) {
 	mangaID := chi.URLParam(r, "mangaID")
-	source, err := s.repo.GetMangaSource(mangaID)
-	if err != nil {
-		writeLocalError(w, http.StatusNotFound, err)
-		return
-	}
 	if s.engine == nil {
 		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
 		return
 	}
-	aggregate, err := s.fetchAndStoreDetails(r, source)
+	_, err := s.RefreshManga(r.Context(), mangaID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	aggregate, err := s.repo.GetMangaAggregate(mangaID)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
+	aggregate.SourceURL = s.sourceURL(aggregate.Manga.SourceID)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -177,9 +249,21 @@ func writeCoverBytes(w http.ResponseWriter, contentType string, data []byte) {
 // returned so clients can navigate straight to the details view.
 func (s *Server) addMangaByID(w http.ResponseWriter, r *http.Request) {
 	mangaID := chi.URLParam(r, "mangaID")
+	wasInLibrary := false
+	if current, err := s.repo.GetManga(mangaID); err == nil {
+		wasInLibrary = current.InLibrary
+	}
 	if _, err := s.repo.SetMangaLibrary(mangaID, true); err != nil {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
+	}
+	if s.settings != nil && !wasInLibrary {
+		if enabled, settingErr := s.settings.Bool("downloads.auto_download"); settingErr == nil {
+			if _, updateErr := s.repo.SetMangaDownloadNewChapters(mangaID, enabled); updateErr != nil {
+				writeLocalError(w, http.StatusInternalServerError, updateErr)
+				return
+			}
+		}
 	}
 	aggregate, err := s.repo.GetMangaAggregate(mangaID)
 	if err != nil {
@@ -187,6 +271,7 @@ func (s *Server) addMangaByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
+	aggregate.SourceURL = s.sourceURL(aggregate.Manga.SourceID)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -250,15 +335,87 @@ func (s *Server) listLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
-	history, err := s.repo.ListHistory()
+	events, err := s.repo.ListHistoryEvents(200)
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if history == nil {
-		history = []db.HistoryItem{}
+	type historyRecord struct {
+		ID         string      `json:"id"`
+		Manga      db.Manga    `json:"manga"`
+		Chapter    *db.Chapter `json:"chapter,omitempty"`
+		Page       *int        `json:"page,omitempty"`
+		OccurredAt int64       `json:"occurredAt"`
 	}
-	writeJSON(w, http.StatusOK, history)
+	records := make([]historyRecord, 0, len(events))
+	for _, event := range events {
+		manga, err := s.repo.GetManga(event.MangaID)
+		if err != nil {
+			continue
+		}
+		var chapter *db.Chapter
+		if event.ChapterID != nil {
+			if value, err := s.repo.GetChapter(*event.ChapterID); err == nil {
+				chapter = &value
+			}
+		}
+		records = append(records, historyRecord{ID: event.ID, Manga: manga, Chapter: chapter, Page: event.Page, OccurredAt: event.OccurredAt})
+	}
+	if records == nil {
+		records = []historyRecord{}
+	}
+	writeJSON(w, http.StatusOK, records)
+}
+
+func (s *Server) deleteHistoryEvent(w http.ResponseWriter, r *http.Request) {
+	if err := s.repo.DeleteHistoryEvent(chi.URLParam(r, "eventID")); err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setChapterRead(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Read bool `json:"read"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	chapterID := chi.URLParam(r, "chapterID")
+	chapter, err := s.repo.GetChapter(chapterID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	if err := s.repo.SetChapterRead(chapterID, chapter.MangaID, body.Read); err != nil {
+		writeLocalError(w, http.StatusBadRequest, err)
+		return
+	}
+	state, err := s.repo.GetChapterRead(chapterID)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *Server) setMangaChaptersRead(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ChapterIDs []string `json:"chapterIds"`
+		Read       bool     `json:"read"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	mangaID := chi.URLParam(r, "mangaID")
+	for _, chapterID := range body.ChapterIDs {
+		if err := s.repo.SetChapterRead(chapterID, mangaID, body.Read); err != nil {
+			writeLocalError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listCategories(w http.ResponseWriter, r *http.Request) {

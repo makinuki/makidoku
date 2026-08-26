@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -16,6 +16,9 @@ type SyncWorker struct {
 	Repo     *db.Repository
 	Registry *Registry
 	Interval time.Duration
+	Settings interface {
+		Bool(string) (bool, error)
+	}
 }
 
 // syncJobHistoryLimit caps how many finished sync jobs are retained.
@@ -38,11 +41,13 @@ func (w *SyncWorker) Run(ctx context.Context) error {
 		// A failed poll, claim, or bookkeeping write must not stop the
 		// worker: a transient storage error would otherwise take the whole
 		// daemon down. Only cancellation ends the loop.
-		if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("tracker sync: %v", err)
+		if w.syncEnabled() {
+			if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("tracker sync failed", "err", err)
+			}
 		}
 		if _, err := w.Repo.PruneTerminalTrackerSyncJobs(syncJobHistoryLimit); err != nil {
-			log.Printf("tracker sync: pruning history failed: %v", err)
+			slog.Warn("tracker sync pruning history failed", "err", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -50,6 +55,14 @@ func (w *SyncWorker) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (w *SyncWorker) syncEnabled() bool {
+	if w.Settings == nil {
+		return true
+	}
+	enabled, err := w.Settings.Bool("tracking.auto_sync")
+	return err != nil || enabled
 }
 
 func (w *SyncWorker) RunOnce(ctx context.Context) error {
@@ -105,7 +118,7 @@ func (w *SyncWorker) ProcessOne(ctx context.Context, trackerType string) (bool, 
 // of discarding it, so a wedged RUNNING job stays visible in the logs.
 func (w *SyncWorker) failJob(jobID int64, retry bool, message string) {
 	if err := w.Repo.FailTrackerSync(jobID, retry, message); err != nil {
-		log.Printf("tracker sync: recording failure for job %d: %v", jobID, err)
+		slog.Warn("tracker sync recording failure failed", "job", jobID, "err", err)
 	}
 }
 

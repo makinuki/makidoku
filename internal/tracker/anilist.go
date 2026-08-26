@@ -80,7 +80,7 @@ func normalizeHundredPointScore(v *float64) *float64 {
 	return &n
 }
 func (a *AniList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Credential) (Status, error) {
-	const q = `query($id:Int!){Media(id:$id,type:MANGA){id title{romaji english native} chapters mediaListEntry{status score(format:POINT_10) progress}}}`
+	const q = `query($id:Int!){Media(id:$id,type:MANGA){id title{romaji english native} chapters mediaListEntry{status score(format:POINT_10) progress startedAt{year month day} completedAt{year month day}}}}`
 	var out struct {
 		Data struct {
 			Media struct {
@@ -88,9 +88,11 @@ func (a *AniList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Cr
 				Title          struct{ Romaji, English, Native string }
 				Chapters       *int
 				MediaListEntry *struct {
-					Status   string
-					Score    *float64
-					Progress float64
+					Status      string
+					Score       *float64
+					Progress    float64
+					StartedAt   *anilistDate `json:"startedAt"`
+					CompletedAt *anilistDate `json:"completedAt"`
 				} `json:"mediaListEntry"`
 			}
 		}
@@ -111,8 +113,65 @@ func (a *AniList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c Cr
 		status.Status = out.Data.Media.MediaListEntry.Status
 		status.Score = out.Data.Media.MediaListEntry.Score
 		status.Progress = out.Data.Media.MediaListEntry.Progress
+		status.StartedAt = out.Data.Media.MediaListEntry.StartedAt.Unix()
+		status.FinishedAt = out.Data.Media.MediaListEntry.CompletedAt.Unix()
 	}
 	return status, nil
+}
+
+type anilistDate struct {
+	Year  int `json:"year"`
+	Month int `json:"month"`
+	Day   int `json:"day"`
+}
+
+func (d *anilistDate) Unix() *int64 {
+	if d == nil || d.Year == 0 || d.Month == 0 || d.Day == 0 {
+		return nil
+	}
+	stamp := time.Date(d.Year, time.Month(d.Month), d.Day, 0, 0, 0, 0, time.UTC).Unix()
+	return &stamp
+}
+
+func (a *AniList) Recommendations(ctx context.Context, b db.TrackerBinding, c Credential) ([]Recommendation, error) {
+	const q = `query($id:Int!){Media(id:$id,type:MANGA){recommendations{nodes{media{id title{romaji english native} averageScore chapters status coverImage{large}}}}}}`
+	var out struct {
+		Data struct {
+			Media struct {
+				Recommendations struct {
+					Nodes []struct {
+						Media struct {
+							ID           int `json:"id"`
+							Title        struct{ Romaji, English, Native string }
+							AverageScore *float64 `json:"averageScore"`
+							Chapters     *int
+							Status       string
+							CoverImage   struct{ Large string } `json:"coverImage"`
+						} `json:"media"`
+					} `json:"nodes"`
+				} `json:"recommendations"`
+			} `json:"media"`
+		} `json:"data"`
+	}
+	var id int
+	if _, err := fmt.Sscan(b.RemoteID, &id); err != nil {
+		return nil, fmt.Errorf("invalid AniList id: %w", err)
+	}
+	if err := a.query(ctx, q, map[string]any{"id": id}, &out, true); err != nil {
+		return nil, err
+	}
+	items := make([]Recommendation, 0, len(out.Data.Media.Recommendations.Nodes))
+	for _, node := range out.Data.Media.Recommendations.Nodes {
+		title := node.Media.Title.English
+		if title == "" {
+			title = node.Media.Title.Romaji
+		}
+		if title == "" {
+			title = node.Media.Title.Native
+		}
+		items = append(items, Recommendation{RemoteID: fmt.Sprint(node.Media.ID), Title: title, Score: normalizeHundredPointScore(node.Media.AverageScore), Chapters: node.Media.Chapters, Status: node.Media.Status, CoverURL: node.Media.CoverImage.Large})
+	}
+	return items, nil
 }
 
 // scrobbleProgress converts a fractional chapter number into AniList's
@@ -134,7 +193,7 @@ func anilistFuzzyDate(t *time.Time) *int {
 }
 
 func (a *AniList) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
-	const q = `mutation($mediaId:Int!,$progress:Int!,$score:String,$startedAt:Int,$finishedAt:Int){SaveMediaListEntry(mediaId:$mediaId,progress:$progress,score:$score,startedAt:$startedAt,finishedAt:$finishedAt){id progress}}`
+	const q = `mutation($mediaId:Int!,$progress:Int!,$score:String,$startedAt:Int,$completedAt:Int){SaveMediaListEntry(mediaId:$mediaId,progress:$progress,score:$score,startedAt:$startedAt,completedAt:$completedAt){id progress}}`
 	var id int
 	if _, err := fmt.Sscan(b.RemoteID, &id); err != nil {
 		return err
@@ -150,8 +209,8 @@ func (a *AniList) UpdateTracking(ctx context.Context, b db.TrackerBinding, updat
 	if started := anilistFuzzyDate(update.StartedAt); started != nil {
 		variables["startedAt"] = *started
 	}
-	if finished := anilistFuzzyDate(update.FinishedAt); finished != nil {
-		variables["finishedAt"] = *finished
+	if completed := anilistFuzzyDate(update.FinishedAt); completed != nil {
+		variables["completedAt"] = *completed
 	}
 	var out struct{ Data json.RawMessage }
 	return a.query(ctx, q, variables, &out, true)

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -257,7 +257,7 @@ func (q *Queue) runWorker(ctx context.Context) {
 		}
 		item, err := q.repo.ClaimNextQueueItem()
 		if err != nil {
-			log.Printf("downloader: claim failed: %v", err)
+			slog.Warn("downloader claim failed", "err", err)
 			q.wait(ctx)
 			continue
 		}
@@ -266,7 +266,7 @@ func (q *Queue) runWorker(ctx context.Context) {
 			continue
 		}
 		if err := q.process(ctx, *item); err != nil {
-			log.Printf("downloader: %s failed: %v", item.ChapterID, err)
+			slog.Warn("downloader failed", "chapter", item.ChapterID, "err", err)
 		}
 	}
 }
@@ -410,7 +410,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 	}
 	// The archive is final; staged pages are no longer needed.
 	if err := os.RemoveAll(tempDir); err != nil {
-		log.Printf("downloader: removing staged pages for %s failed: %v", item.ChapterID, err)
+		slog.Warn("downloader removing staged pages failed", "chapter", item.ChapterID, "err", err)
 	}
 	q.publishCurrent("completed", item.ID)
 	return nil
@@ -420,7 +420,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 // a failed bookkeeping write cannot leave an orphaned file on disk.
 func (q *Queue) removeArtifact(path string) {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Printf("downloader: removing incomplete artifact %s failed: %v", path, err)
+		slog.Warn("downloader removing incomplete artifact failed", "path", path, "err", err)
 	}
 }
 
@@ -740,7 +740,7 @@ func (b *eventBroker) publish(event Event) {
 			// A slow subscriber's buffer is full; the event is dropped so the
 			// download pipeline never blocks on a stalled reader. The
 			// subscriber reconciles through its periodic snapshot refetch.
-			log.Printf("events: subscriber buffer full, dropping %s event", event.Type)
+			slog.Warn("events subscriber buffer full, dropping event", "type", event.Type)
 		}
 	}
 }

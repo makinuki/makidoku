@@ -52,12 +52,14 @@ func (m *MyAnimeList) FetchUserStatus(ctx context.Context, b db.TrackerBinding, 
 			NumChaptersRead float64  `json:"num_chapters_read"`
 			Score           *float64 `json:"score"`
 			Status          string   `json:"status"`
+			StartDate       string   `json:"start_date"`
+			FinishDate      string   `json:"finish_date"`
 		} `json:"my_list_status"`
 	}
 	if err := m.Client.do(ctx, http.MethodGet, "/manga/"+url.PathEscape(b.RemoteID)+"?fields=title,num_chapters,my_list_status", nil, &out, true); err != nil {
 		return Status{}, err
 	}
-	return Status{RemoteID: b.RemoteID, Title: out.Title, Score: out.MyListStatus.Score, Status: out.MyListStatus.Status, TotalChapters: out.NumChapters, Progress: out.MyListStatus.NumChaptersRead}, nil
+	return Status{RemoteID: b.RemoteID, Title: out.Title, Score: out.MyListStatus.Score, Status: out.MyListStatus.Status, TotalChapters: out.NumChapters, Progress: out.MyListStatus.NumChaptersRead, StartedAt: parseTrackerDate(out.MyListStatus.StartDate), FinishedAt: parseTrackerDate(out.MyListStatus.FinishDate)}, nil
 }
 func (m *MyAnimeList) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {
 	form := url.Values{"num_chapters_read": {strconv.Itoa(int(update.Chapter))}}

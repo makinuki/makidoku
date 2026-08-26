@@ -161,6 +161,30 @@ func TestTrackerStatusSkipsBindingsWithoutStatusCapability(t *testing.T) {
 	}
 }
 
+func TestSuggestionsReturnEmptyWithoutAniListBinding(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "suggestions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	repo := db.NewRepository(handle)
+	if _, err := handle.Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','S','1',1,'en','https://example.test','source.wasm',1)`); err != nil {
+		t.Fatal(err)
+	}
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "M", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewTrackerServer(repo, nil, nil, tracker.NewRegistry(repo))
+	router := chi.NewRouter()
+	server.Mount(router)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/manga/"+manga.ID+"/suggestions", nil))
+	if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != "[]" {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestTrackerStatusIdentifiesProvider(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"findMangaById":{"titles":{"preferred":"M"},"chapterCount":14,"myLibraryEntry":{"id":"e1","progress":8,"status":"CURRENT"}}}}`))

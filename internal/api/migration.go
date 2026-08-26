@@ -2,7 +2,7 @@ package api
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -36,10 +36,49 @@ type migrationResponse struct {
 }
 
 func (s *Server) mountMigration(r chi.Router) {
+	r.Get("/migration/sources", s.migrationSources)
+	r.Get("/migration/sources/{sourceID}/manga", s.migrationSourceManga)
 	r.Route("/manga/{mangaID}/migration", func(migration chi.Router) {
 		migration.Get("/candidates", s.migrationCandidates)
 		migration.Post("/apply", s.applyMigration)
 	})
+}
+
+func (s *Server) migrationSources(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
+		return
+	}
+	sources, err := s.engine.Installed()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	counts, err := s.repo.LibrarySourceCounts()
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	type entry struct {
+		Source engine.InstalledSource `json:"source"`
+		Count  int                    `json:"count"`
+	}
+	out := make([]entry, 0, len(sources))
+	for _, source := range sources {
+		if counts[source.ID] > 0 {
+			out = append(out, entry{Source: source, Count: counts[source.ID]})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) migrationSourceManga(w http.ResponseWriter, r *http.Request) {
+	manga, err := s.repo.ListLibraryBySource(chi.URLParam(r, "sourceID"))
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, manga)
 }
 
 func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +108,7 @@ func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
 		}
 		page, searchErr := s.engine.Search(r.Context(), source.ID, engine.SearchQuery{Query: query, Page: 1})
 		if searchErr != nil {
-			log.Printf("migration: candidate search for %s failed: %v", source.Name, searchErr)
+			slog.Warn("migration candidate search failed", "source", source.Name, "err", searchErr)
 			failed++
 			continue
 		}
@@ -157,7 +196,7 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, path := range artifacts {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			log.Printf("migration: removing artifact %s failed: %v", path, err)
+			slog.Warn("migration removing artifact failed", "path", path, "err", err)
 		}
 	}
 
@@ -171,7 +210,7 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 	}
 	aggregate, fetchErr := s.fetchAndStoreDetails(r, source)
 	if fetchErr != nil {
-		log.Printf("migration: replacement fetch for %s failed: %v", oldID, fetchErr)
+		slog.Warn("migration replacement fetch failed", "manga", oldID, "err", fetchErr)
 		aggregate, err = s.repo.GetMangaAggregate(oldID)
 		if err != nil {
 			writeLocalError(w, http.StatusInternalServerError, err)
@@ -192,7 +231,7 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 	if hasProgress {
 		if mapped := remapProgress(progress, retired, aggregate.Chapters); mapped != nil {
 			if _, err := s.repo.UpsertReadingProgress(*mapped); err != nil {
-				log.Printf("migration: remapping progress for %s failed: %v", oldID, err)
+				slog.Warn("migration remapping progress failed", "manga", oldID, "err", err)
 			}
 		}
 	}

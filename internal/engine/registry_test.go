@@ -9,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/makinuki/makidoku/internal/db"
 )
 
 // fakeCatalog serves an index.json and the binaries it lists.
@@ -67,6 +70,57 @@ func TestRegistryFetchVerifiesDigest(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("binary must be cached: %v", err)
+	}
+}
+
+func TestCatalogMarksNewerInstalledVersionAsUpdate(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "catalog.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	if _, err := handle.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed,installed_at) VALUES('source-id','demo','Demo','1.2.0',1,'en','https://example.test','demo.wasm',1,?)`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	index, err := json.Marshal(RegistryIndex{Version: 1, Sources: []RegistryEntry{{ID: "demo", Name: "Demo", Version: "1.3.0", ABIVersion: 1, WasmURL: "https://example.test/demo.wasm", SHA256: digest([]byte("demo"))}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "index.json")
+	if err := os.WriteFile(indexPath, index, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(handle, Options{DataDir: t.TempDir(), RegistryURL: indexPath})
+	entries, err := engine.Catalog(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !entries[0].Installed || !entries[0].UpdateAvailable {
+		t.Fatalf("catalog entries = %+v", entries)
+	}
+	updated, err := engine.SetSourcePinned("source-id", true)
+	if err != nil || !updated.Pinned {
+		t.Fatalf("pinned source = %+v err=%v", updated, err)
+	}
+}
+
+func TestInstalledSourceRetainsNSFWMetadataWhenPluginIsNotLoaded(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "nsfw.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	if _, err := handle.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed,installed_at,nsfw) VALUES('adult','adult','Adult source','1.0.0',1,'en','https://adult.test','adult.wasm',1,?,1)`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(handle, Options{DataDir: t.TempDir(), RegistryURL: filepath.Join(t.TempDir(), "missing-index.json")})
+	defer engine.Close(context.Background())
+	installed, err := engine.Installed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(installed) != 1 || !installed[0].NSFW {
+		t.Fatalf("installed sources = %+v, want persisted NSFW metadata", installed)
 	}
 }
 

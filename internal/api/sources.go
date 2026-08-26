@@ -27,13 +27,102 @@ func (s *Server) mountSources(r chi.Router) {
 	r.Get("/sources", s.listSources)
 	r.Get("/sources/catalog", s.catalog)
 	r.Post("/sources/install", s.installSource)
+	r.Post("/sources/update-all", s.updateAllSources)
 	r.Route("/sources/{sourceID}", func(source chi.Router) {
 		source.Get("/", s.getSource)
+		source.Patch("/", s.updateSource)
 		source.Delete("/", s.uninstallSource)
+		source.Get("/icon", s.sourceIcon)
+		source.Post("/update", s.updateSourcePlugin)
 		source.Get("/filters", s.sourceFilters)
 		source.Get("/search", s.search)
 		source.Post("/clearance", s.submitClearance)
 	})
+}
+
+func (s *Server) updateSource(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Pinned *bool `json:"pinned"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.Pinned == nil {
+		writeBadRequest(w, "pinned is required")
+		return
+	}
+	source, err := s.engine.SetSourcePinned(chi.URLParam(r, "sourceID"), *body.Pinned)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, source)
+}
+
+func (s *Server) updateSourcePlugin(w http.ResponseWriter, r *http.Request) {
+	source, err := s.engine.Get(chi.URLParam(r, "sourceID"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	updated, err := s.engine.Install(r.Context(), source.PluginKey)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) updateAllSources(w http.ResponseWriter, r *http.Request) {
+	entries, err := s.engine.Catalog(r.Context(), true)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	updated := make([]engine.InstalledSource, 0)
+	for _, entry := range entries {
+		if !entry.UpdateAvailable || !entry.Compatible {
+			continue
+		}
+		source, installErr := s.engine.Install(r.Context(), entry.ID)
+		if installErr != nil {
+			writeError(w, installErr)
+			return
+		}
+		updated = append(updated, source)
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) sourceIcon(w http.ResponseWriter, r *http.Request) {
+	source, err := s.engine.Get(chi.URLParam(r, "sourceID"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if strings.TrimSpace(source.IconURL) == "" {
+		writeError(w, engine.CodedError(engine.CodeNotFound, "source has no icon"))
+		return
+	}
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(source.IconURL)))
+	path := filepath.Join(s.engine.DataDir(), "source-icons", key+".img")
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		writeCoverBytes(w, http.DetectContentType(data), data)
+		return
+	}
+	data, err := s.engine.FetchImage(r.Context(), source.ID, source.IconURL, nil)
+	if err != nil {
+		writeLocalError(w, http.StatusBadGateway, err)
+		return
+	}
+	if len(data) == 0 || len(data) > 2<<20 {
+		writeLocalError(w, http.StatusBadGateway, errors.New("source icon is unavailable or too large"))
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+	writeCoverBytes(w, http.DetectContentType(data), data)
 }
 
 func jsonString(values []string) *string {
@@ -63,6 +152,17 @@ func (s *Server) sourceName(sourceID string) string {
 		return ""
 	}
 	return source.Name
+}
+
+func (s *Server) sourceURL(sourceID string) string {
+	if s.engine == nil {
+		return ""
+	}
+	source, err := s.engine.Get(sourceID)
+	if err != nil {
+		return ""
+	}
+	return source.BaseURL
 }
 
 func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +265,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	_ = s.engine.TouchSource(chi.URLParam(r, "sourceID"))
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
 		manga, upsertErr := s.repo.UpsertMangaStub(db.Manga{SourceID: chi.URLParam(r, "sourceID"), SourceMangaID: item.ID, Title: item.Title, CoverURL: engine.SelectCover(item.CoverURL, item.Covers, engine.PreferredCoverWidth), Status: "unknown"})

@@ -41,24 +41,25 @@ type Category struct {
 }
 
 type Manga struct {
-	ID               string  `db:"id" json:"id"`
-	SourceID         string  `db:"source_id" json:"sourceId"`
-	SourceMangaID    string  `db:"source_manga_id" json:"-"`
-	Title            string  `db:"title" json:"title"`
-	AltTitles        *string `db:"alt_titles" json:"altTitles"`
-	Description      *string `db:"description" json:"description"`
-	Authors          *string `db:"authors" json:"authors"`
-	Artists          *string `db:"artists" json:"artists"`
-	Genres           *string `db:"genres" json:"genres"`
-	Status           string  `db:"status" json:"status"`
-	CoverURL         string  `db:"cover_url" json:"-"`
-	CoverCachePath   *string `db:"cover_cache_path" json:"-"`
-	CoverContentType *string `db:"cover_content_type" json:"-"`
-	CoverFetchedAt   *int64  `db:"cover_fetched_at" json:"-"`
-	InLibrary        bool    `db:"in_library" json:"inLibrary"`
-	DownloadFormat   string  `db:"download_format" json:"downloadFormat"`
-	CreatedAt        int64   `db:"created_at" json:"createdAt"`
-	UpdatedAt        int64   `db:"updated_at" json:"updatedAt"`
+	ID                  string  `db:"id" json:"id"`
+	SourceID            string  `db:"source_id" json:"sourceId"`
+	SourceMangaID       string  `db:"source_manga_id" json:"-"`
+	Title               string  `db:"title" json:"title"`
+	AltTitles           *string `db:"alt_titles" json:"altTitles"`
+	Description         *string `db:"description" json:"description"`
+	Authors             *string `db:"authors" json:"authors"`
+	Artists             *string `db:"artists" json:"artists"`
+	Genres              *string `db:"genres" json:"genres"`
+	Status              string  `db:"status" json:"status"`
+	CoverURL            string  `db:"cover_url" json:"-"`
+	CoverCachePath      *string `db:"cover_cache_path" json:"-"`
+	CoverContentType    *string `db:"cover_content_type" json:"-"`
+	CoverFetchedAt      *int64  `db:"cover_fetched_at" json:"-"`
+	InLibrary           bool    `db:"in_library" json:"inLibrary"`
+	DownloadFormat      string  `db:"download_format" json:"downloadFormat"`
+	DownloadNewChapters bool    `db:"download_new_chapters" json:"downloadNewChapters"`
+	CreatedAt           int64   `db:"created_at" json:"createdAt"`
+	UpdatedAt           int64   `db:"updated_at" json:"updatedAt"`
 	// DetailsFetchedAt records when full details were last pulled from the
 	// plugin. Search-level records stay NULL until the first details read.
 	DetailsFetchedAt *int64 `db:"details_fetched_at" json:"detailsFetchedAt,omitempty"`
@@ -112,12 +113,14 @@ func (l LibraryManga) MarshalJSON() ([]byte, error) {
 // views. The aggregate is assembled from normalized tables by the repository.
 // SourceName is resolved by the API layer from the installed plugin registry.
 type MangaAggregate struct {
-	Manga      Manga            `json:"manga"`
-	Categories []Category       `json:"categories"`
-	Chapters   []Chapter        `json:"chapters"`
-	Progress   *ReadingProgress `json:"progress,omitempty"`
-	Trackers   []TrackerBinding `json:"trackers"`
-	SourceName string           `json:"sourceName,omitempty"`
+	Manga          Manga            `json:"manga"`
+	Categories     []Category       `json:"categories"`
+	Chapters       []Chapter        `json:"chapters"`
+	Progress       *ReadingProgress `json:"progress,omitempty"`
+	Trackers       []TrackerBinding `json:"trackers"`
+	ReadingSeconds int64            `json:"readingSeconds"`
+	SourceName     string           `json:"sourceName,omitempty"`
+	SourceURL      string           `json:"sourceUrl,omitempty"`
 }
 
 // MangaSource is an internal adapter record. It is never returned directly to
@@ -148,6 +151,8 @@ type Chapter struct {
 	Scanlator       *string  `db:"scanlator" json:"scanlator"`
 	Downloaded      bool     `db:"downloaded" json:"downloaded"`
 	DownloadPath    *string  `db:"download_path" json:"downloadPath"`
+	Read            bool     `db:"-" json:"read"`
+	DownloadStatus  string   `db:"download_status" json:"downloadStatus,omitempty"`
 }
 
 // Page is the backend-owned reader contract. The source URL and request
@@ -179,6 +184,59 @@ type ReadingProgress struct {
 	TotalPages        int    `db:"total_pages" json:"totalPages"`
 	IsCompleted       bool   `db:"is_completed" json:"isCompleted"`
 	LastReadAt        int64  `db:"last_read_at" json:"lastReadAt"`
+	SessionSeconds    int64  `db:"-" json:"sessionSeconds,omitempty"`
+}
+
+type Setting struct {
+	Key   string `db:"key" json:"key"`
+	Value string `db:"value" json:"value"`
+}
+
+type ChapterReadState struct {
+	ChapterID string `db:"chapter_id" json:"chapterId"`
+	MangaID   string `db:"manga_id" json:"mangaId"`
+	Read      bool   `db:"read" json:"read"`
+	ReadAt    *int64 `db:"read_at" json:"readAt,omitempty"`
+}
+
+type HistoryEvent struct {
+	ID         string  `db:"id" json:"id"`
+	MangaID    string  `db:"manga_id" json:"mangaId"`
+	ChapterID  *string `db:"chapter_id" json:"chapterId,omitempty"`
+	Page       *int    `db:"page" json:"page,omitempty"`
+	OccurredAt int64   `db:"occurred_at" json:"occurredAt"`
+}
+
+type UpdateLog struct {
+	ID           string `db:"id" json:"id"`
+	MangaID      string `db:"manga_id" json:"mangaId"`
+	ChapterID    string `db:"chapter_id" json:"chapterId"`
+	SeenAt       int64  `db:"seen_at" json:"seenAt"`
+	Acknowledged bool   `db:"acknowledged" json:"acknowledged"`
+}
+
+type LibraryUpdateState struct {
+	LastRunAt  *int64 `db:"last_run_at" json:"lastRunAt,omitempty"`
+	LastStatus string `db:"last_status" json:"lastStatus"`
+}
+
+type ReadingSession struct {
+	ID         string `db:"id" json:"id"`
+	MangaID    string `db:"manga_id" json:"mangaId"`
+	Seconds    int64  `db:"seconds" json:"seconds"`
+	OccurredAt int64  `db:"occurred_at" json:"occurredAt"`
+}
+
+type ReadingDay struct {
+	Date    string `db:"date" json:"date"`
+	Seconds int64  `db:"seconds" json:"seconds"`
+}
+
+type ReadingStats struct {
+	ReadingSeconds int64        `json:"readingSeconds"`
+	TitleCount     int          `json:"titleCount"`
+	ChapterCount   int          `json:"chapterCount"`
+	Daily          []ReadingDay `json:"daily"`
 }
 
 type TrackerBinding struct {

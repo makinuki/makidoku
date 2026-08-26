@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -300,6 +300,17 @@ func (r *Repository) SetMangaLibrary(id string, inLibrary bool) (Manga, error) {
 	return r.GetManga(id)
 }
 
+func (r *Repository) SetMangaDownloadNewChapters(id string, enabled bool) (Manga, error) {
+	result, err := r.db.Exec(`UPDATE manga SET download_new_chapters=?, updated_at=? WHERE id=?`, enabled, time.Now().Unix(), strings.TrimSpace(id))
+	if err != nil {
+		return Manga{}, err
+	}
+	if err := requireChange(result, "update automatic downloads"); err != nil {
+		return Manga{}, err
+	}
+	return r.GetManga(id)
+}
+
 func (r *Repository) SetMangaCategory(mangaID string, categoryID int64, enabled bool) error {
 	if strings.TrimSpace(mangaID) == "" || categoryID < 1 {
 		return errors.New("manga id and category id are required")
@@ -332,7 +343,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -378,11 +389,8 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 			MangaID string `db:"manga_id"`
 			Unread  int    `db:"unread"`
 		}
-		unreadQuery := `SELECT c.manga_id, SUM(CASE WHEN p.last_read_chapter_id IS NULL
-			THEN (CASE WHEN c.downloaded=0 THEN 1 ELSE 0 END)
-			ELSE (CASE WHEN c.downloaded=0 OR c.id<>p.last_read_chapter_id THEN 1 ELSE 0 END)
-			END) AS unread
-			FROM chapters c LEFT JOIN reading_progress p ON p.manga_id=c.manga_id
+		unreadQuery := `SELECT c.manga_id, SUM(CASE WHEN COALESCE(rs.read, 0)=0 THEN 1 ELSE 0 END) AS unread
+			FROM chapters c LEFT JOIN chapter_read_state rs ON rs.chapter_id=c.id
 			WHERE c.manga_id IN (` + in + `) GROUP BY c.manga_id`
 		if err := r.db.Select(&unreadRows, unreadQuery, ids...); err != nil {
 			return nil, err
@@ -408,6 +416,31 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 	return out, nil
 }
 
+func (r *Repository) ListLibraryBySource(sourceID string) ([]Manga, error) {
+	var manga []Manga
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at
+		FROM manga m WHERE m.in_library=1 AND m.source_id=? ORDER BY m.title`, strings.TrimSpace(sourceID))
+	if manga == nil {
+		manga = []Manga{}
+	}
+	return manga, err
+}
+
+func (r *Repository) LibrarySourceCounts() (map[string]int, error) {
+	var rows []struct {
+		SourceID string `db:"source_id"`
+		Count    int    `db:"count"`
+	}
+	if err := r.db.Select(&rows, `SELECT source_id,COUNT(*) AS count FROM manga WHERE in_library=1 GROUP BY source_id`); err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(rows))
+	for _, row := range rows {
+		out[row.SourceID] = row.Count
+	}
+	return out, nil
+}
+
 func (r *Repository) GetMangaAggregate(id string) (MangaAggregate, error) {
 	manga, err := r.GetManga(id)
 	if err != nil {
@@ -416,6 +449,17 @@ func (r *Repository) GetMangaAggregate(id string) (MangaAggregate, error) {
 	chapters, err := r.ListChapters(id)
 	if err != nil {
 		return MangaAggregate{}, err
+	}
+	readStates, err := r.ListChapterRead(id)
+	if err != nil {
+		return MangaAggregate{}, err
+	}
+	readMap := make(map[string]bool, len(readStates))
+	for _, state := range readStates {
+		readMap[state.ChapterID] = state.Read
+	}
+	for index := range chapters {
+		chapters[index].Read = readMap[chapters[index].ID]
 	}
 	categories, err := r.ListMangaCategories(id)
 	if err != nil {
@@ -431,6 +475,10 @@ func (r *Repository) GetMangaAggregate(id string) (MangaAggregate, error) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return MangaAggregate{}, err
 	}
+	readingSeconds, err := r.ReadingSeconds(id)
+	if err != nil {
+		return MangaAggregate{}, err
+	}
 	// Nil slices marshal as JSON null, which the web client renders as absent
 	// collections and crashes on; the aggregate contract is always an array.
 	if categories == nil {
@@ -442,7 +490,7 @@ func (r *Repository) GetMangaAggregate(id string) (MangaAggregate, error) {
 	if trackers == nil {
 		trackers = []TrackerBinding{}
 	}
-	return MangaAggregate{Manga: manga, Categories: categories, Chapters: chapters, Progress: progress, Trackers: trackers}, nil
+	return MangaAggregate{Manga: manga, Categories: categories, Chapters: chapters, Progress: progress, Trackers: trackers, ReadingSeconds: readingSeconds}, nil
 }
 
 func (r *Repository) ListHistory() ([]HistoryItem, error) {
@@ -495,12 +543,12 @@ func (r *Repository) ListHistory() ([]HistoryItem, error) {
 	for _, row := range rows {
 		manga, ok := mangaMap[row.MangaID]
 		if !ok {
-			log.Printf("history: skipping progress for missing manga %s", row.MangaID)
+			slog.Warn("history skipping progress for missing manga", "manga", row.MangaID)
 			continue
 		}
 		chapter, ok := chapterMap[row.LastReadChapterID]
 		if !ok {
-			log.Printf("history: skipping progress for missing chapter %s", row.LastReadChapterID)
+			slog.Warn("history skipping progress for missing chapter", "chapter", row.LastReadChapterID)
 			continue
 		}
 		out = append(out, HistoryItem{Manga: manga, Chapter: chapter, Progress: row})
@@ -552,8 +600,8 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 	_, err = r.db.Exec(`INSERT INTO manga(
 		id, source_id, source_manga_id, title, alt_titles, description,
 		authors, artists, genres, status, cover_url, in_library,
-		download_format, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		download_format, download_new_chapters, created_at, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title,
 		alt_titles = excluded.alt_titles,
@@ -568,7 +616,7 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 		manga.ID, manga.SourceID, manga.SourceMangaID, manga.Title,
 		manga.AltTitles, manga.Description, manga.Authors, manga.Artists,
 		manga.Genres, manga.Status, manga.CoverURL, manga.InLibrary,
-		manga.DownloadFormat, manga.CreatedAt, manga.UpdatedAt)
+		manga.DownloadFormat, manga.DownloadNewChapters, manga.CreatedAt, manga.UpdatedAt)
 	if err != nil {
 		return Manga{}, fmt.Errorf("upsert manga %s: %w", manga.ID, err)
 	}
@@ -627,7 +675,7 @@ func (r *Repository) GetManga(id string) (Manga, error) {
 	var manga Manga
 	err := r.db.Get(&manga, `SELECT id, source_id, source_manga_id, title,
 		alt_titles, description, authors, artists, genres, status, cover_url,
-		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, created_at, updated_at,
+		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, created_at, updated_at,
 		details_fetched_at
 		FROM manga WHERE id = ?`, id)
 	return manga, err
@@ -715,7 +763,8 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 // authoritative; a missing row leaves the external id empty.
 const chapterSelect = `SELECT c.id, c.manga_id, c.source_id,
 		cs.source_chapter_id, c.chapter_number, c.volume, c.title, c.language,
-		c.uploaded_at, c.scanlator, c.downloaded, c.download_path
+		c.uploaded_at, c.scanlator, c.downloaded, c.download_path,
+		COALESCE((SELECT q.status FROM download_queue q WHERE q.chapter_id=c.id), '') AS download_status
 	FROM chapters c
 	LEFT JOIN chapter_sources cs ON cs.chapter_id = c.id AND cs.source_id = c.source_id`
 
@@ -730,6 +779,27 @@ func (r *Repository) ListChapters(mangaID string) ([]Chapter, error) {
 	err := r.db.Select(&chapters, chapterSelect+` WHERE c.manga_id = ?
 		ORDER BY c.chapter_number IS NULL, c.chapter_number, cs.source_chapter_id`, mangaID)
 	return chapters, err
+}
+
+func (r *Repository) NextChapterIDs(mangaID, chapterID string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return []string{}, nil
+	}
+	var number *float64
+	if err := r.db.Get(&number, `SELECT chapter_number FROM chapters WHERE id=? AND manga_id=?`, chapterID, mangaID); err != nil {
+		return nil, err
+	}
+	if number == nil {
+		return []string{}, nil
+	}
+	var ids []string
+	err := r.db.Select(&ids, `SELECT c.id FROM chapters c LEFT JOIN download_queue q ON q.chapter_id=c.id
+		WHERE c.manga_id=? AND c.chapter_number>? AND c.downloaded=0 AND (q.status IS NULL OR q.status IN (?,?))
+		ORDER BY c.chapter_number LIMIT ?`, mangaID, *number, QueueFailed, QueueCanceled, limit)
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, err
 }
 
 func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingProgress, error) {
@@ -753,7 +823,12 @@ func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingPro
 	// Completion is monotonic: a later write that reports the chapter as
 	// unfinished (navigating back) must not clear an existing flag, which
 	// would disagree with remote tracker state.
-	_, err := r.db.Exec(`INSERT INTO reading_progress(
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return ReadingProgress{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`INSERT INTO reading_progress(
 		manga_id, last_read_chapter_id, last_read_page, total_pages, is_completed, last_read_at
 	) VALUES(?, ?, ?, ?, ?, ?)
 	ON CONFLICT(manga_id) DO UPDATE SET last_read_chapter_id=excluded.last_read_chapter_id,
@@ -765,7 +840,64 @@ func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingPro
 	if err != nil {
 		return ReadingProgress{}, err
 	}
+	eventID, err := identity.New()
+	if err != nil {
+		return ReadingProgress{}, err
+	}
+	if _, err := tx.Exec(`INSERT INTO history_events(id,manga_id,chapter_id,page,occurred_at) VALUES(?,?,?,?,?)`, eventID, progress.MangaID, progress.LastReadChapterID, progress.LastReadPage, progress.LastReadAt); err != nil {
+		return ReadingProgress{}, err
+	}
+	if progress.IsCompleted {
+		if _, err := tx.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at) VALUES(?,?,1,?)
+			ON CONFLICT(chapter_id) DO UPDATE SET read=1,read_at=excluded.read_at`, progress.LastReadChapterID, progress.MangaID, progress.LastReadAt); err != nil {
+			return ReadingProgress{}, err
+		}
+	}
+	if progress.SessionSeconds > 0 {
+		sessionID, err := identity.New()
+		if err != nil {
+			return ReadingProgress{}, err
+		}
+		if _, err := tx.Exec(`INSERT INTO reading_sessions(id,manga_id,seconds,occurred_at) VALUES(?,?,?,?)`, sessionID, progress.MangaID, progress.SessionSeconds, progress.LastReadAt); err != nil {
+			return ReadingProgress{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ReadingProgress{}, err
+	}
 	return r.GetReadingProgress(progress.MangaID)
+}
+
+func (r *Repository) ReadingSeconds(mangaID string) (int64, error) {
+	var seconds int64
+	err := r.db.Get(&seconds, `SELECT COALESCE(SUM(seconds), 0) FROM reading_sessions WHERE manga_id=?`, mangaID)
+	return seconds, err
+}
+
+func (r *Repository) TotalReadingSeconds() (int64, error) {
+	var seconds int64
+	err := r.db.Get(&seconds, `SELECT COALESCE(SUM(seconds), 0) FROM reading_sessions`)
+	return seconds, err
+}
+
+func (r *Repository) ReadingStats() (ReadingStats, error) {
+	var stats ReadingStats
+	if err := r.db.Get(&stats.ReadingSeconds, `SELECT COALESCE(SUM(seconds), 0) FROM reading_sessions`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.TitleCount, `SELECT COUNT(*) FROM manga WHERE in_library=1`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.ChapterCount, `SELECT COUNT(*) FROM chapters c JOIN manga m ON m.id=c.manga_id WHERE m.in_library=1`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Select(&stats.Daily, `SELECT date(occurred_at, 'unixepoch') AS date, SUM(seconds) AS seconds FROM reading_sessions GROUP BY date(occurred_at, 'unixepoch') ORDER BY date`); err != nil {
+		return ReadingStats{}, err
+	}
+	if stats.Daily == nil {
+		stats.Daily = []ReadingDay{}
+	}
+	return stats, nil
 }
 
 func (r *Repository) GetReadingProgress(mangaID string) (ReadingProgress, error) {
@@ -773,6 +905,147 @@ func (r *Repository) GetReadingProgress(mangaID string) (ReadingProgress, error)
 	err := r.db.Get(&p, `SELECT manga_id, last_read_chapter_id, last_read_page, total_pages,
 		is_completed, last_read_at FROM reading_progress WHERE manga_id = ?`, mangaID)
 	return p, err
+}
+
+func (r *Repository) SetSetting(key, value string) error {
+	key = strings.TrimSpace(key)
+	if key == "" || value == "" {
+		return errors.New("setting key and value are required")
+	}
+	_, err := r.db.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
+}
+
+func (r *Repository) GetSetting(key string) (Setting, error) {
+	var setting Setting
+	err := r.db.Get(&setting, `SELECT key,value FROM settings WHERE key=?`, strings.TrimSpace(key))
+	return setting, err
+}
+
+func (r *Repository) ListSettings() ([]Setting, error) {
+	var settings []Setting
+	err := r.db.Select(&settings, `SELECT key,value FROM settings ORDER BY key`)
+	return settings, err
+}
+
+func (r *Repository) SetChapterRead(chapterID, mangaID string, read bool) error {
+	chapterID = strings.TrimSpace(chapterID)
+	mangaID = strings.TrimSpace(mangaID)
+	if chapterID == "" || mangaID == "" {
+		return errors.New("chapter id and manga id are required")
+	}
+	var owner string
+	if err := r.db.Get(&owner, `SELECT manga_id FROM chapters WHERE id=?`, chapterID); err != nil {
+		return err
+	}
+	if owner != mangaID {
+		return errors.New("chapter does not belong to manga")
+	}
+	var readAt any
+	if read {
+		readAt = time.Now().Unix()
+	}
+	_, err := r.db.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at) VALUES(?,?,?,?)
+		ON CONFLICT(chapter_id) DO UPDATE SET read=excluded.read,read_at=excluded.read_at`, chapterID, mangaID, read, readAt)
+	return err
+}
+
+func (r *Repository) GetChapterRead(chapterID string) (ChapterReadState, error) {
+	var state ChapterReadState
+	err := r.db.Get(&state, `SELECT chapter_id,manga_id,read,read_at FROM chapter_read_state WHERE chapter_id=?`, strings.TrimSpace(chapterID))
+	return state, err
+}
+
+func (r *Repository) ListChapterRead(mangaID string) ([]ChapterReadState, error) {
+	var states []ChapterReadState
+	err := r.db.Select(&states, `SELECT chapter_id,manga_id,read,read_at FROM chapter_read_state WHERE manga_id=? ORDER BY chapter_id`, mangaID)
+	return states, err
+}
+
+func (r *Repository) ListHistoryEvents(limit int) ([]HistoryEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var events []HistoryEvent
+	err := r.db.Select(&events, `SELECT id,manga_id,chapter_id,page,occurred_at FROM history_events ORDER BY occurred_at DESC,id DESC LIMIT ?`, limit)
+	return events, err
+}
+
+func (r *Repository) DeleteHistoryEvent(id string) error {
+	result, err := r.db.Exec(`DELETE FROM history_events WHERE id=?`, strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	return requireChange(result, "delete history event")
+}
+
+func (r *Repository) RecordUpdate(mangaID, chapterID string, seenAt int64) (UpdateLog, error) {
+	id, err := identity.New()
+	if err != nil {
+		return UpdateLog{}, err
+	}
+	_, err = r.db.Exec(`INSERT INTO update_log(id,manga_id,chapter_id,seen_at) VALUES(?,?,?,?) ON CONFLICT(manga_id,chapter_id) DO NOTHING`, id, mangaID, chapterID, seenAt)
+	if err != nil {
+		return UpdateLog{}, err
+	}
+	var logEntry UpdateLog
+	err = r.db.Get(&logEntry, `SELECT id,manga_id,chapter_id,seen_at,acknowledged FROM update_log WHERE manga_id=? AND chapter_id=?`, mangaID, chapterID)
+	return logEntry, err
+}
+
+func (r *Repository) ListUpdateLogs(all bool) ([]UpdateLog, error) {
+	query := `SELECT id,manga_id,chapter_id,seen_at,acknowledged FROM update_log`
+	if !all {
+		query += ` WHERE acknowledged=0`
+	}
+	query += ` ORDER BY seen_at DESC,id DESC`
+	var logs []UpdateLog
+	err := r.db.Select(&logs, query)
+	return logs, err
+}
+
+func (r *Repository) AcknowledgeUpdates(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	marks := placeholders(len(ids))
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		args[index] = id
+	}
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var rows []struct {
+		ID        string `db:"id"`
+		ChapterID string `db:"chapter_id"`
+		MangaID   string `db:"manga_id"`
+	}
+	if err := tx.Select(&rows, `SELECT id,chapter_id,manga_id FROM update_log WHERE id IN (`+marks+`)`, args...); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE update_log SET acknowledged=1 WHERE id IN (`+marks+`)`, args...); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, err := tx.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at) VALUES(?,?,1,?) ON CONFLICT(chapter_id) DO UPDATE SET read=1,read_at=excluded.read_at`, row.ChapterID, row.MangaID, time.Now().Unix()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *Repository) SetLibraryUpdateState(status string, at int64) error {
+	_, err := r.db.Exec(`INSERT INTO library_update_state(id,last_run_at,last_status) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET last_run_at=excluded.last_run_at,last_status=excluded.last_status`, at, status)
+	return err
+}
+
+func (r *Repository) GetLibraryUpdateState() (LibraryUpdateState, error) {
+	var state LibraryUpdateState
+	err := r.db.Get(&state, `SELECT last_run_at,last_status FROM library_update_state WHERE id=1`)
+	return state, err
 }
 
 func (r *Repository) UpsertTrackerBinding(binding TrackerBinding) (TrackerBinding, error) {
@@ -833,7 +1106,8 @@ func (r *Repository) UpdateTrackerTracking(mangaID, trackerType string, score *f
 	return binding, nil
 }
 
-func (r *Repository) GetTrackerBinding(mangaID, trackerType string) (TrackerBinding, error) {	var b TrackerBinding
+func (r *Repository) GetTrackerBinding(mangaID, trackerType string) (TrackerBinding, error) {
+	var b TrackerBinding
 	err := r.db.Get(&b, `SELECT id, manga_id, tracker_type, remote_id, remote_title, remote_score,
 		remote_status, last_synced_chapter, total_remote_chapters, started_at, finished_at FROM tracker_bindings WHERE manga_id=? AND tracker_type=?`, mangaID, trackerType)
 	return b, err

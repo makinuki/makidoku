@@ -1,0 +1,240 @@
+package settings
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/makinuki/makidoku/internal/db"
+)
+
+type Definition struct {
+	Key         string
+	Type        string
+	Default     string
+	Description string
+	Validate    func(any) error
+}
+
+type Entry struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Default     string `json:"default"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+type Service struct {
+	repo  *db.Repository
+	mu    sync.RWMutex
+	cache map[string]string
+}
+
+func New(repo *db.Repository) *Service { return &Service{repo: repo} }
+
+func (s *Service) Get(key string) (string, error) {
+	definition, ok := definitions[key]
+	if !ok {
+		return "", fmt.Errorf("unknown setting %q", key)
+	}
+	s.mu.RLock()
+	value, cached := s.cache[key]
+	s.mu.RUnlock()
+	if cached {
+		return value, nil
+	}
+	setting, err := s.repo.GetSetting(key)
+	if err != nil {
+		value = definition.Default
+	} else {
+		value = setting.Value
+	}
+	s.mu.Lock()
+	if s.cache == nil {
+		s.cache = map[string]string{}
+	}
+	s.cache[key] = value
+	s.mu.Unlock()
+	return value, nil
+}
+
+func (s *Service) Set(key, raw string) error {
+	definition, ok := definitions[key]
+	if !ok {
+		return fmt.Errorf("unknown setting %q", key)
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return fmt.Errorf("setting %s must be valid JSON: %w", key, err)
+	}
+	if definition.Validate != nil {
+		if err := definition.Validate(value); err != nil {
+			return fmt.Errorf("invalid setting %s: %w", key, err)
+		}
+	}
+	if err := s.repo.SetSetting(key, raw); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.cache == nil {
+		s.cache = map[string]string{}
+	}
+	s.cache[key] = raw
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Service) List() ([]Entry, error) {
+	entries := make([]Entry, 0, len(definitions))
+	for _, definition := range definitionList {
+		value, err := s.Get(definition.Key)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, Entry{Key: definition.Key, Value: value, Default: definition.Default, Type: definition.Type, Description: definition.Description})
+	}
+	return entries, nil
+}
+
+func (s *Service) Reset(keys []string, all bool) error {
+	if all {
+		keys = make([]string, 0, len(definitions))
+		for key := range definitions {
+			keys = append(keys, key)
+		}
+	}
+	for _, key := range keys {
+		definition, ok := definitions[key]
+		if !ok {
+			return fmt.Errorf("unknown setting %q", key)
+		}
+		if err := s.repo.SetSetting(key, definition.Default); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.cache = map[string]string{}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Service) Duration(key string) (time.Duration, error) {
+	raw, err := s.Get(key)
+	if err != nil {
+		return 0, err
+	}
+	var value int64
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return 0, err
+	}
+	return time.Duration(value), nil
+}
+
+func (s *Service) Bool(key string) (bool, error) {
+	raw, err := s.Get(key)
+	if err != nil {
+		return false, err
+	}
+	var value bool
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return false, err
+	}
+	return value, nil
+}
+
+func (s *Service) Int(key string) (int, error) {
+	raw, err := s.Get(key)
+	if err != nil {
+		return 0, err
+	}
+	var value int
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
+func (s *Service) String(key string) (string, error) {
+	raw, err := s.Get(key)
+	if err != nil {
+		return "", err
+	}
+	var value string
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func number(min, max float64) func(any) error {
+	return func(value any) error {
+		n, ok := value.(float64)
+		if !ok || n < min || n > max {
+			return errors.New("number is outside the allowed range")
+		}
+		return nil
+	}
+}
+
+func enum(values ...string) func(any) error {
+	return func(value any) error {
+		text, ok := value.(string)
+		if !ok {
+			return errors.New("value must be a string")
+		}
+		for _, item := range values {
+			if text == item {
+				return nil
+			}
+		}
+		return errors.New("value is not supported")
+	}
+}
+
+var definitionList = []Definition{
+	{Key: "appearance.date_format", Type: "string", Default: `"relative"`, Description: "Timestamp display format", Validate: enum("relative", "absolute")},
+	{Key: "library.update_interval", Type: "duration", Default: "86400000000000", Description: "Automatic library update interval in nanoseconds", Validate: number(0, 30*24*60*60*1e9)},
+	{Key: "library.update_on_launch", Type: "boolean", Default: "false", Description: "Run a library update when the daemon starts", Validate: func(v any) error {
+		if _, ok := v.(bool); !ok {
+			return errors.New("value must be boolean")
+		}
+		return nil
+	}},
+	{Key: "reader.default_mode", Type: "string", Default: `"single"`, Description: "Default reader mode", Validate: enum("single", "double", "webtoon")},
+	{Key: "reader.direction", Type: "string", Default: `"ltr"`, Description: "Reader page direction", Validate: enum("ltr", "rtl")},
+	{Key: "reader.fit", Type: "string", Default: `"width"`, Description: "Reader image fit", Validate: enum("width", "height", "original")},
+	{Key: "downloads.auto_download", Type: "boolean", Default: "false", Description: "Automatically download new chapters", Validate: func(v any) error {
+		if _, ok := v.(bool); !ok {
+			return errors.New("value must be boolean")
+		}
+		return nil
+	}},
+	{Key: "downloads.download_ahead", Type: "number", Default: "0", Description: "Number of chapters to download ahead", Validate: number(0, 10)},
+	{Key: "downloads.concurrent", Type: "number", Default: "2", Description: "Concurrent downloads", Validate: number(1, 16)},
+	{Key: "tracking.auto_sync", Type: "boolean", Default: "true", Description: "Drain tracker synchronization jobs", Validate: func(v any) error {
+		if _, ok := v.(bool); !ok {
+			return errors.New("value must be boolean")
+		}
+		return nil
+	}},
+	{Key: "backup.auto_interval", Type: "duration", Default: "0", Description: "Automatic backup interval in nanoseconds", Validate: number(0, 30*24*60*60*1e9)},
+	{Key: "backup.auto_keep", Type: "number", Default: "5", Description: "Number of automatic backups to retain", Validate: number(1, 100)},
+	{Key: "browse.hide_nsfw", Type: "boolean", Default: "false", Description: "Hide NSFW sources from Browse", Validate: func(v any) error {
+		if _, ok := v.(bool); !ok {
+			return errors.New("value must be boolean")
+		}
+		return nil
+	}},
+	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "Daemon log level", Validate: enum("debug", "info", "warn", "error")},
+	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Processed image cache retention in days", Validate: number(1, 3650)},
+}
+
+var definitions = func() map[string]Definition {
+	out := make(map[string]Definition, len(definitionList))
+	for _, definition := range definitionList {
+		out[definition.Key] = definition
+	}
+	return out
+}()

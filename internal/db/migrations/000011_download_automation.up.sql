@@ -1,0 +1,1 @@
+ALTER TABLE manga ADD COLUMN download_new_chapters INTEGER NOT NULL DEFAULT 0;

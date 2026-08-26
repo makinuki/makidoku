@@ -71,6 +71,46 @@ func TestUpsertMangaAndChapterAssignOpaqueIDs(t *testing.T) {
 	}
 }
 
+func TestReadingSessionsAccumulateAndSummarize(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "session-title", Title: "Session title",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "session-chapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 1, TotalPages: 2, SessionSeconds: 17}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 2, TotalPages: 2, SessionSeconds: 8}); err != nil {
+		t.Fatal(err)
+	}
+	seconds, err := repo.ReadingSeconds(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seconds != 25 {
+		t.Fatalf("reading seconds = %d, want 25", seconds)
+	}
+}
+
+func TestReadingSessionRejectsNegativeSecondsAtSchemaBoundary(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "session-invalid", Title: "Invalid", Status: "ongoing", CoverURL: "cover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.DB().Exec(`INSERT INTO reading_sessions(id,manga_id,seconds,occurred_at) VALUES(?,?,?,?)`, "bad", manga.ID, -1, time.Now().Unix())
+	if err == nil {
+		t.Fatal("negative reading session was accepted")
+	}
+}
+
 func TestUpsertChapterPreservesDownloadedArtifact(t *testing.T) {
 	repo := testRepository(t)
 	manga, err := repo.UpsertManga(Manga{
@@ -355,6 +395,78 @@ func TestUpsertReadingProgressKeepsCompletion(t *testing.T) {
 	}
 	if !stored.IsCompleted {
 		t.Fatal("navigating back cleared the completed flag")
+	}
+}
+
+func TestSettingsRoundTripAndChapterReadState(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "settings", Title: "Settings", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "settings-chapter", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSetting("reader.default_mode", `"double"`); err != nil {
+		t.Fatal(err)
+	}
+	setting, err := repo.GetSetting("reader.default_mode")
+	if err != nil || setting.Value != `"double"` {
+		t.Fatalf("setting = %+v, err = %v", setting, err)
+	}
+	if err := repo.SetChapterRead(chapter.ID, manga.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	read, err := repo.GetChapterRead(chapter.ID)
+	if err != nil || !read.Read || read.MangaID != manga.ID {
+		t.Fatalf("read state = %+v, err = %v", read, err)
+	}
+}
+
+func TestUpsertReadingProgressAppendsHistoryEvent(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "history-event", Title: "History", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "history-chapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 1, TotalPages: 3}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := repo.ListHistoryEvents(10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+	if events[0].MangaID != manga.ID || events[0].ChapterID == nil || *events[0].ChapterID != chapter.ID {
+		t.Fatalf("event = %+v", events[0])
+	}
+}
+
+func TestAcknowledgeUpdatesMarksChapterRead(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "update-read", Title: "Update", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "update-chapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := repo.RecordUpdate(manga.ID, chapter.ID, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AcknowledgeUpdates([]string{entry.ID}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := repo.GetChapterRead(chapter.ID)
+	if err != nil || !state.Read {
+		t.Fatalf("read state = %+v, err = %v", state, err)
 	}
 }
 

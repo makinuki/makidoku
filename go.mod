@@ -3,6 +3,7 @@ module github.com/makinuki/makidoku
 go 1.26.2
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/coder/websocket v1.8.15
 	github.com/extism/go-sdk v1.7.1
 	github.com/go-chi/chi/v5 v5.3.1
@@ -16,6 +17,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240819160327-2d926c5d788a // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

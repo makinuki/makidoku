@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,9 +12,11 @@ import (
 
 	"github.com/makinuki/makidoku/internal/app"
 	"github.com/makinuki/makidoku/internal/config"
+	"github.com/makinuki/makidoku/internal/tray"
 )
 
 var serveTray bool
+var serveNoTray bool
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
@@ -24,10 +27,27 @@ var serveCmd = &cobra.Command{
 			return err
 		}
 
-		// The tray is built behind a tag so headless use does not require cgo.
-		if serveTray {
-			if err := runTrayStub(); err != nil {
-				log.Printf("tray: %v (continuing without tray)", err)
+		enableTray := serveTray && !serveNoTray
+
+		if enableTray {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			addr := net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port))
+			serverErr := make(chan error, 1)
+			go func() {
+				serverErr <- server.Run(ctx)
+			}()
+
+			tray.Run(ctx, addr)
+
+			stop()
+			select {
+			case err := <-serverErr:
+				return err
+			default:
+				<-serverErr
+				return nil
 			}
 		}
 
@@ -41,9 +61,6 @@ func init() {
 	serveCmd.Flags().IntVar(&cfg.Port, "port", config.DefaultPort(), "HTTP port")
 	serveCmd.Flags().StringVar(&cfg.Bind, "bind", "127.0.0.1", "bind address")
 	serveCmd.Flags().BoolVar(&serveTray, "tray", false, "run with system tray (requires tray build tag)")
+	serveCmd.Flags().BoolVar(&serveNoTray, "no-tray", false, "disable system tray even when built with tray tag")
 	rootCmd.AddCommand(serveCmd)
 }
-
-// runTrayStub is replaced by a real systray implementation behind
-// `//go:build tray`.
-func runTrayStub() error { return nil }

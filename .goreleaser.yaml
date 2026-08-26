@@ -1,0 +1,52 @@
+version: 2
+
+project_name: makidoku
+
+before:
+  hooks:
+    - pnpm --dir web install --frozen-lockfile
+    - pnpm --dir web build
+
+builds:
+  - id: makidoku
+    main: .
+    binary: makidoku
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    flags:
+      - -trimpath
+
+archives:
+  - builds: [makidoku]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  footer: |
+    ### Tray builds
+
+    Headless binaries above are `CGO_ENABLED=0` cross-compiled and have no system tray.
+    Tray-enabled binaries (`makidoku-tray`) are built separately on per-OS runners with `CGO_ENABLED=1 -tags tray` via the release workflow and attached to the same GitHub Release.

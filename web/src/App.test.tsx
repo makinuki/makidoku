@@ -842,7 +842,9 @@ describe("MakiDoku app shell", () => {
     );
     // The settings data is re-fetched so restored categories and preferences show up.
     await waitFor(() => {
-      const categoryCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/categories");
+      const categoryCalls = fetchMock.mock.calls.filter(
+        ([url]) => String(url) === "/api/categories",
+      );
       expect(categoryCalls.length).toBeGreaterThanOrEqual(2);
     });
   });

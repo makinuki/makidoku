@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Download, FolderOpen, LoaderCircle, RefreshCw, Trash2, X } from "lucide-react";
-import { api } from "../../api";
-import type { CatalogEntry, Category, Source, TrackerInfo, TrackerSyncJob } from "../../types";
+import { Check, Download, FolderOpen, LoaderCircle, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { api, type RuntimeSetting } from "../../api";
+import type { Category, TrackerInfo, TrackerSyncJob } from "../../types";
 import { Modal } from "../../components/Modal";
 import { ErrorState, PageHeader } from "../../components/States";
 import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 
 export function SettingsPage() {
-  const [sources, setSources] = useState<Source[]>([]);
-  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [trackers, setTrackers] = useState<TrackerInfo[]>([]);
   const [syncJobs, setSyncJobs] = useState<TrackerSyncJob[]>([]);
@@ -21,78 +20,44 @@ export function SettingsPage() {
   const [loginForms, setLoginForms] = useState<Record<string, { user: string; pass: string }>>({});
   const [loggingIn, setLoggingIn] = useState<string>();
   const [pendingOAuth, setPendingOAuth] = useState<string>();
-  const [cookieSource, setCookieSource] = useState("");
-  const [cookie, setCookie] = useState("");
-  const [userAgent, setUserAgent] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [installing, setInstalling] = useState<string[]>([]);
-  const [removing, setRemoving] = useState<string>();
-  const [refreshing, setRefreshing] = useState(false);
-  const [confirmRemoval, setConfirmRemoval] = useState<Source>();
   const [confirmImport, setConfirmImport] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [creating, setCreating] = useState(false);
   const [confirmCategoryRemoval, setConfirmCategoryRemoval] = useState<Category>();
   const [removingCategory, setRemovingCategory] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string>();
   const [exporting, setExporting] = useState(false);
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSetting[]>([]);
+  const [readingSeconds, setReadingSeconds] = useState(0);
+  const [titleCount, setTitleCount] = useState(0);
+  const [chapterCount, setChapterCount] = useState(0);
+  const [savingSetting, setSavingSetting] = useState<string>();
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(""), 4000);
     return () => window.clearTimeout(timer);
   }, [status]);
   const refresh = async () => {
-    setRefreshing(true);
     try {
-      const [installed, entries, groups, services, jobs] = await Promise.all([
-        api.sources(),
-        api.catalog(),
+      const [groups, services, jobs, persisted, stats] = await Promise.all([
         api.categories(),
         api.trackers(),
         api.syncJobs(),
+        api.settings(),
+        api.stats(),
       ]);
-      setSources(installed);
-      setCatalog(entries);
       setCategories(groups);
       setTrackers(services);
       setSyncJobs(jobs.slice(0, 5));
+      setRuntimeSettings(persisted);
+      setReadingSeconds(stats.readingSeconds || 0);
+      setTitleCount(stats.titleCount || 0);
+      setChapterCount(stats.chapterCount || 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load settings");
-    } finally {
-      setRefreshing(false);
-    }
-  };
-  // Install and removal surface their outcome immediately: the clicked action
-  // shows a busy state, failures land in the banner, successes in the status
-  // line at the top of the page. Installs run concurrently per plugin.
-  const install = async (entry: CatalogEntry) => {
-    setInstalling((ids) => [...ids, entry.id]);
-    setError("");
-    try {
-      await api.installSource(entry.id);
-      setStatus(`${entry.name} installed.`);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to install plugin");
-    } finally {
-      setInstalling((ids) => ids.filter((id) => id !== entry.id));
-    }
-  };
-  const uninstall = async (source: Source) => {
-    setRemoving(source.id);
-    setError("");
-    try {
-      await api.uninstallSource(source.id);
-      setStatus(`${source.name} removed.`);
-      setConfirmRemoval(undefined);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to remove plugin");
-    } finally {
-      setRemoving(undefined);
     }
   };
   useEffect(() => {
@@ -163,23 +128,6 @@ export function SettingsPage() {
       setError(e instanceof Error ? e.message : "Unable to remove category");
     } finally {
       setRemovingCategory(false);
-    }
-  };
-  // Clearance and credential writes report their outcome in the same banner
-  // and status line as the rest of the page; a rejected submission keeps the
-  // entered values so they can be corrected.
-  const submitClearance = async () => {
-    setClearing(true);
-    setError("");
-    try {
-      await api.submitClearance(cookieSource, cookie, userAgent);
-      setCookie("");
-      setUserAgent("");
-      setStatus("Clearance submitted.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to submit clearance");
-    } finally {
-      setClearing(false);
     }
   };
   const saveToken = async (trackerName: string) => {
@@ -255,6 +203,23 @@ export function SettingsPage() {
       setDisconnecting(undefined);
     }
   };
+  const saveSetting = async (setting: RuntimeSetting, value: unknown) => {
+    setSavingSetting(setting.key);
+    setError("");
+    try {
+      await api.updateSetting(setting.key, value);
+      setRuntimeSettings((current) =>
+        current.map((item) =>
+          item.key === setting.key ? { ...item, value: value as RuntimeSetting["value"] } : item,
+        ),
+      );
+      setStatus(`${setting.key} updated.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save setting");
+    } finally {
+      setSavingSetting(undefined);
+    }
+  };
   // The export is fetched to a blob instead of a plain link so a failed
   // request surfaces as a message rather than navigating away from the app.
   const exportJson = async () => {
@@ -282,136 +247,91 @@ export function SettingsPage() {
       <PageHeader eyebrow="Local configuration" title="Settings" />
       {status && <p className="text-sm text-emerald-300">{status}</p>}
       {error && <ErrorState message={error} />}
+      {runtimeSettings.length > 0 && (
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+          <h2 className="font-semibold">Runtime preferences</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Values are stored by the daemon and apply across desktop sessions.
+          </p>
+          <div className="mt-4 divide-y divide-zinc-800 border-y border-zinc-800">
+            {runtimeSettings.map((setting) => {
+              const parsed = setting.value;
+              const disabled = savingSetting === setting.key;
+              const options = settingOptions[setting.key];
+              return (
+                <label
+                  key={`${setting.key}:${setting.value}`}
+                  className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_13rem] sm:items-center"
+                >
+                  <span>
+                    <span className="block text-sm font-medium">{settingLabel(setting.key)}</span>
+                    <span className="mt-1 block text-xs text-zinc-500">{setting.description}</span>
+                  </span>
+                  {typeof parsed === "boolean" ? (
+                    <input
+                      type="checkbox"
+                      className="size-4 justify-self-start accent-amber-400 sm:justify-self-end"
+                      checked={parsed}
+                      disabled={disabled}
+                      onChange={(event) => void saveSetting(setting, event.target.checked)}
+                    />
+                  ) : options ? (
+                    <select
+                      className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                      value={String(parsed)}
+                      disabled={disabled}
+                      onChange={(event) => void saveSetting(setting, event.target.value)}
+                    >
+                      {options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="number"
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                      defaultValue={String(parsed)}
+                      disabled={disabled}
+                      onBlur={(event) => {
+                        const next = Number(event.target.value);
+                        if (next !== parsed) void saveSetting(setting, next);
+                      }}
+                    />
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </section>
+      )}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+        <h2 className="font-semibold">Reading statistics</h2>
+        <p className="mt-1 text-sm text-zinc-500">Time recorded by the desktop reader.</p>
+        <div className="mt-4 flex items-baseline gap-3">
+          <strong className="text-3xl font-semibold text-amber-300">
+            {formatReadingTime(readingSeconds)}
+          </strong>
+          <span className="text-xs uppercase tracking-wide text-zinc-500">total reading time</span>
+        </div>
+        <div className="mt-4 flex gap-6 text-xs text-zinc-500">
+          <span>{titleCount} titles</span>
+          <span>{chapterCount} chapters</span>
+        </div>
+      </section>
       <section>
         <PageHeader title="Plugins">
-          <button
-            onClick={() => void refresh()}
-            aria-label="Refresh plugins"
-            disabled={refreshing}
-            className="rounded-lg border border-zinc-700 p-2 text-zinc-300 disabled:opacity-50"
+          <Link
+            to="/browse?tab=plugins"
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 hover:border-zinc-500"
           >
-            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
-          </button>
+            Open Browse plugins
+          </Link>
         </PageHeader>
-        <div className="grid gap-3 md:grid-cols-2">
-          {sources.map((source) => (
-            <div key={source.id} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-              <div className="flex items-center gap-3">
-                <span className="grid size-10 place-items-center rounded-full bg-zinc-800 text-xs font-bold">
-                  {source.name.slice(0, 2).toUpperCase()}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <b className="block truncate">{source.name}</b>
-                  <small className="text-zinc-500">
-                    v{source.version} · {source.lang}
-                  </small>
-                </span>
-                <button
-                  onClick={() => setConfirmRemoval(source)}
-                  aria-label={`Uninstall ${source.name}`}
-                  disabled={removing !== undefined}
-                  className="rounded-lg p-2 text-red-300 hover:bg-red-950/50 disabled:opacity-50"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <h3 className="font-semibold">Available plugins</h3>
-          <div className="mt-3 grid gap-2">
-            {catalog
-              .filter((entry) => !entry.installed)
-              .map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center gap-3 rounded-lg border border-zinc-800 p-3"
-                >
-                  <span className="min-w-0 flex-1">
-                    <b className="block">{entry.name}</b>
-                    <small className="text-zinc-500">
-                      v{entry.version} ·{" "}
-                      {entry.compatible ? "Compatible" : entry.incompatibility || "Not compatible"}
-                    </small>
-                  </span>
-                  <button
-                    disabled={!entry.compatible || installing.includes(entry.id)}
-                    onClick={() => void install(entry)}
-                    className="flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
-                  >
-                    {installing.includes(entry.id) && (
-                      <LoaderCircle size={13} className="animate-spin" />
-                    )}
-                    {installing.includes(entry.id) ? "Installing…" : "Install"}
-                  </button>
-                </div>
-              ))}
-          </div>
-        </div>
-        <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <h3 className="font-semibold">Cloudflare clearance</h3>
-          <p className="mt-1 text-xs text-zinc-500">
-            Submit browser clearance for a protected plugin. MakiDoku stores it; the UI never reads
-            it back.
-          </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <select
-              value={cookieSource}
-              onChange={(e) => setCookieSource(e.target.value)}
-              aria-label="Plugin"
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-            >
-              <option value="">Plugin</option>
-              {sources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.name}
-                </option>
-              ))}
-            </select>
-            <input
-              value={cookie}
-              onChange={(e) => setCookie(e.target.value)}
-              placeholder="cf_clearance cookie"
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-            />
-            <input
-              value={userAgent}
-              onChange={(e) => setUserAgent(e.target.value)}
-              placeholder="Browser user agent"
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
-            />
-          </div>
-          <button
-            onClick={() => void submitClearance()}
-            disabled={!cookieSource || !cookie || !userAgent || clearing}
-            className="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
-          >
-            {clearing ? "Submitting…" : "Submit clearance"}
-          </button>
-        </div>
-        {confirmRemoval && (
-          <Modal title="Remove plugin" onClose={() => setConfirmRemoval(undefined)}>
-            <p className="text-sm text-zinc-400">
-              Remove {confirmRemoval.name}? Downloaded chapters and reading progress stay on disk.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmRemoval(undefined)}
-                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={removing !== undefined}
-                onClick={() => void uninstall(confirmRemoval)}
-                className="rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {removing === confirmRemoval.id ? "Removing…" : "Remove"}
-              </button>
-            </div>
-          </Modal>
-        )}
+        <p className="text-sm text-zinc-500">
+          Installation, updates, removal, and browser clearance are managed from Browse.
+        </p>
       </section>
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
         <h2 className="font-semibold">Categories</h2>
@@ -703,4 +623,47 @@ export function SettingsPage() {
       </section>
     </div>
   );
+}
+
+const settingOptions: Record<string, Array<{ value: string; label: string }>> = {
+  "appearance.date_format": [
+    { value: "relative", label: "Relative" },
+    { value: "absolute", label: "Absolute" },
+  ],
+  "reader.default_mode": [
+    { value: "single", label: "Single page" },
+    { value: "double", label: "Double page" },
+    { value: "webtoon", label: "Webtoon" },
+  ],
+  "reader.direction": [
+    { value: "ltr", label: "Left to right" },
+    { value: "rtl", label: "Right to left" },
+  ],
+  "reader.fit": [
+    { value: "width", label: "Fit width" },
+    { value: "height", label: "Fit height" },
+    { value: "original", label: "Original size" },
+  ],
+  "advanced.log_level": [
+    { value: "debug", label: "Debug" },
+    { value: "info", label: "Info" },
+    { value: "warn", label: "Warning" },
+    { value: "error", label: "Error" },
+  ],
+};
+
+function settingLabel(key: string) {
+  return key
+    .split(".")
+    .at(-1)!
+    .replaceAll("_", " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function formatReadingTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 }

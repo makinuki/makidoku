@@ -17,6 +17,13 @@ import type {
   TrackerStatus,
   TrackerSyncJob,
   FilterSchema,
+  HistoryEvent,
+  UpdateLog,
+  LibraryUpdateState,
+  Manga,
+  MigrationSource,
+  Recommendation,
+  ReadingStats,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -49,6 +56,11 @@ export const api = {
     request<Aggregate>(`/api/manga/${idPath(mangaId)}/library`, { method: "POST" }),
   setLibrary: (mangaId: string, enabled: boolean) =>
     request(`/api/manga/${idPath(mangaId)}/library`, { method: enabled ? "POST" : "DELETE" }),
+  setAutoDownload: (mangaId: string, enabled: boolean) =>
+    request<Manga>(`/api/manga/${idPath(mangaId)}/downloads`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
   categories: () => request<Category[]>("/api/categories"),
   createCategory: (name: string) =>
     request<Category>("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),
@@ -57,16 +69,45 @@ export const api = {
     request(`/api/manga/${idPath(mangaId)}/categories/${category}`, {
       method: enabled ? "POST" : "DELETE",
     }),
-  history: () =>
-    request<Array<{ manga: LibraryManga; chapter: import("./types").Chapter; progress: Progress }>>(
-      "/api/history",
-    ),
+  history: () => request<HistoryEvent[]>("/api/history"),
+  deleteHistoryEvent: (id: string) =>
+    request<void>(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setChapterRead: (chapterId: string, read: boolean) =>
+    request(`/api/chapters/${encodeURIComponent(chapterId)}/read`, {
+      method: "POST",
+      body: JSON.stringify({ read }),
+    }),
+  setMangaChaptersRead: (mangaId: string, chapterIds: string[], read: boolean) =>
+    request(`/api/manga/${encodeURIComponent(mangaId)}/chapters/read`, {
+      method: "POST",
+      body: JSON.stringify({ chapterIds, read }),
+    }),
+  updates: (all = false) => request<UpdateLog[]>(`/api/updates${all ? "?all=true" : ""}`),
+  updateState: () => request<LibraryUpdateState | null>("/api/updates/state"),
+  runUpdates: () => request<{ new: number }>("/api/updates/run", { method: "POST" }),
+  acknowledgeUpdates: (ids: string[]) =>
+    request<void>("/api/updates/ack", { method: "POST", body: JSON.stringify({ ids }) }),
+  settings: () => request<RuntimeSetting[]>("/api/settings"),
+  updateSetting: (key: string, value: unknown) =>
+    request(`/api/settings/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    }),
   sources: () => request<Source[]>("/api/sources"),
   catalog: () => request<CatalogEntry[]>("/api/sources/catalog"),
   installSource: (id: string) =>
     request<Source>("/api/sources/install", { method: "POST", body: JSON.stringify({ id }) }),
   uninstallSource: (id: string) =>
     request<void>(`/api/sources/${encodeURIComponent(id)}/`, { method: "DELETE" }),
+  updateSource: (id: string) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}/update`, { method: "POST" }),
+  updateAllSources: () => request<Source[]>("/api/sources/update-all", { method: "POST" }),
+  pinSource: (id: string, pinned: boolean) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}/`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    }),
+  sourceIcon: (id: string) => `/api/sources/${encodeURIComponent(id)}/icon`,
   sourceFilters: (id: string) =>
     request<FilterSchema[]>(`/api/sources/${encodeURIComponent(id)}/filters`),
   submitClearance: (id: string, cookie: string, userAgent: string) =>
@@ -89,7 +130,14 @@ export const api = {
     request(`/api/download/${id}/${action}`, { method: "POST" }),
   clearFinishedDownloads: () =>
     request<{ removed: number }>("/api/download/clear", { method: "POST" }),
-  progress: (mangaId: string, chapterId: string, page: number, total: number, complete = false) =>
+  progress: (
+    mangaId: string,
+    chapterId: string,
+    page: number,
+    total: number,
+    complete = false,
+    sessionSeconds = 0,
+  ) =>
     request<Progress>(`/api/progress${complete ? "/complete" : ""}`, {
       method: "POST",
       body: JSON.stringify({
@@ -99,8 +147,12 @@ export const api = {
         totalPages: total,
         isCompleted: complete,
         lastReadAt: 0,
+        sessionSeconds,
       }),
     }),
+  stats: () => request<ReadingStats>("/api/stats"),
+  suggestions: (mangaId: string) =>
+    request<Recommendation[]>(`/api/manga/${idPath(mangaId)}/suggestions`),
   progressGet: (mangaId: string) => request<Progress | null>(`/api/progress/${idPath(mangaId)}`),
   trackerBindings: (mangaId: string) =>
     request<Binding[]>(`/api/manga/${idPath(mangaId)}/trackers/`),
@@ -156,6 +208,9 @@ export const api = {
     request<MigrationCandidates>(
       `/api/manga/${idPath(mangaId)}/migration/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`,
     ),
+  migrationSources: () => request<MigrationSource[]>("/api/migration/sources"),
+  migrationSourceManga: (sourceId: string) =>
+    request<Manga[]>(`/api/migration/sources/${encodeURIComponent(sourceId)}/manga`),
   applyMigration: (mangaId: string, replacementSourceId: string, replacementMangaId: string) =>
     request<MigrationResponse>(`/api/manga/${idPath(mangaId)}/migration/apply`, {
       method: "POST",
@@ -171,3 +226,11 @@ export const api = {
 };
 
 export type Api = typeof api;
+
+export type RuntimeSetting = {
+  key: string;
+  value: string | number | boolean;
+  default: string | number | boolean;
+  type: string;
+  description: string;
+};

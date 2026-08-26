@@ -9,9 +9,11 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<LibraryManga[]>([]);
   const [error, setError] = useState("");
+  const [searching, setSearching] = useState(false);
   useEffect(() => {
     // Stale responses are dropped: only the latest query may update the list.
     let active = true;
+    setSearching(true);
     const timer = window.setTimeout(
       () =>
         void api
@@ -23,6 +25,9 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
           })
           .catch((e) => {
             if (active) setError(e instanceof Error ? e.message : "Search failed");
+          })
+          .finally(() => {
+            if (active) setSearching(false);
           }),
       200,
     );
@@ -77,7 +82,7 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
               {error}
             </p>
           )}
-          {!items.length && !error && (
+          {!items.length && !error && !searching && (
             <p className="p-8 text-center text-sm text-zinc-500">No library matches.</p>
           )}
         </div>

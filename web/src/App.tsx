@@ -8,7 +8,9 @@ import { HistoryPage } from "./features/history/HistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { ReaderPage } from "./features/reader/ReaderPage";
 import { SettingsPage } from "./features/settings/SettingsPage";
+import { UpdatesPage } from "./features/updates/UpdatesPage";
 import { GlobalSearch } from "./features/search/GlobalSearch";
+import { RecommendationsPage } from "./features/manga/RecommendationsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
@@ -33,8 +35,10 @@ export default function App() {
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/browse" element={<BrowsePage />} />
           <Route path="/manga/:mangaId" element={<DetailsPage />} />
+          <Route path="/manga/:mangaId/recommendations" element={<RecommendationsPage />} />
           <Route path="/downloads" element={<DownloadsPage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/updates" element={<UpdatesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/reader/:mangaId/:chapterId" element={<ReaderPage />} />
           <Route path="/reader" element={<ReaderPage />} />

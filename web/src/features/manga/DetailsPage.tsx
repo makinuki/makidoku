@@ -22,6 +22,7 @@ import type {
   Category,
   Chapter,
   MigrationCandidate,
+  Recommendation,
   TrackerSearchResult,
   TrackerStatus,
   TrackerInfo,
@@ -29,7 +30,8 @@ import type {
 import { CoverImg } from "../../components/CoverImg";
 import { Modal } from "../../components/Modal";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
-import { relativeTime } from "../../time";
+import { formatTimestamp } from "../../time";
+import { useDateFormat } from "../../hooks/useDateFormat";
 import { TrackerLogo, trackerLabel } from "../../components/TrackerLogo";
 import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 
@@ -53,6 +55,15 @@ export function DetailsPage() {
   const [enqueueError, setEnqueueError] = useState("");
   const [queuedNote, setQueuedNote] = useState("");
   const [languageFilter, setLanguageFilter] = useState<string>();
+  const [chapterSort, setChapterSort] = useState<"number-desc" | "number-asc" | "source">(
+    "number-desc",
+  );
+  const [chapterFilter, setChapterFilter] = useState<"all" | "unread" | "downloaded">("all");
+  const [autoDownloadBusy, setAutoDownloadBusy] = useState(false);
+  const [suggestions, setSuggestions] = useState<Recommendation[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false);
+  const dateFormat = useDateFormat();
   const load = async () => {
     setLoading(true);
     setError("");
@@ -109,10 +120,13 @@ export function DetailsPage() {
   const languages = Array.from(
     new Set(chapters.map((chapter) => chapter.language).filter(Boolean) as string[]),
   ).sort();
-  const visible = languageFilter
-    ? chapters.filter((chapter) => chapter.language === languageFilter)
-    : chapters;
-  const groups = groupByVolume(visible);
+  const visible = chapters.filter((chapter) => {
+    if (languageFilter && chapter.language !== languageFilter) return false;
+    if (chapterFilter === "unread" && chapter.read) return false;
+    if (chapterFilter === "downloaded" && !chapter.downloaded) return false;
+    return true;
+  });
+  const groups = groupByVolume(visible, chapterSort);
   const toggle = (id: string) =>
     setSelected((items) =>
       items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
@@ -157,6 +171,40 @@ export function DetailsPage() {
       setEnqueueing(false);
     }
   };
+  const setRead = async (chapterIds: string[], read: boolean) => {
+    setActionError("");
+    try {
+      await api.setMangaChaptersRead(manga.id, chapterIds, read);
+      await reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Unable to update read state");
+    }
+  };
+  const toggleAutoDownload = async () => {
+    setAutoDownloadBusy(true);
+    setActionError("");
+    try {
+      await api.setAutoDownload(manga.id, !manga.downloadNewChapters);
+      await reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Unable to update automatic downloads");
+    } finally {
+      setAutoDownloadBusy(false);
+    }
+  };
+  const loadSuggestions = async () => {
+    setSuggestionsLoading(true);
+    setActionError("");
+    try {
+      const items = await api.suggestions(manga.id);
+      setSuggestions(items);
+      setSuggestionsLoaded(true);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Unable to load suggestions");
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  };
   return (
     <div className="mx-auto max-w-7xl p-5 sm:p-8">
       <button
@@ -174,6 +222,28 @@ export function DetailsPage() {
             {data.sourceName || "Unknown plugin"} · {manga.status || "Unknown status"}
           </p>
           <h1 className="mt-2 text-3xl font-semibold">{manga.title}</h1>
+          {(manga.authors || manga.artists || manga.altTitles) && (
+            <dl className="mt-4 grid max-w-3xl gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+              {manga.authors && (
+                <div>
+                  <dt className="text-xs text-zinc-500">Authors</dt>
+                  <dd className="text-zinc-300">{parseList(manga.authors).join(", ")}</dd>
+                </div>
+              )}
+              {manga.artists && (
+                <div>
+                  <dt className="text-xs text-zinc-500">Artists</dt>
+                  <dd className="text-zinc-300">{parseList(manga.artists).join(", ")}</dd>
+                </div>
+              )}
+              {manga.altTitles && (
+                <div className="sm:col-span-2">
+                  <dt className="text-xs text-zinc-500">Alternative titles</dt>
+                  <dd className="text-zinc-300">{parseList(manga.altTitles).join(" · ")}</dd>
+                </div>
+              )}
+            </dl>
+          )}
           {manga.description && (
             <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-zinc-400">
               {manga.description}
@@ -205,6 +275,16 @@ export function DetailsPage() {
               <Bookmark size={15} />{" "}
               {libraryBusy ? "Updating…" : manga.inLibrary ? "In library" : "Add to library"}
             </button>
+            {data.sourceUrl && (
+              <a
+                href={data.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
+              >
+                <ExternalLink size={15} /> Open source site
+              </a>
+            )}
             <button
               onClick={() => setModal("tracker")}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
@@ -227,10 +307,38 @@ export function DetailsPage() {
             </button>
             {manga.detailsFetchedAt && (
               <small className="self-center text-xs text-zinc-500">
-                Updated {relativeTime(manga.detailsFetchedAt)}
+                Updated {formatTimestamp(manga.detailsFetchedAt, dateFormat)}
               </small>
             )}
           </div>
+          {(data.readingSeconds ?? 0) > 0 && (
+            <p className="mt-4 text-xs text-zinc-500">
+              Reading time: {formatReadingTime(data.readingSeconds ?? 0)}
+            </p>
+          )}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(manga.downloadNewChapters)}
+            disabled={autoDownloadBusy}
+            onClick={() => void toggleAutoDownload()}
+            className="mt-4 inline-flex items-center gap-2 text-sm text-zinc-300 disabled:opacity-50"
+          >
+            <span
+              className={`relative h-5 w-9 rounded-full border transition-colors ${
+                manga.downloadNewChapters
+                  ? "border-amber-400 bg-amber-400"
+                  : "border-zinc-700 bg-zinc-900"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 size-3.5 rounded-full bg-zinc-950 transition-transform ${
+                  manga.downloadNewChapters ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </span>
+            Automatically download new chapters
+          </button>
           {refreshError && <p className="mt-3 text-xs text-red-300">{refreshError}</p>}
           {actionError && <p className="mt-3 text-xs text-red-300">{actionError}</p>}
         </div>
@@ -264,6 +372,18 @@ export function DetailsPage() {
         <PageHeader title="Chapters">
           <div className="flex flex-wrap gap-2">
             <button
+              onClick={() =>
+                void setRead(
+                  visible.map((item) => item.id),
+                  true,
+                )
+              }
+              disabled={visible.length === 0}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs disabled:opacity-50"
+            >
+              Mark visible read
+            </button>
+            <button
               onClick={() => setSelected(chapters.map((item) => item.id))}
               className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"
             >
@@ -279,6 +399,34 @@ export function DetailsPage() {
             </button>
           </div>
         </PageHeader>
+        <div className="mb-5 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-zinc-400">
+            <span>Sort</span>
+            <select
+              aria-label="Chapter sort"
+              value={chapterSort}
+              onChange={(event) => setChapterSort(event.target.value as typeof chapterSort)}
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+            >
+              <option value="number-desc">Number, newest first</option>
+              <option value="number-asc">Number, oldest first</option>
+              <option value="source">Source order</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-zinc-400">
+            <span>Show</span>
+            <select
+              aria-label="Chapter filter"
+              value={chapterFilter}
+              onChange={(event) => setChapterFilter(event.target.value as typeof chapterFilter)}
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+            >
+              <option value="all">All chapters</option>
+              <option value="unread">Unread only</option>
+              <option value="downloaded">Downloaded only</option>
+            </select>
+          </label>
+        </div>
         {enqueueError && (
           <p role="alert" className="mb-4 text-xs text-red-300">
             {enqueueError}
@@ -312,7 +460,10 @@ export function DetailsPage() {
               </h3>
               <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
                 {group.chapters.map((chapter) => (
-                  <label key={chapter.id} className="flex items-center gap-3 p-4 hover:bg-zinc-900">
+                  <div
+                    key={chapter.id}
+                    className={`flex items-center gap-3 p-4 hover:bg-zinc-900 ${chapter.read ? "text-zinc-500" : ""}`}
+                  >
                     <input
                       type="checkbox"
                       checked={selected.includes(chapter.id)}
@@ -329,7 +480,24 @@ export function DetailsPage() {
                       <span className="text-xs text-zinc-500">{chapterMeta(chapter)}</span>
                     </Link>
                     {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
-                  </label>
+                    <button
+                      type="button"
+                      aria-label={`${chapter.read ? "Mark unread" : "Mark read"} ${formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}`}
+                      onClick={() =>
+                        void api
+                          .setChapterRead(chapter.id, !chapter.read)
+                          .then(reload)
+                          .catch((e) =>
+                            setActionError(
+                              e instanceof Error ? e.message : "Unable to update read state",
+                            ),
+                          )
+                      }
+                      className={`rounded-lg p-1.5 ${chapter.read ? "text-amber-300" : "text-zinc-600 hover:text-amber-300"}`}
+                    >
+                      <Check size={16} />
+                    </button>
+                  </div>
                 ))}
               </div>
             </section>
@@ -341,6 +509,54 @@ export function DetailsPage() {
           />
         )}
       </section>
+      {(data.trackers ?? []).some((binding) => sameTracker(binding.trackerType, "anilist")) && (
+        <section className="mt-10">
+          <PageHeader title="Suggestions">
+            {!suggestionsLoaded && (
+              <button
+                onClick={() => void loadSuggestions()}
+                disabled={suggestionsLoading}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs disabled:opacity-50"
+              >
+                {suggestionsLoading && <LoaderCircle size={13} className="animate-spin" />}
+                {suggestionsLoading ? "Loading…" : "See recommendations"}
+              </button>
+            )}
+          </PageHeader>
+          {suggestionsLoaded && suggestions.length > 0 && (
+            <>
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {suggestions.map((item) => (
+                  <article key={item.remoteId} className="w-36 shrink-0">
+                    <div className="aspect-3/4 overflow-hidden rounded-lg bg-zinc-900">
+                      {item.coverUrl ? (
+                        <img src={item.coverUrl} alt="" className="size-full object-cover" />
+                      ) : (
+                        <div className="grid size-full place-items-center text-xs text-zinc-600">
+                          No cover
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-xs font-medium">{item.title}</p>
+                    {item.score != null && (
+                      <small className="text-zinc-500">Score {item.score.toFixed(1)}</small>
+                    )}
+                  </article>
+                ))}
+              </div>
+              <Link
+                to={`/manga/${encodeURIComponent(manga.id)}/recommendations`}
+                className="mt-3 inline-flex text-xs text-amber-300 hover:text-amber-200"
+              >
+                See all recommendations
+              </Link>
+            </>
+          )}
+          {suggestionsLoaded && suggestions.length === 0 && (
+            <p className="text-sm text-zinc-500">No recommendations available.</p>
+          )}
+        </section>
+      )}
       {error && (
         <div className="mt-5">
           <ErrorState message={error} />
@@ -370,6 +586,14 @@ export function DetailsPage() {
   );
 }
 
+function formatReadingTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
 function formatChapter(volume?: number, number?: number, title?: string) {
   const label = number == null ? title || "Special" : `Chapter ${number}`;
   return volume == null ? label : `Vol. ${volume} · ${label}`;
@@ -377,7 +601,10 @@ function formatChapter(volume?: number, number?: number, title?: string) {
 
 // Groups chapters into volume sections in descending order, with chapters
 // numbered descending inside each group and specials at the end.
-function groupByVolume(chapters: Chapter[]) {
+function groupByVolume(
+  chapters: Chapter[],
+  sort: "number-desc" | "number-asc" | "source" = "number-desc",
+) {
   const byVolume = new Map<number | null, Chapter[]>();
   for (const chapter of chapters) {
     const key = chapter.volume ?? null;
@@ -395,10 +622,13 @@ function groupByVolume(chapters: Chapter[]) {
   return ordered.map(({ key, label }) => {
     const bucket = byVolume.get(key) ?? [];
     const sorted = [...bucket].sort((a, b) => {
+      if (sort === "source") return 0;
       if (a.chapterNumber == null && b.chapterNumber == null) return 0;
       if (a.chapterNumber == null) return 1;
       if (b.chapterNumber == null) return -1;
-      return b.chapterNumber - a.chapterNumber;
+      return sort === "number-asc"
+        ? a.chapterNumber - b.chapterNumber
+        : b.chapterNumber - a.chapterNumber;
     });
     return { label, chapters: sorted };
   });
@@ -606,8 +836,6 @@ function TrackerSection({
       await api.bindTracker(mangaId, tracker.name, {
         remoteId: item.remoteId,
         remoteTitle: item.title,
-        remoteScore: item.score,
-        remoteStatus: item.status,
         totalRemoteChapters: item.chapters,
       });
       setNote(`Bound to ${item.title}.`);
@@ -808,6 +1036,10 @@ function TrackingEditor({
       setScoreValue(String(score));
     }
   }, [score, scoreValue]);
+  useEffect(() => {
+    if (!startedAt && status?.startedAt) setStartedAt(formatTrackerDate(status.startedAt));
+    if (!finishedAt && status?.finishedAt) setFinishedAt(formatTrackerDate(status.finishedAt));
+  }, [finishedAt, startedAt, status?.finishedAt, status?.startedAt]);
   const save = async () => {
     const nextScore = scoreValue === "" ? undefined : Number(scoreValue);
     if (
@@ -925,7 +1157,7 @@ function formatTrackerNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function MigrationModal({
+export function MigrationModal({
   manga,
   onClose,
   onApplied,

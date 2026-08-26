@@ -7,6 +7,8 @@ import type { Aggregate, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
 
 type Mode = "single" | "double" | "webtoon";
+type Direction = "ltr" | "rtl";
+type Fit = "width" | "height" | "original";
 export function ReaderPage() {
   const { mangaId: routeManga, chapterId: routeChapter } = useParams();
   const [searchParams] = useSearchParams();
@@ -27,11 +29,37 @@ export function ReaderPage() {
   const [aggregate, setAggregate] = useState<Aggregate>();
   const [pages, setPages] = useState<Page[]>([]);
   const [mode, setMode] = useState<Mode>("single");
+  const [direction, setDirection] = useState<Direction>("ltr");
+  const [fit, setFit] = useState<Fit>("width");
   const [index, setIndex] = useState(0);
   const [menu, setMenu] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  const sessionStartedAt = useRef(Date.now());
+  useEffect(() => {
+    let active = true;
+    api
+      .settings()
+      .then((items) => {
+        if (!active) return;
+        const values = new Map(items.map((item) => [item.key, item.value]));
+        const modeValue = values.get("reader.default_mode");
+        const directionValue = values.get("reader.direction");
+        const fitValue = values.get("reader.fit");
+        if (modeValue === "single" || modeValue === "double" || modeValue === "webtoon")
+          setMode(modeValue);
+        if (directionValue === "ltr" || directionValue === "rtl") setDirection(directionValue);
+        if (fitValue === "width" || fitValue === "height" || fitValue === "original")
+          setFit(fitValue);
+      })
+      .catch(() => {
+        // Reader defaults are optional; the local default remains usable offline.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => {
     if (!mangaId || !chapterId) {
       setLoading(false);
@@ -50,6 +78,7 @@ export function ReaderPage() {
         if (!active) return;
         setAggregate(data);
         setPages(loaded);
+        sessionStartedAt.current = Date.now();
         const saved = resumeIndex(
           data.progress?.lastReadChapterId === chapterId
             ? (data.progress?.lastReadPage ?? null)
@@ -74,8 +103,17 @@ export function ReaderPage() {
     const visibleEnd = Math.min(pages.length, index + (mode === "double" ? 2 : 1));
     const save = () => {
       saver.current = null;
+      const elapsed = Math.floor((Date.now() - sessionStartedAt.current) / 1000);
+      sessionStartedAt.current = Date.now();
       api
-        .progress(mangaId, chapterId, visibleEnd, pages.length, visibleEnd >= pages.length)
+        .progress(
+          mangaId,
+          chapterId,
+          visibleEnd,
+          pages.length,
+          visibleEnd >= pages.length,
+          Math.min(300, Math.max(0, elapsed)),
+        )
         .catch((e) => console.error("saving reading progress failed", e));
     };
     saver.current = save;
@@ -112,14 +150,16 @@ export function ReaderPage() {
           value === "single" ? "double" : value === "double" ? "webtoon" : "single",
         );
       const step = mode === "double" ? 2 : 1;
-      if (event.key === "ArrowRight" || event.key.toLowerCase() === "d")
+      const forward = direction === "ltr" ? "ArrowRight" : "ArrowLeft";
+      const backward = direction === "ltr" ? "ArrowLeft" : "ArrowRight";
+      if (event.key === forward || event.key.toLowerCase() === "d")
         setIndex((value) => Math.min(Math.max(pages.length - 1, 0), value + step));
-      if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a")
+      if (event.key === backward || event.key.toLowerCase() === "a")
         setIndex((value) => Math.max(0, value - step));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode, pages.length]);
+  }, [direction, mode, pages.length]);
   if (error)
     return (
       <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
@@ -231,7 +271,14 @@ export function ReaderPage() {
       {mode === "webtoon" ? (
         <Webtoon pages={pages} index={index} setIndex={setIndex} />
       ) : (
-        <Paged pages={pages} index={index} setIndex={setIndex} double={mode === "double"} />
+        <Paged
+          pages={pages}
+          index={index}
+          setIndex={setIndex}
+          double={mode === "double"}
+          direction={direction}
+          fit={fit}
+        />
       )}
       <div
         className={`flex items-center gap-3 border-t border-zinc-800 bg-zinc-950 px-4 py-2 ${menu ? "" : "hidden"}`}
@@ -273,21 +320,35 @@ function Paged({
   index,
   setIndex,
   double,
+  direction,
+  fit,
 }: {
   pages: Page[];
   index: number;
   setIndex: (value: number) => void;
   double: boolean;
+  direction: Direction;
+  fit: Fit;
 }) {
   const count = double ? 2 : 1;
   return (
-    <div className="relative flex min-h-0 flex-1 items-center justify-center gap-2 overflow-hidden bg-black p-2 sm:p-6">
+    <div
+      className={`relative flex min-h-0 flex-1 items-center justify-center gap-2 overflow-hidden bg-black p-2 sm:p-6 ${direction === "rtl" ? "flex-row-reverse" : ""}`}
+    >
       {pages.slice(index, index + count).map((page, offset) => (
         <PageImage
           key={page.index}
           page={page}
           alt={`Page ${index + offset + 1}`}
-          className="max-h-full max-w-[calc(50%-0.5rem)] object-contain"
+          className={
+            fit === "height"
+              ? "max-h-full w-auto object-contain"
+              : fit === "original"
+                ? "max-h-none max-w-none object-contain"
+                : double
+                  ? "h-auto max-w-[calc(50%-0.5rem)] object-contain"
+                  : "h-auto max-w-full object-contain"
+          }
         />
       ))}
       <button

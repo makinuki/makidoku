@@ -10,3 +10,19 @@ export function relativeTime(unix: number) {
   if (days < 365) return `${days}d ago`;
   return "over a year ago";
 }
+
+export function formatTimestamp(unix: number, format: "relative" | "absolute" = "relative") {
+  if (format === "absolute") return new Date(unix * 1000).toLocaleString();
+  return relativeTime(unix);
+}
+
+export function dateGroupLabel(unix: number) {
+  const date = new Date(unix * 1000);
+  const today = new Date();
+  const days = Math.floor(
+    (today.setHours(0, 0, 0, 0) - new Date(date).setHours(0, 0, 0, 0)) / 86400000,
+  );
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return `${days} days ago`;
+}

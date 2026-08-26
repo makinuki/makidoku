@@ -1,6 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
-import { Download, History, Library, Search, Settings, Wifi, WifiOff } from "lucide-react";
+import {
+  Download,
+  History,
+  Library,
+  Search,
+  Settings,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+} from "lucide-react";
 import { api } from "../api";
 import { Logo } from "../components/Logo";
 
@@ -23,6 +32,7 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
   const links = [
     ["/library", "Library", Library],
     ["/browse", "Browse", Search],
+    ["/updates", "Updates", RefreshCw],
     ["/history", "History", History],
     ["/downloads", "Downloads", Download],
   ] as const;

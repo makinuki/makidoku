@@ -12,6 +12,7 @@ export type Manga = {
   coverUrl: string;
   inLibrary: boolean;
   downloadFormat: string;
+  downloadNewChapters?: boolean;
   createdAt: number;
   updatedAt: number;
   detailsFetchedAt?: number;
@@ -27,6 +28,8 @@ export type Chapter = {
   scanlator?: string;
   downloaded: boolean;
   downloadPath?: string;
+  read?: boolean;
+  downloadStatus?: string;
 };
 export type Progress = {
   mangaId: string;
@@ -35,6 +38,13 @@ export type Progress = {
   totalPages: number;
   isCompleted: boolean;
   lastReadAt: number;
+};
+export type HistoryEvent = {
+  id: string;
+  manga: Manga;
+  chapter?: Chapter;
+  page?: number;
+  occurredAt: number;
 };
 export type Binding = {
   id: number;
@@ -83,7 +93,17 @@ export type Aggregate = {
   chapters: Chapter[];
   progress?: Progress;
   trackers: Binding[];
+  readingSeconds?: number;
   sourceName?: string;
+  sourceUrl?: string;
+};
+export type Recommendation = {
+  remoteId: string;
+  title: string;
+  score?: number;
+  chapters?: number;
+  status?: string;
+  coverUrl?: string;
 };
 export type Source = {
   id: string;
@@ -98,6 +118,8 @@ export type Source = {
   loaded: boolean;
   hasClearance: boolean;
   allowedHosts?: string[];
+  pinned?: boolean;
+  lastUsedAt?: number;
 };
 export type CatalogEntry = Source & {
   installed: boolean;
@@ -106,6 +128,7 @@ export type CatalogEntry = Source & {
   incompatibility?: string;
   wasmUrl?: string;
   sha256?: string;
+  updateAvailable?: boolean;
 };
 export type Health = { ok: boolean; database?: string };
 export type SearchResult = {
@@ -183,6 +206,8 @@ export type TrackerStatus = {
   score?: number;
   progress: number;
   totalChapters?: number;
+  startedAt?: number;
+  finishedAt?: number;
 };
 export type TrackerSyncJob = {
   id: number;
@@ -192,6 +217,21 @@ export type TrackerSyncJob = {
   status: string;
   attempts: number;
   errorMessage?: string;
+};
+export type UpdateLog = {
+  id: string;
+  manga: Manga;
+  chapter: Chapter;
+  seenAt: number;
+  acknowledged: boolean;
+};
+export type LibraryUpdateState = { lastRunAt?: number; lastStatus: string };
+export type ReadingDay = { date: string; seconds: number };
+export type ReadingStats = {
+  readingSeconds: number;
+  titleCount: number;
+  chapterCount: number;
+  daily: ReadingDay[];
 };
 export type MigrationCandidate = { source: Source; result: SearchResult };
 export type MigrationCandidates = {
@@ -204,3 +244,4 @@ export type MigrationResponse = {
   source: string;
   chapterMap: Record<string, string>;
 };
+export type MigrationSource = { source: Source; count: number };

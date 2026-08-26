@@ -1,23 +1,114 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Plus, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  LoaderCircle,
+  Pin,
+  PinOff,
+  Plus,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
-import type { FilterSchema, SearchResult, Source } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
+import { Modal } from "../../components/Modal";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
+import type {
+  CatalogEntry,
+  FilterSchema,
+  Manga,
+  MigrationSource,
+  SearchResult,
+  Source,
+} from "../../types";
+import { MigrationModal } from "../manga/DetailsPage";
+
+type Tab = "sources" | "plugins" | "migrate";
 
 export function BrowsePage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const [tab, setTab] = useState<Tab>(
+    requestedTab === "plugins" || requestedTab === "migrate" ? requestedTab : "sources",
+  );
+  useEffect(() => {
+    if (requestedTab === "plugins" || requestedTab === "migrate") {
+      if (requestedTab !== tab) setTab(requestedTab);
+      return;
+    }
+    if (tab !== "sources") setTab("sources");
+  }, [requestedTab, tab]);
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    setSearchParams(next === "sources" ? {} : { tab: next }, { replace: true });
+  };
+  return (
+    <div className="mx-auto max-w-7xl p-5 sm:p-8">
+      <PageHeader eyebrow="Desktop catalog" title="Browse" />
+      <div className="mb-8 flex gap-1 border-b border-zinc-800">
+        {(["sources", "plugins", "migrate"] as const).map((item) => (
+          <button
+            key={item}
+            onClick={() => selectTab(item)}
+            className={`border-b-2 px-4 py-3 text-sm capitalize ${
+              tab === item
+                ? "border-amber-400 text-amber-300"
+                : "border-transparent text-zinc-500 hover:text-zinc-200"
+            }`}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+      {tab === "sources" ? (
+        <SourcesTab onOpenPlugins={() => selectTab("plugins")} />
+      ) : tab === "plugins" ? (
+        <PluginsTab />
+      ) : (
+        <MigrateTab />
+      )}
+    </div>
+  );
+}
+
+function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [selected, setSelected] = useState("all");
   const [draftQuery, setDraftQuery] = useState("");
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [results, setResults] = useState<Array<SearchResult & { source: Source }>>([]);
   const [filterSchemas, setFilterSchemas] = useState<FilterSchema[]>([]);
   const [filterValues, setFilterValues] = useState<Record<string, unknown>>({});
+  const [hideNsfw, setHideNsfw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [failedSources, setFailedSources] = useState({ failed: 0, total: 0 });
+
+  const loadSources = async () => {
+    try {
+      setSources(await api.sources());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load plugins");
+    }
+  };
   useEffect(() => {
+    void loadSources();
+    void api
+      .settings()
+      .then((items) => {
+        const setting = items.find((item) => item.key === "browse.hide_nsfw");
+        setHideNsfw(setting?.value === true);
+      })
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    setPage(1);
     if (selected === "all") {
       setFilterSchemas([]);
       setFilterValues({});
@@ -32,24 +123,44 @@ export function BrowsePage() {
         setFilterValues(defaultFilterValues(schemas));
       })
       .catch(() => {
-        if (active) {
-          setFilterSchemas([]);
-          setFilterValues({});
-        }
+        if (!active) return;
+        setFilterSchemas([]);
+        setFilterValues({});
       });
     return () => {
       active = false;
     };
   }, [selected]);
-  useEffect(() => {
-    void api
-      .sources()
-      .then(setSources)
-      .catch((e) => setError(e.message));
-  }, []);
+  const visibleSources = useMemo(
+    () =>
+      sources
+        .filter((source) => !hideNsfw || !source.nsfw)
+        .sort((a, b) => {
+          if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+          if ((a.lastUsedAt ?? 0) !== (b.lastUsedAt ?? 0))
+            return (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0);
+          return a.name.localeCompare(b.name);
+        }),
+    [hideNsfw, sources],
+  );
+  const sourceGroups = useMemo(
+    () => [
+      { label: "Pinned", items: visibleSources.filter((source) => source.pinned) },
+      {
+        label: "Last used",
+        items: visibleSources.filter((source) => !source.pinned && source.lastUsedAt),
+      },
+      {
+        label: "Other",
+        items: visibleSources.filter((source) => !source.pinned && !source.lastUsedAt),
+      },
+    ],
+    [visibleSources],
+  );
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
+      setHasNextPage(false);
       setFailedSources({ failed: 0, total: 0 });
       setLoading(false);
       return;
@@ -57,31 +168,35 @@ export function BrowsePage() {
     let active = true;
     setLoading(true);
     setError("");
-    const wanted = selected === "all" ? sources : sources.filter((item) => item.id === selected);
+    const wanted =
+      selected === "all"
+        ? visibleSources
+        : visibleSources.filter((source) => source.id === selected);
     let failed = 0;
     void Promise.all(
       wanted.map(async (source) => {
         try {
-          const page = await api.search(
+          const response = await api.search(
             source.id,
             query,
-            1,
+            page,
             selected === source.id ? filterValues : undefined,
           );
-          return page.items.map((item) => ({ ...item, source }));
+          return {
+            items: response.items.map((item) => ({ ...item, source })),
+            hasNext: response.hasNextPage,
+          };
         } catch {
           failed++;
-          return [];
+          return { items: [] as Array<SearchResult & { source: Source }>, hasNext: false };
         }
       }),
     )
-      .then((items) => {
+      .then((groups) => {
         if (!active) return;
         setFailedSources({ failed, total: wanted.length });
-        setResults(items.flat());
-      })
-      .catch((e) => {
-        if (active) setError(e instanceof Error ? e.message : "Search failed");
+        setResults(groups.flatMap((group) => group.items));
+        setHasNextPage(groups.some((group) => group.hasNext));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -89,51 +204,101 @@ export function BrowsePage() {
     return () => {
       active = false;
     };
-  }, [query, selected, sources, filterValues]);
+  }, [filterValues, page, query, selected, visibleSources]);
+
+  const pin = async (source: Source) => {
+    try {
+      const updated = await api.pinSource(source.id, !source.pinned);
+      setSources((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to update plugin pin");
+    }
+  };
+
+  if (sources.length === 0 && !error) {
+    return (
+      <EmptyState
+        title="No plugins installed"
+        text="Install a plugin to search a source site from the desktop library."
+        action={
+          <button
+            onClick={onOpenPlugins}
+            className="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
+          >
+            Install plugins
+          </button>
+        }
+      />
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-7xl p-5 sm:p-8">
-      <PageHeader eyebrow="Plugin explorer" title="Browse">
-        <Link
-          to="/settings"
-          className="rounded-lg border border-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-600"
-        >
-          Manage plugins
-        </Link>
-      </PageHeader>
-      <div className="mb-8 flex gap-3 overflow-x-auto pb-1">
+    <>
+      {error && <ErrorState message={error} />}
+      <div className="mb-8 space-y-5">
         <button
           onClick={() => setSelected("all")}
-          className={`flex min-w-40 items-center gap-3 rounded-xl border px-4 py-3 text-left ${selected === "all" ? "border-amber-400 bg-amber-400/10" : "border-zinc-800 bg-zinc-900"}`}
+          className={`flex min-w-40 items-center gap-3 rounded-xl border px-4 py-3 text-left ${
+            selected === "all" ? "border-amber-400 bg-amber-400/10" : "border-zinc-800 bg-zinc-900"
+          }`}
         >
-          <span className="grid size-9 place-items-center rounded-full bg-zinc-800">
+          <span className="grid size-9 place-items-center rounded-lg bg-zinc-800">
             <Search size={16} />
           </span>
           <span>
             <b className="block text-sm">All plugins</b>
-            <small className="text-zinc-500">{sources.length} installed</small>
+            <small className="text-zinc-500">{visibleSources.length} available</small>
           </span>
         </button>
-        {sources.map((source) => (
-          <button
-            key={source.id}
-            onClick={() => setSelected(source.id)}
-            className={`flex min-w-48 items-center gap-3 rounded-xl border px-4 py-3 text-left ${selected === source.id ? "border-amber-400 bg-amber-400/10" : "border-zinc-800 bg-zinc-900"}`}
-          >
-            <span className="grid size-9 place-items-center rounded-full bg-zinc-800 text-xs font-bold">
-              {source.name.slice(0, 2).toUpperCase()}
-            </span>
-            <span className="min-w-0">
-              <b className="block truncate text-sm">{source.name}</b>
-              <small className="text-zinc-500">
-                v{source.version} · {source.lang}
-              </small>
-            </span>
-          </button>
-        ))}
+        {sourceGroups.map(
+          (group) =>
+            group.items.length > 0 && (
+              <section key={group.label}>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {group.label}
+                </h2>
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {group.items.map((source) => (
+                    <div
+                      key={source.id}
+                      className={`flex min-w-52 items-center gap-2 rounded-xl border px-3 py-3 ${
+                        selected === source.id
+                          ? "border-amber-400 bg-amber-400/10"
+                          : "border-zinc-800 bg-zinc-900"
+                      }`}
+                    >
+                      <button
+                        onClick={() => setSelected(source.id)}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      >
+                        <SourceIcon source={source} />
+                        <span className="min-w-0">
+                          <b className="block truncate text-sm">{source.name}</b>
+                          <small className="text-zinc-500">
+                            {source.lang}
+                            {source.nsfw ? " · 18+" : ""}
+                          </small>
+                        </span>
+                      </button>
+                      <button
+                        aria-label={source.pinned ? "Unpin source" : "Pin source"}
+                        title={`${source.pinned ? "Unpin" : "Pin"} ${source.name}`}
+                        onClick={() => void pin(source)}
+                        className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-amber-300"
+                      >
+                        {source.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ),
+        )}
       </div>
       <form
         onSubmit={(event) => {
           event.preventDefault();
+          setPage(1);
           setQuery(draftQuery.trim());
         }}
         className="mb-6 flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3"
@@ -142,7 +307,7 @@ export function BrowsePage() {
         <input
           autoFocus
           value={draftQuery}
-          onChange={(e) => setDraftQuery(e.target.value)}
+          onChange={(event) => setDraftQuery(event.target.value)}
           placeholder="Search installed plugins"
           className="min-w-0 flex-1 bg-transparent outline-none"
         />
@@ -156,15 +321,15 @@ export function BrowsePage() {
                 key={schema.id}
                 schema={schema}
                 value={filterValues[schema.id]}
-                onChange={(value) =>
-                  setFilterValues((current) => ({ ...current, [schema.id]: value }))
-                }
+                onChange={(value) => {
+                  setPage(1);
+                  setFilterValues((current) => ({ ...current, [schema.id]: value }));
+                }}
               />
             ))}
           </div>
         </section>
       )}
-      {error && <ErrorState message={error} />}
       {failedSources.failed > 0 && (
         <p role="alert" className="mb-4 text-xs text-red-300">
           {failedSources.failed} of {failedSources.total} plugins failed to respond.
@@ -173,35 +338,410 @@ export function BrowsePage() {
       {loading ? (
         <LoadingState label="Searching plugins" />
       ) : results.length ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {results.map((item) => (
-            <SourceResult key={`${item.source.id}:${item.id}`} item={item} />
-          ))}
-        </div>
-      ) : !query && sources.length === 0 ? (
-        <EmptyState
-          title="No plugins installed"
-          text="MakiDoku reads through plugins that each connect to a website. Install one to start browsing."
-          action={
-            <Link
-              to="/settings"
-              className="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {results.map((item) => (
+              <SourceResult key={`${item.source.id}:${item.id}`} item={item} />
+            ))}
+          </div>
+          <div className="mt-6 flex justify-center gap-2">
+            <button
+              aria-label="Previous search page"
+              disabled={page === 1}
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              className="rounded-lg border border-zinc-700 p-2 disabled:opacity-30"
             >
-              Install plugins
-            </Link>
-          }
-        />
+              <ChevronLeft size={16} />
+            </button>
+            <span className="px-3 py-2 text-sm text-zinc-500">Page {page}</span>
+            <button
+              aria-label="Next search page"
+              disabled={!hasNextPage}
+              onClick={() => setPage((value) => value + 1)}
+              className="rounded-lg border border-zinc-700 p-2 disabled:opacity-30"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </>
       ) : (
         <EmptyState
           title={query ? "No matching titles" : "Search installed plugins"}
-          text={
-            query
-              ? "Try another title or select a different plugin."
-              : "Pick a plugin above and search to discover titles."
+          text={query ? "Try another title or plugin." : "Search runs after you press Enter."}
+        />
+      )}
+    </>
+  );
+}
+
+function PluginsTab() {
+  const [sources, setSources] = useState<Source[]>([]);
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [busy, setBusy] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const [confirmRemoval, setConfirmRemoval] = useState<Source>();
+  const [cookieSource, setCookieSource] = useState("");
+  const [cookie, setCookie] = useState("");
+  const [userAgent, setUserAgent] = useState("");
+  const load = async () => {
+    try {
+      const [installed, entries, settings] = await Promise.all([
+        api.sources(),
+        api.catalog(),
+        api.settings(),
+      ]);
+      const hide = settings.find((item) => item.key === "browse.hide_nsfw")?.value === true;
+      setSources(installed.filter((source) => !hide || !source.nsfw));
+      setCatalog(entries.filter((entry) => !hide || !entry.nsfw));
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load plugins");
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+  useEffect(() => {
+    if (!status) return;
+    const timer = window.setTimeout(() => setStatus(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+  const run = async (key: string, action: () => Promise<unknown>, success: string) => {
+    setBusy((keys) => [...keys, key]);
+    setError("");
+    try {
+      await action();
+      await load();
+      setStatus(success);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Plugin action failed");
+    } finally {
+      setBusy((keys) => keys.filter((item) => item !== key));
+    }
+  };
+  const updates = catalog.filter((entry) => entry.installed && entry.updateAvailable);
+  return (
+    <div className="space-y-8">
+      {error && <ErrorState message={error} />}
+      {status && <p className="text-sm text-emerald-300">{status}</p>}
+      {updates.length > 0 && (
+        <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Updates pending</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                {updates.length} plugin updates available
+              </p>
+            </div>
+            <button
+              onClick={() => void run("all", api.updateAllSources, "Plugin updates installed.")}
+              disabled={busy.length > 0}
+              className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-40"
+            >
+              Update all
+            </button>
+          </div>
+        </section>
+      )}
+      <section>
+        <PageHeader title="Installed plugins">
+          <button
+            onClick={() => void load()}
+            aria-label="Refresh plugins"
+            className="rounded-lg border border-zinc-700 p-2"
+          >
+            <RefreshCw size={15} />
+          </button>
+        </PageHeader>
+        <div className="grid gap-3 md:grid-cols-2">
+          {sources.map((source) => {
+            const update = updates.find((entry) => entry.name === source.name);
+            return (
+              <div
+                key={source.id}
+                className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4"
+              >
+                <SourceIcon source={source} />
+                <div className="min-w-0 flex-1">
+                  <b className="block truncate">{source.name}</b>
+                  <small className="text-zinc-500">
+                    v{source.version} · {source.lang}
+                    {source.nsfw ? " · 18+" : ""}
+                  </small>
+                </div>
+                {update && (
+                  <button
+                    onClick={() =>
+                      void run(
+                        update.id,
+                        () => api.updateSource(source.id),
+                        `${source.name} updated.`,
+                      )
+                    }
+                    disabled={busy.includes(update.id)}
+                    className="rounded-lg border border-amber-500/40 px-2 py-1.5 text-xs text-amber-300 disabled:opacity-40"
+                  >
+                    Update
+                  </button>
+                )}
+                <button
+                  aria-label={`Uninstall ${source.name}`}
+                  onClick={() => setConfirmRemoval(source)}
+                  className="rounded-lg p-2 text-red-300 hover:bg-red-950/40"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+        <h2 className="font-semibold">Available plugins</h2>
+        <div className="mt-4 grid gap-2">
+          {catalog
+            .filter((entry) => !entry.installed)
+            .map((entry) => (
+              <div
+                key={entry.id}
+                className="flex items-center gap-3 rounded-lg border border-zinc-800 p-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <b className="block">{entry.name}</b>
+                  <small className="text-zinc-500">
+                    v{entry.version} · {entry.lang} ·{" "}
+                    {entry.compatible ? "Compatible" : entry.incompatibility}
+                  </small>
+                </div>
+                <button
+                  onClick={() =>
+                    void run(
+                      entry.id,
+                      () => api.installSource(entry.id),
+                      `${entry.name} installed.`,
+                    )
+                  }
+                  disabled={!entry.compatible || busy.includes(entry.id)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-40"
+                >
+                  {busy.includes(entry.id) ? (
+                    <LoaderCircle size={13} className="animate-spin" />
+                  ) : (
+                    <Download size={13} />
+                  )}
+                  {busy.includes(entry.id) ? "Installing…" : "Install"}
+                </button>
+              </div>
+            ))}
+        </div>
+      </section>
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+        <div className="flex items-center gap-2">
+          <ShieldCheck size={17} className="text-amber-300" />
+          <h2 className="font-semibold">Browser clearance</h2>
+        </div>
+        <p className="mt-1 text-xs text-zinc-500">
+          Submit a browser session for a protected plugin.
+        </p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          <select
+            value={cookieSource}
+            onChange={(event) => setCookieSource(event.target.value)}
+            aria-label="Plugin"
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          >
+            <option value="">Plugin</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={cookie}
+            onChange={(event) => setCookie(event.target.value)}
+            placeholder="cf_clearance cookie"
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          />
+          <input
+            value={userAgent}
+            onChange={(event) => setUserAgent(event.target.value)}
+            placeholder="Browser user agent"
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          />
+        </div>
+        <button
+          disabled={!cookieSource || !cookie || !userAgent || busy.includes("clearance")}
+          onClick={() =>
+            void run(
+              "clearance",
+              async () => {
+                await api.submitClearance(cookieSource, cookie, userAgent);
+                setCookie("");
+                setUserAgent("");
+              },
+              "Clearance submitted.",
+            )
           }
+          className="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
+        >
+          Submit clearance
+        </button>
+      </section>
+      {confirmRemoval && (
+        <Modal title="Remove plugin" onClose={() => setConfirmRemoval(undefined)}>
+          <p className="text-sm text-zinc-400">
+            Remove {confirmRemoval.name}? Library records and downloaded chapters remain available.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              onClick={() => setConfirmRemoval(undefined)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                const source = confirmRemoval;
+                setConfirmRemoval(undefined);
+                void run(
+                  source.id,
+                  () => api.uninstallSource(source.id),
+                  `${source.name} removed.`,
+                );
+              }}
+              className="rounded-lg bg-red-500 px-3 py-2 text-sm font-semibold text-white"
+            >
+              Remove
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function MigrateTab() {
+  const navigate = useNavigate();
+  const [sources, setSources] = useState<MigrationSource[]>([]);
+  const [selectedSource, setSelectedSource] = useState<string>();
+  const [manga, setManga] = useState<Manga[]>([]);
+  const [query, setQuery] = useState("");
+  const [selectedManga, setSelectedManga] = useState<Manga>();
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void api
+      .migrationSources()
+      .then(setSources)
+      .catch((e) => setError(e instanceof Error ? e.message : "Unable to load migration sources"));
+  }, []);
+  useEffect(() => {
+    if (!selectedSource) {
+      setManga([]);
+      return;
+    }
+    void api
+      .migrationSourceManga(selectedSource)
+      .then(setManga)
+      .catch((e) => setError(e instanceof Error ? e.message : "Unable to load library titles"));
+  }, [selectedSource]);
+  const visible = manga.filter((item) =>
+    item.title.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  return (
+    <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
+      {error && (
+        <div className="lg:col-span-2">
+          <ErrorState message={error} />
+        </div>
+      )}
+      <aside className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
+        <h2 className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          Library sources
+        </h2>
+        <div className="mt-1 space-y-1">
+          {sources.map((item) => (
+            <button
+              key={item.source.id}
+              onClick={() => setSelectedSource(item.source.id)}
+              className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left ${
+                selectedSource === item.source.id
+                  ? "bg-amber-400/10 text-amber-200"
+                  : "hover:bg-zinc-800"
+              }`}
+            >
+              <SourceIcon source={item.source} />
+              <span className="min-w-0 flex-1 truncate text-sm">{item.source.name}</span>
+              <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+                {item.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </aside>
+      <section>
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2">
+          <Search size={16} className="text-zinc-500" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter library titles"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+          />
+        </div>
+        {selectedSource ? (
+          visible.length ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {visible.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setSelectedManga(item)}
+                  className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-left hover:border-amber-500/50"
+                >
+                  <CoverImg src={item.coverUrl} className="h-20 w-14 rounded-md object-cover" />
+                  <span className="min-w-0">
+                    <b className="line-clamp-2 text-sm">{item.title}</b>
+                    <small className="mt-1 block text-zinc-500">Choose replacement source</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No titles" text="No library titles match this filter." />
+          )
+        ) : (
+          <EmptyState
+            title="Choose a source"
+            text="Select the current source of a library title to begin migration."
+          />
+        )}
+      </section>
+      {selectedManga && (
+        <MigrationModal
+          manga={selectedManga}
+          onClose={() => setSelectedManga(undefined)}
+          onApplied={(mangaId) => {
+            setSelectedManga(undefined);
+            navigate(`/manga/${encodeURIComponent(mangaId)}`);
+          }}
         />
       )}
     </div>
+  );
+}
+
+function SourceIcon({ source }: { source: Source }) {
+  return source.iconUrl ? (
+    <img
+      src={api.sourceIcon(source.id)}
+      alt=""
+      className="size-9 shrink-0 rounded-lg object-cover"
+    />
+  ) : (
+    <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-zinc-800 text-xs font-bold">
+      {source.name.slice(0, 2).toUpperCase()}
+    </span>
   );
 }
 
@@ -260,12 +800,6 @@ function FilterControl({
   }
   if (schema.type === "tri_state") {
     const selected = typeof value === "object" && value ? (value as Record<string, string>) : {};
-    const update = (option: string, nextValue: string) => {
-      const next = { ...selected };
-      if (nextValue) next[option] = nextValue;
-      else delete next[option];
-      onChange(next);
-    };
     return (
       <fieldset className="grid gap-2 text-xs text-zinc-400">
         <legend>{schema.title}</legend>
@@ -275,7 +809,12 @@ function FilterControl({
             <select
               aria-label={`${schema.title}: ${option.label}`}
               value={selected[option.value] || ""}
-              onChange={(event) => update(option.value, event.target.value)}
+              onChange={(event) => {
+                const next = { ...selected };
+                if (event.target.value) next[option.value] = event.target.value;
+                else delete next[option.value];
+                onChange(next);
+              }}
               className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100"
             >
               <option value="">Any</option>
@@ -323,12 +862,7 @@ function SourceResult({ item }: { item: SearchResult & { source: Source } }) {
         <CoverImg src={item.coverUrl} className="size-full object-cover" />
       </Link>
       <div className="space-y-2 p-4">
-        <Link
-          to={`/manga/${encodeURIComponent(item.id)}`}
-          className="block text-xs uppercase tracking-wide text-amber-400 hover:text-amber-300"
-        >
-          {item.source.name}
-        </Link>
+        <p className="text-xs uppercase tracking-wide text-amber-400">{item.source.name}</p>
         <h2 className="line-clamp-2 font-semibold">
           <Link to={`/manga/${encodeURIComponent(item.id)}`} className="hover:text-amber-300">
             {item.title}

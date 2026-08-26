@@ -351,7 +351,7 @@ describe("MakiDoku app shell", () => {
   });
 
   it("shows install progress and surfaces the outcome", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/browse?tab=plugins");
     const source = {
       id: "mangadex",
       name: "MangaDex",
@@ -403,7 +403,7 @@ describe("MakiDoku app shell", () => {
   });
 
   it("installs multiple plugins simultaneously", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/browse?tab=plugins");
     const plugins = [
       { id: "mangadex", name: "MangaDex" },
       { id: "asurascans", name: "Asura Scans" },
@@ -470,7 +470,7 @@ describe("MakiDoku app shell", () => {
 
   it("clears status messages after a timeout", async () => {
     vi.useFakeTimers();
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/browse?tab=plugins");
     const source = {
       id: "mangadex",
       name: "MangaDex",
@@ -634,7 +634,7 @@ describe("MakiDoku app shell", () => {
   });
 
   it("reports failed plugin installs in the error banner", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/browse?tab=plugins");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -676,7 +676,7 @@ describe("MakiDoku app shell", () => {
   });
 
   it("confirms plugin removal before uninstalling", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/browse?tab=plugins");
     const source = {
       id: "mangadex",
       name: "MangaDex",
@@ -840,10 +840,10 @@ describe("MakiDoku app shell", () => {
       "/api/import",
       expect.objectContaining({ method: "POST" }),
     );
-    // The settings data is re-fetched so restored plugins and categories show up.
+    // The settings data is re-fetched so restored categories and preferences show up.
     await waitFor(() => {
-      const sourceCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/sources");
-      expect(sourceCalls.length).toBeGreaterThanOrEqual(2);
+      const categoryCalls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/categories");
+      expect(categoryCalls.length).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -1012,8 +1012,8 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(screen.getByRole("heading", { name: "No plugins installed" })).toBeInTheDocument();
-    const link = screen.getByRole("link", { name: "Install plugins" });
-    expect(link).toHaveAttribute("href", "/settings");
+    fireEvent.click(screen.getByRole("button", { name: "Install plugins" }));
+    expect(screen.getByRole("heading", { name: "Available plugins" })).toBeInTheDocument();
     await act(async () => {
       resolveSources(Response.json([]));
       await Promise.resolve();
@@ -1490,7 +1490,6 @@ describe("tracker binding feedback", () => {
     expect(bindBody).toEqual({
       remoteId: "42",
       remoteTitle: "Yosuga no Sora",
-      remoteScore: 8,
       totalRemoteChapters: 12,
     });
     expect(screen.getByRole("button", { name: /Binding/ })).toBeDisabled();
@@ -1844,7 +1843,7 @@ describe("tracker binding feedback", () => {
 
 describe("settings credential feedback", () => {
   it("surfaces clearance failures and clears inputs on success", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/browse?tab=plugins");
     let clearanceCalls = 0;
     vi.stubGlobal(
       "fetch",
@@ -2764,5 +2763,272 @@ describe("search robustness", () => {
     await user.keyboard("{Enter}");
     expect(await screen.findByText("Yosuga no Sora")).toBeInTheDocument();
     expect(screen.getByText("1 of 2 plugins failed to respond.")).toBeInTheDocument();
+  });
+
+  it("hides NSFW plugins across the Browse tabs when configured", async () => {
+    window.history.pushState({}, "", "/browse");
+    const safe = {
+      id: "safe",
+      name: "Safe source",
+      version: "1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: false,
+      hasClearance: false,
+    };
+    const adult = {
+      id: "adult",
+      name: "Adult source",
+      version: "1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "",
+      iconUrl: "",
+      nsfw: true,
+      installedAt: 1,
+      loaded: false,
+      hasClearance: false,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") return Response.json([safe, adult]);
+        if (path === "/api/sources/catalog")
+          return Response.json([
+            { ...safe, installed: false, compatible: true },
+            { ...adult, installed: false, compatible: true },
+          ]);
+        if (path === "/api/settings")
+          return Response.json([
+            {
+              key: "browse.hide_nsfw",
+              value: true,
+              default: false,
+              type: "boolean",
+              description: "",
+            },
+          ]);
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "plugins" }));
+    expect((await screen.findAllByText("Safe source")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Adult source")).not.toBeInTheDocument();
+  });
+
+  it("groups Browse sources by pinned and recent usage", async () => {
+    window.history.pushState({}, "", "/browse");
+    const source = (id: string, name: string, pinned: boolean, lastUsedAt?: number) => ({
+      id,
+      name,
+      version: "1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: false,
+      hasClearance: false,
+      pinned,
+      lastUsedAt,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return Response.json([
+            source("pinned", "Pinned source", true),
+            source("recent", "Recent source", false, 20),
+            source("other", "Other source", false),
+          ]);
+        }
+        if (path === "/api/settings") return Response.json([]);
+        if (path === "/api/stats")
+          return Response.json({ readingSeconds: 0, titleCount: 0, chapterCount: 0, daily: [] });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Pinned")).toBeInTheDocument();
+    expect(screen.getByText("Last used")).toBeInTheDocument();
+    expect(screen.getByText("Other")).toBeInTheDocument();
+    expect(screen.getByText("Pinned source")).toBeInTheDocument();
+    expect(screen.getByText("Recent source")).toBeInTheDocument();
+    expect(screen.getByText("Other source")).toBeInTheDocument();
+  });
+
+  it("acknowledges a library update from the updates page", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+    const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+    window.history.pushState({}, "", "/updates");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/health") return Response.json({ ok: true });
+      if (path === "/api/updates/state") {
+        return Response.json({ lastRunAt: Math.floor(Date.now() / 1000), lastStatus: "completed" });
+      }
+      if (path === "/api/updates") {
+        return Response.json([
+          {
+            id: "update-1",
+            seenAt: Math.floor(Date.now() / 1000),
+            acknowledged: false,
+            manga: {
+              id: mangaId,
+              sourceId: "source",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: `/api/manga/${mangaId}/cover`,
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            chapter: { id: chapterId, mangaId, chapterNumber: 2, downloaded: false },
+          },
+        ]);
+      }
+      if (path === "/api/updates/ack" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Yosuga no Sora")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark read" }));
+    expect(await screen.findByRole("heading", { name: "No new chapters" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/updates/ack",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ ids: ["update-1"] }) }),
+    );
+  });
+
+  it("marks a chapter read from manga details", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+    const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let read = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/health") return Response.json({ ok: true });
+      if (path === "/api/categories") return Response.json([]);
+      if (path === `/api/chapters/${chapterId}/read` && init?.method === "POST") {
+        read = true;
+        return Response.json({ chapterId, mangaId, read: true });
+      }
+      if (path === `/api/manga/${mangaId}`) {
+        return Response.json({
+          manga: {
+            id: mangaId,
+            sourceId: "source",
+            title: "Yosuga no Sora",
+            status: "completed",
+            coverUrl: `/api/manga/${mangaId}/cover`,
+            inLibrary: true,
+            downloadFormat: "cbz",
+            createdAt: 1,
+            updatedAt: 1,
+            detailsFetchedAt: 1,
+          },
+          categories: [],
+          chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false, read }],
+          trackers: [],
+        });
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const mark = await screen.findByRole("button", { name: "Mark read Chapter 1" });
+    fireEvent.click(mark);
+    expect(
+      await screen.findByRole("button", { name: "Mark unread Chapter 1" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/chapters/${chapterId}/read`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ read: true }) }),
+    );
+  });
+
+  it("opens the full recommendations view after loading suggestions", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/health") return Response.json({ ok: true });
+        if (path === "/api/categories") return Response.json([]);
+        if (path === "/api/trackers") return Response.json([]);
+        if (path === `/api/manga/${mangaId}/suggestions`)
+          return Response.json([{ remoteId: "99", title: "Recommended title", score: 8.5 }]);
+        if (path === `/api/manga/${mangaId}`)
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "source",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [],
+            trackers: [
+              {
+                id: 1,
+                mangaId,
+                trackerType: "anilist",
+                remoteId: "1",
+                remoteTitle: "Yosuga no Sora",
+              },
+            ],
+          });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Tracking" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(await screen.findByRole("button", { name: "See recommendations" }));
+    expect(await screen.findByText("Recommended title")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "See all recommendations" })).toHaveAttribute(
+      "href",
+      `/manga/${mangaId}/recommendations`,
+    );
   });
 });

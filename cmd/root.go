@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/makinuki/makidoku/internal/config"
+	"github.com/makinuki/makidoku/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -14,8 +15,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "makidoku",
-	Short: "MakiDoku - portable manga library, reader, and downloader",
+	Use:     "makidoku",
+	Version: version.Version,
+	Short:   "MakiDoku - portable manga library, reader, and downloader",
 	Long: `MakiDoku is a single-binary host for MakiNuki WASM plugins.
 It serves an embedded React reader and a local REST API.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

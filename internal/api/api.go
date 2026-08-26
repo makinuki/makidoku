@@ -16,6 +16,7 @@ import (
 	"github.com/makinuki/makidoku/internal/settings"
 	"github.com/makinuki/makidoku/internal/tracker"
 	"github.com/makinuki/makidoku/internal/updater"
+	"github.com/makinuki/makidoku/internal/version"
 )
 
 type downloadQueue interface {
@@ -111,7 +112,13 @@ func (s *Server) Mount(r chi.Router) {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	status := map[string]any{"ok": true}
+	status := map[string]any{"ok": true, "version": version.Version}
+	if commit := version.Commit; commit != "" && commit != "unknown" {
+		status["commit"] = commit
+	}
+	if date := version.Date; date != "" && date != "unknown" {
+		status["date"] = date
+	}
 	if err := s.repo.Ping(); err != nil {
 		status["ok"] = false
 		status["database"] = err.Error()

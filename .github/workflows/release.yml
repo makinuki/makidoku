@@ -76,7 +76,7 @@ jobs:
       - name: Build tray binary
         env:
           CGO_ENABLED: 1
-        run: go build -tags tray -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }} -X main.commit=${{ github.sha }}" -o ${{ matrix.artifact }} .
+        run: go build -tags tray -trimpath -ldflags "-s -w -X github.com/makinuki/makidoku/internal/version.Version=${{ github.ref_name }} -X github.com/makinuki/makidoku/internal/version.Commit=${{ github.sha }}" -o ${{ matrix.artifact }} .
       - name: Attach tray binary to release
         uses: softprops/action-gh-release@v3
         with:

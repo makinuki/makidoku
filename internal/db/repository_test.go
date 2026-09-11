@@ -869,3 +869,50 @@ func TestMigrateMangaSourceRollsBackWhenAttachFails(t *testing.T) {
 		t.Fatalf("chapters = %+v, err = %v, want the old list intact", chapters, err)
 	}
 }
+
+// A source that re-issues a chapter under a new identifier must keep the
+// canonical record: the caller passes the existing chapter ID, and the stored
+// identity is re-pointed at the new source identifier while download and read
+// state stay attached to the same row.
+func TestUpsertChapterReusesCanonicalIDForReissuedSource(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 7.0
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "old-url", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkChapterDownloaded(chapter.ID, `C:\manga\chapter.cbz`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetChapterRead(chapter.ID, manga.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.UpsertChapter(Chapter{ID: chapter.ID, MangaID: manga.ID, SourceChapterID: "new-url", ChapterNumber: &number}); err != nil {
+		t.Fatal(err)
+	}
+	chapters, err := repo.ListChapters(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chapters) != 1 {
+		t.Fatalf("chapters = %d, want the re-issued chapter to reuse the existing record", len(chapters))
+	}
+	if chapters[0].ID != chapter.ID || chapters[0].SourceChapterID != "new-url" {
+		t.Fatalf("chapter = %+v, want canonical id %s linked to new-url", chapters[0], chapter.ID)
+	}
+	if !chapters[0].Downloaded || chapters[0].DownloadPath == nil || *chapters[0].DownloadPath == "" {
+		t.Fatalf("download state was lost: %+v", chapters[0])
+	}
+	state, err := repo.GetChapterRead(chapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Read {
+		t.Fatalf("read state was lost: %+v", state)
+	}
+}

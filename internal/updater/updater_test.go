@@ -75,13 +75,15 @@ func TestRunContinuesAfterTitleFailure(t *testing.T) {
 	}
 }
 
-func TestRunEnqueuesNewChaptersForEnabledTitle(t *testing.T) {
+// The updater forwards every newly detected chapter to its enqueue hook; the
+// automatic download policy is applied by the hook, not here.
+func TestRunForwardsNewChaptersToEnqueue(t *testing.T) {
 	handle, err := db.Open(filepath.Join(t.TempDir(), "updates-download.db"))
 	if err != nil { t.Fatal(err) }
 	defer handle.Close()
 	if _, err := handle.Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','Source','1',1,'en','https://source.test','s.wasm',1)`); err != nil { t.Fatal(err) }
 	repo := db.NewRepository(handle)
-	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "M", Status: "ongoing", InLibrary: true, DownloadNewChapters: true})
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "M", Status: "ongoing", InLibrary: true})
 	if err != nil { t.Fatal(err) }
 	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: "c"})
 	if err != nil { t.Fatal(err) }

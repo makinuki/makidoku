@@ -79,11 +79,8 @@ func (s *Service) Run(ctx context.Context) (int, error) {
 			count++
 		}
 		if len(chapters) > 0 && s.enqueue != nil {
-			manga, mangaErr := s.repo.GetManga(mangaID)
-			if mangaErr == nil && manga.DownloadNewChapters {
-				if enqueueErr := s.enqueue(ctx, mangaID, chapters); enqueueErr != nil {
-					failures++
-				}
+			if enqueueErr := s.enqueue(ctx, mangaID, chapters); enqueueErr != nil {
+				failures++
 			}
 		}
 	}

@@ -125,10 +125,7 @@ func New(cfg config.Config) (*Server, error) {
 	updateService := updater.New(repo, func(ctx context.Context, mangaID string) ([]string, error) {
 		return server.RefreshManga(ctx, mangaID)
 	})
-	updateService.SetEnqueue(func(ctx context.Context, mangaID string, chapterIDs []string) error {
-		_, err := downloads.EnqueueManga(ctx, mangaID, downloader.ChapterSelection{IDs: chapterIDs}, "")
-		return err
-	})
+	updateService.SetEnqueue(server.EnqueueNewChapters)
 	server.SetUpdater(updateService)
 	server.SetImageCache(imageCache)
 	sweepOnce(imageCache, repo.ListCachedPaths)

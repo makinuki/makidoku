@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,6 +55,25 @@ func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {
 		items = []db.DownloadQueueItem{}
 	}
 	writeJSON(w, http.StatusOK, downloadSnapshot{Items: items, Stats: s.downloads.Stats()})
+}
+
+// EnqueueNewChapters queues newly discovered chapters for a title that opted
+// into automatic downloads. It is the only gate for automatic download
+// policy, shared by the per-title refresh and the library updater so both
+// paths behave identically.
+func (s *Server) EnqueueNewChapters(ctx context.Context, mangaID string, chapterIDs []string) error {
+	if len(chapterIDs) == 0 || s.downloads == nil {
+		return nil
+	}
+	manga, err := s.repo.GetManga(mangaID)
+	if err != nil {
+		return err
+	}
+	if !manga.DownloadNewChapters {
+		return nil
+	}
+	_, err = s.downloads.EnqueueManga(ctx, mangaID, downloader.ChapterSelection{IDs: chapterIDs}, "")
+	return err
 }
 
 func (s *Server) enqueueDownload(w http.ResponseWriter, r *http.Request) {

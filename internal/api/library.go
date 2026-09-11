@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,13 +38,28 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 	if err != nil {
 		return nil, err
 	}
+	// A source that re-issues a chapter under a new identifier, for example
+	// after rotating a URL suffix, must update the existing local chapter
+	// instead of forking a duplicate or reporting a new release.
+	adopted := replacementChapterIDs(before, details.Chapters)
 	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return nil, err
 	}
 	newIDs := []string{}
 	for _, item := range details.Chapters {
-		chapter, err := s.repo.UpsertChapter(db.Chapter{MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)})
+		chapter, err := s.repo.UpsertChapter(db.Chapter{
+			ID:              adopted[item.ID],
+			MangaID:         updated.ID,
+			SourceID:        source.SourceID,
+			SourceChapterID: item.ID,
+			ChapterNumber:   item.Number,
+			Volume:          item.Volume,
+			Title:           stringPointer(item.Title),
+			Language:        stringPointer(item.Language),
+			UploadedAt:      item.UploadedAt,
+			Scanlator:       stringPointer(item.Scanlator),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -55,6 +71,64 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 		return nil, err
 	}
 	return newIDs, nil
+}
+
+// replacementChapterIDs maps incoming source chapter IDs to an existing local
+// chapter that the source appears to have re-issued under a new identifier:
+// the local chapter is no longer offered by the source, and an incoming
+// chapter carries the same number and language. Matching by number keeps the
+// canonical ID, reading state, and download artifacts attached to one record
+// instead of creating a replacement duplicate. Each local chapter is claimed
+// at most once, so two simultaneous releases of the same number stay distinct.
+func replacementChapterIDs(before []db.Chapter, incoming []engine.ChapterItem) map[string]string {
+	offered := make(map[string]struct{}, len(incoming))
+	for _, item := range incoming {
+		offered[item.ID] = struct{}{}
+	}
+	orphaned := make(map[string]db.Chapter, len(before))
+	bySourceID := make(map[string]struct{}, len(before))
+	for _, chapter := range before {
+		bySourceID[chapter.SourceChapterID] = struct{}{}
+		if _, ok := offered[chapter.SourceChapterID]; ok {
+			continue
+		}
+		language := ""
+		if chapter.Language != nil {
+			language = *chapter.Language
+		}
+		key, ok := chapterIdentity(chapter.ChapterNumber, language)
+		if !ok {
+			continue
+		}
+		orphaned[key] = chapter
+	}
+	replacements := make(map[string]string)
+	for _, item := range incoming {
+		if _, ok := bySourceID[item.ID]; ok {
+			continue
+		}
+		key, ok := chapterIdentity(item.Number, item.Language)
+		if !ok {
+			continue
+		}
+		chapter, ok := orphaned[key]
+		if !ok {
+			continue
+		}
+		replacements[item.ID] = chapter.ID
+		delete(orphaned, key)
+	}
+	return replacements
+}
+
+// chapterIdentity keys a chapter by number and language. Unnumbered entries
+// are not keyed: specials carry no comparable ordering, so treating them as
+// interchangeable would merge unrelated records.
+func chapterIdentity(number *float64, language string) (string, bool) {
+	if number == nil {
+		return "", false
+	}
+	return strconv.FormatFloat(*number, 'f', -1, 64) + "\x00" + strings.ToLower(strings.TrimSpace(language)), true
 }
 
 // mountLibrary registers the local library endpoints. The library grows with
@@ -143,10 +217,15 @@ func (s *Server) refreshManga(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
 		return
 	}
-	_, err := s.RefreshManga(r.Context(), mangaID)
+	newIDs, err := s.RefreshManga(r.Context(), mangaID)
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	// The enqueue performs its own source round trip, so it must survive the
+	// client disconnecting while the response is still being prepared.
+	if err := s.EnqueueNewChapters(s.Lifetime(), mangaID, newIDs); err != nil {
+		slog.Warn("automatic download enqueue failed", "manga", mangaID, "err", err)
 	}
 	aggregate, err := s.repo.GetMangaAggregate(mangaID)
 	if err != nil {
@@ -169,8 +248,13 @@ func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (d
 	if err != nil {
 		return db.MangaAggregate{}, err
 	}
+	before, err := s.repo.ListChapters(updated.ID)
+	if err != nil {
+		return db.MangaAggregate{}, err
+	}
+	adopted := replacementChapterIDs(before, details.Chapters)
 	for _, item := range details.Chapters {
-		if _, err := s.repo.UpsertChapter(db.Chapter{MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
+		if _, err := s.repo.UpsertChapter(db.Chapter{ID: adopted[item.ID], MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
 			return db.MangaAggregate{}, err
 		}
 	}

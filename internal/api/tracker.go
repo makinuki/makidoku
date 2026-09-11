@@ -488,6 +488,16 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request, complete bool)
 	if complete {
 		body.IsCompleted = true
 	}
+	if s.incognito.Load() {
+		// No-trace policy: report the stored position without recording
+		// history, read state, sessions, or automatic tracker activity.
+		if stored, err := s.trackers.Repo.GetReadingProgress(body.MangaID); err == nil {
+			writeJSON(w, http.StatusOK, stored)
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
+		return
+	}
 	p, err := s.trackers.Repo.UpsertReadingProgress(body)
 	if err != nil {
 		writeLocalError(w, http.StatusBadRequest, err)

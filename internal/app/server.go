@@ -122,6 +122,9 @@ func New(cfg config.Config) (*Server, error) {
 	imageCache := imagecache.New(filepath.Join(cfg.DataDir, "image-cache"), cfg.ImageCacheMaxBytes, cfg.ImageCacheMaxAge)
 	server := api.NewTrackerServer(repo, eng, downloads, trackers)
 	server.SetSettings(preferences)
+	if incognito, err := preferences.Bool("privacy.incognito"); err == nil && incognito {
+		server.SetIncognito(true)
+	}
 	updateService := updater.New(repo, func(ctx context.Context, mangaID string) ([]string, error) {
 		return server.RefreshManga(ctx, mangaID)
 	})

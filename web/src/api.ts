@@ -122,6 +122,12 @@ export const api = {
   acknowledgeUpdates: (ids: string[]) =>
     request<void>("/api/updates/ack", { method: "POST", body: JSON.stringify({ ids }) }),
   settings: () => request<RuntimeSetting[]>("/api/settings"),
+  incognito: () => request<{ enabled: boolean }>("/api/incognito"),
+  setIncognito: (enabled: boolean) =>
+    request<{ enabled: boolean }>("/api/incognito", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
   updateSetting: (key: string, value: unknown) =>
     request(`/api/settings/${encodeURIComponent(key)}`, {
       method: "PUT",

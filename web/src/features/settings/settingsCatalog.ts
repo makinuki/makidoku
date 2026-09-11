@@ -3,6 +3,7 @@ import {
   Compass,
   Database,
   Download,
+  EyeOff,
   Library,
   Palette,
   RefreshCw,
@@ -19,6 +20,7 @@ export type SettingsSectionId =
   | "tracking"
   | "browse"
   | "data"
+  | "privacy"
   | "advanced";
 
 export type SettingsSection = {
@@ -79,6 +81,13 @@ export const settingsSections: SettingsSection[] = [
     subtitle: "Backup, restore, and reading statistics",
     icon: Database,
     prefixes: ["backup"],
+  },
+  {
+    id: "privacy",
+    title: "Privacy",
+    subtitle: "Incognito mode and recorded activity",
+    icon: EyeOff,
+    prefixes: ["privacy"],
   },
   {
     id: "advanced",

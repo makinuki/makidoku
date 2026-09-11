@@ -292,6 +292,7 @@ var definitionList = []Definition{
 		}
 		return nil
 	}},
+	{Key: "privacy.incognito", Type: "boolean", Default: "false", Description: "Start in incognito mode, which does not record reading activity", Validate: boolean},
 	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "Daemon log level", Validate: enum("debug", "info", "warn", "error")},
 	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Processed image cache retention in days", Validate: number(1, 3650)},
 	{Key: "library.view.sort", Type: "string", Default: `"recent"`, Description: "Library ordering", Validate: enum("recent", "title", "added", "last_read", "unread"), Hidden: true},

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
 import {
   Download,
+  EyeOff,
   History,
   Library,
   BarChart3,
@@ -25,6 +26,24 @@ export function AppShell({
   searchMode: SearchMode;
 }) {
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [incognito, setIncognito] = useState(false);
+  useEffect(() => {
+    let active = true;
+    api
+      .incognito()
+      .then((state) => active && setIncognito(state.enabled))
+      .catch(() => {
+        // Incognito state is optional; the default stays off if the read fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const toggleIncognito = () => {
+    const next = !incognito;
+    setIncognito(next);
+    void api.setIncognito(next).catch(() => setIncognito(!next));
+  };
   useEffect(() => {
     let active = true;
     const check = () =>
@@ -94,6 +113,16 @@ export function AppShell({
               Ctrl K
             </kbd>
           </button>
+          <button
+            type="button"
+            onClick={toggleIncognito}
+            aria-pressed={incognito}
+            aria-label={incognito ? "Turn off incognito mode" : "Turn on incognito mode"}
+            title={incognito ? "Incognito mode is on" : "Incognito mode is off"}
+            className={`rounded-lg border p-2 ${incognito ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : "border-zinc-800 text-zinc-400 hover:border-zinc-700"}`}
+          >
+            <EyeOff size={16} />
+          </button>
           <span
             className={`flex items-center gap-2 text-xs ${connected ? "text-emerald-400" : connected === false ? "text-red-400" : "text-zinc-500"}`}
             aria-label="Daemon status"
@@ -104,6 +133,11 @@ export function AppShell({
             </span>
           </span>
         </header>
+        {incognito && (
+          <div className="flex items-center gap-2 border-b border-amber-400/40 bg-amber-400/10 px-4 py-2 text-xs text-amber-200 lg:px-8">
+            <EyeOff size={14} /> Incognito mode is on. Reading activity will not be saved.
+          </div>
+        )}
         <main>{children}</main>
       </div>
     </div>

@@ -16,6 +16,7 @@ import { DownloadsSection } from "./features/settings/sections/DownloadsSection"
 import { TrackingSection } from "./features/settings/sections/TrackingSection";
 import { BrowseSection } from "./features/settings/sections/BrowseSection";
 import { DataSection } from "./features/settings/sections/DataSection";
+import { PrivacySection } from "./features/settings/sections/PrivacySection";
 import { AdvancedSection } from "./features/settings/sections/AdvancedSection";
 import { UpdatesPage } from "./features/updates/UpdatesPage";
 import { GlobalSearch } from "./features/search/GlobalSearch";
@@ -62,6 +63,7 @@ export default function App() {
             <Route path="tracking" element={<TrackingSection />} />
             <Route path="browse" element={<BrowseSection />} />
             <Route path="data" element={<DataSection />} />
+            <Route path="privacy" element={<PrivacySection />} />
             <Route path="advanced" element={<AdvancedSection />} />
             <Route path="*" element={<Navigate to="/settings" replace />} />
           </Route>

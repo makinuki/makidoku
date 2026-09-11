@@ -44,6 +44,9 @@ type Server struct {
 	settings      *settings.Service
 	updater       *updater.Service
 	lifetime      atomic.Pointer[context.Context]
+	// incognito is the runtime no-trace flag: while set, reading progress is
+	// not recorded and no automatic tracker activity is produced.
+	incognito atomic.Bool
 	// seriesURLLookups marks the titles whose series page URL lookup already
 	// ran, so a title the source cannot match is not searched on every read.
 	seriesURLLookups sync.Map
@@ -88,6 +91,9 @@ func NewTrackerServer(repo *db.Repository, eng *engine.Engine, downloads downloa
 
 func (s *Server) SetSettings(service *settings.Service) { s.settings = service }
 
+// SetIncognito seeds the runtime no-trace flag from the persisted preference.
+func (s *Server) SetIncognito(enabled bool) { s.incognito.Store(enabled) }
+
 func (s *Server) SetUpdater(service *updater.Service) { s.updater = service }
 
 // Mount registers the local REST API under /api.
@@ -95,6 +101,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/health", s.health)
 		s.mountLibrary(api)
+		s.mountPrivacy(api)
 		if s.settings != nil {
 			s.mountSettings(api)
 		}

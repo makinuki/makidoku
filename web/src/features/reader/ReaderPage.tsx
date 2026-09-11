@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  EyeOff,
   Maximize,
   Menu,
   SlidersHorizontal,
@@ -55,6 +56,7 @@ export function ReaderPage() {
   const sessionStartedAt = useRef(Date.now());
   const [overrides, setOverrides] = useState<ReaderOverrides>(emptyReaderOverrides);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [incognito, setIncognito] = useState(false);
   const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
 
@@ -65,6 +67,18 @@ export function ReaderPage() {
     setMode(resolved.mode);
     setDirection(resolved.direction);
     setFit(resolved.fit);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    api
+      .incognito()
+      .then((state) => active && setIncognito(state.enabled))
+      .catch(() => {
+        // Incognito state is optional; the badge stays hidden if the read fails.
+      });
+    return () => {
+      active = false;
+    };
   }, []);
   useEffect(() => {
     let active = true;
@@ -276,6 +290,11 @@ export function ReaderPage() {
         <div className="min-w-0 flex-1">
           <b className="block truncate text-sm">{aggregate.manga.title}</b>
           <small className="text-zinc-500">{chapterLabel(aggregate, chapterId)}</small>
+          {incognito && (
+            <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[11px] text-amber-300">
+              <EyeOff size={12} /> Incognito
+            </span>
+          )}
         </div>
         <div className="flex gap-1">
           <button

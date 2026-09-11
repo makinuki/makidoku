@@ -6,6 +6,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+- Add incognito mode. While it is on, reading progress, history, session time,
+  and automatic tracker updates are not recorded; the reader reports the
+  stored position without writing anything. The flag persists as a privacy
+  setting, has a header toggle with a banner, a reader badge, and its own
+  settings section.
 - Honor automatic downloads on the per-title refresh path, not only during the
   scheduled library update.
 - Reuse an existing chapter record when a source re-issues the same chapter

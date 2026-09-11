@@ -63,8 +63,13 @@ type Manga struct {
 	InLibrary           bool    `db:"in_library" json:"inLibrary"`
 	DownloadFormat      string  `db:"download_format" json:"downloadFormat"`
 	DownloadNewChapters bool    `db:"download_new_chapters" json:"downloadNewChapters"`
-	CreatedAt           int64   `db:"created_at" json:"createdAt"`
-	UpdatedAt           int64   `db:"updated_at" json:"updatedAt"`
+	// Reader overrides win over the global reader settings for this title. A
+	// NULL column means the global setting applies.
+	ReaderMode      *string `db:"reader_mode" json:"readerMode,omitempty"`
+	ReaderDirection *string `db:"reader_direction" json:"readerDirection,omitempty"`
+	ReaderFit       *string `db:"reader_fit" json:"readerFit,omitempty"`
+	CreatedAt       int64   `db:"created_at" json:"createdAt"`
+	UpdatedAt       int64   `db:"updated_at" json:"updatedAt"`
 	// DetailsFetchedAt records when full details were last pulled from the
 	// plugin. Search-level records stay NULL until the first details read.
 	DetailsFetchedAt *int64 `db:"details_fetched_at" json:"detailsFetchedAt,omitempty"`

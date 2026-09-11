@@ -61,6 +61,14 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     }),
+  setMangaReaderOverrides: (
+    mangaId: string,
+    overrides: { mode: string | null; direction: string | null; fit: string | null },
+  ) =>
+    request<Manga>(`/api/manga/${idPath(mangaId)}/reader`, {
+      method: "PATCH",
+      body: JSON.stringify(overrides),
+    }),
   categories: () => request<Category[]>("/api/categories"),
   createCategory: (name: string) =>
     request<Category>("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),

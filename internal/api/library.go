@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -158,6 +159,7 @@ func (s *Server) mountLibrary(r chi.Router) {
 	r.Post("/manga/{mangaID}/library", s.addMangaByID)
 	r.Delete("/manga/{mangaID}/library", s.removeMangaByID)
 	r.Patch("/manga/{mangaID}/downloads", s.updateMangaDownloads)
+	r.Patch("/manga/{mangaID}/reader", s.updateMangaReader)
 	r.Post("/manga/{mangaID}/refresh", s.refreshManga)
 	r.Post("/manga/{mangaID}/categories/{categoryID}", s.addMangaCategoryByID)
 	r.Delete("/manga/{mangaID}/categories/{categoryID}", s.removeMangaCategoryByID)
@@ -185,6 +187,65 @@ func (s *Server) updateMangaDownloads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, manga)
+}
+
+// updateMangaReader records per-title reader overrides. A field that is absent
+// keeps its stored value; an explicit null clears the override so the reader
+// falls back to the global setting; a string replaces it.
+func (s *Server) updateMangaReader(w http.ResponseWriter, r *http.Request) {
+	var body map[string]json.RawMessage
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	mangaID := chi.URLParam(r, "mangaID")
+	manga, err := s.repo.GetManga(mangaID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	mode, err := mergeReaderOverride(body, "mode", manga.ReaderMode)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	direction, err := mergeReaderOverride(body, "direction", manga.ReaderDirection)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	fit, err := mergeReaderOverride(body, "fit", manga.ReaderFit)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	updated, err := s.repo.SetMangaReaderOverrides(mangaID, mode, direction, fit)
+	if err != nil {
+		writeLocalError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// mergeReaderOverride resolves one override field from a request body. An
+// absent key keeps the stored value, null or an empty string clears it, and a
+// string replaces it.
+func mergeReaderOverride(body map[string]json.RawMessage, key string, stored *string) (*string, error) {
+	raw, ok := body[key]
+	if !ok {
+		return stored, nil
+	}
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("%s must be a string or null", key)
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	return &trimmed, nil
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {

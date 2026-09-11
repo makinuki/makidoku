@@ -975,3 +975,44 @@ func TestMangaSourceStoresSeriesPageURL(t *testing.T) {
 		t.Fatalf("series page after listing = %q (err %v)", link.URL, err)
 	}
 }
+
+// Per-title reader overrides round-trip, survive an unrelated metadata refresh,
+// and clear back to the global fallback with NULLs.
+func TestMangaReaderOverridesRoundTrip(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "reader-override", Title: "Reader Override", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manga.ReaderMode != nil || manga.ReaderDirection != nil || manga.ReaderFit != nil {
+		t.Fatalf("new manga carried overrides: %+v", manga)
+	}
+	mode, direction, fit := "double", "rtl", "height"
+	updated, err := repo.SetMangaReaderOverrides(manga.ID, &mode, &direction, &fit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ReaderMode == nil || *updated.ReaderMode != mode ||
+		updated.ReaderDirection == nil || *updated.ReaderDirection != direction ||
+		updated.ReaderFit == nil || *updated.ReaderFit != fit {
+		t.Fatalf("stored overrides = %+v", updated)
+	}
+	refreshed, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "reader-override", Title: "Reader Override Renamed", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.ReaderMode == nil || *refreshed.ReaderMode != mode {
+		t.Fatalf("refresh dropped the override: %+v", refreshed)
+	}
+	cleared, err := repo.SetMangaReaderOverrides(manga.ID, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.ReaderMode != nil || cleared.ReaderDirection != nil || cleared.ReaderFit != nil {
+		t.Fatalf("cleared overrides = %+v", cleared)
+	}
+	bad := "scroll"
+	if _, err := repo.SetMangaReaderOverrides(manga.ID, &bad, nil, nil); err == nil {
+		t.Fatal("unsupported reader mode was accepted")
+	}
+}

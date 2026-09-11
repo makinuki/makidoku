@@ -1,14 +1,30 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowLeft, ChevronLeft, ChevronRight, Maximize, Menu } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Maximize,
+  Menu,
+  SlidersHorizontal,
+} from "lucide-react";
 import { api } from "../../api";
 import type { Aggregate, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
+import {
+  defaultReaderGlobals,
+  emptyReaderOverrides,
+  readerGlobalsFromSettings,
+  readerOverridesFromManga,
+  resolveReaderSettings,
+  type ReaderDirection as Direction,
+  type ReaderFit as Fit,
+  type ReaderGlobals,
+  type ReaderMode as Mode,
+  type ReaderOverrides,
+} from "./readerSettings";
 
-type Mode = "single" | "double" | "webtoon";
-type Direction = "ltr" | "rtl";
-type Fit = "width" | "height" | "original";
 export function ReaderPage() {
   const { mangaId: routeManga, chapterId: routeChapter } = useParams();
   const [searchParams] = useSearchParams();
@@ -37,21 +53,27 @@ export function ReaderPage() {
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
   const sessionStartedAt = useRef(Date.now());
+  const [overrides, setOverrides] = useState<ReaderOverrides>(emptyReaderOverrides);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
+  const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
+
+  // The effective reader settings are the per-title override on top of the
+  // global preference; see readerSettings.ts for the resolution rules.
+  const applyReaderSettings = useCallback(() => {
+    const resolved = resolveReaderSettings(globals.current, overridesRef.current);
+    setMode(resolved.mode);
+    setDirection(resolved.direction);
+    setFit(resolved.fit);
+  }, []);
   useEffect(() => {
     let active = true;
     api
       .settings()
       .then((items) => {
         if (!active) return;
-        const values = new Map(items.map((item) => [item.key, item.value]));
-        const modeValue = values.get("reader.default_mode");
-        const directionValue = values.get("reader.direction");
-        const fitValue = values.get("reader.fit");
-        if (modeValue === "single" || modeValue === "double" || modeValue === "webtoon")
-          setMode(modeValue);
-        if (directionValue === "ltr" || directionValue === "rtl") setDirection(directionValue);
-        if (fitValue === "width" || fitValue === "height" || fitValue === "original")
-          setFit(fitValue);
+        globals.current = readerGlobalsFromSettings(items);
+        applyReaderSettings();
       })
       .catch(() => {
         // Reader defaults are optional; the local default remains usable offline.
@@ -59,7 +81,26 @@ export function ReaderPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [applyReaderSettings]);
+  useEffect(() => {
+    if (!aggregate) return;
+    overridesRef.current = readerOverridesFromManga(aggregate.manga);
+    setOverrides(overridesRef.current);
+    applyReaderSettings();
+  }, [aggregate, applyReaderSettings]);
+  const saveReaderOverride = useCallback(
+    (patch: Partial<ReaderOverrides>) => {
+      if (!mangaId) return;
+      const next = { ...overridesRef.current, ...patch };
+      overridesRef.current = next;
+      setOverrides(next);
+      applyReaderSettings();
+      void api.setMangaReaderOverrides(mangaId, next).catch((err) => {
+        console.error("saving reader overrides failed", err);
+      });
+    },
+    [mangaId, applyReaderSettings],
+  );
   useEffect(() => {
     if (!mangaId || !chapterId) {
       setLoading(false);
@@ -266,8 +307,70 @@ export function ReaderPage() {
           >
             <Maximize size={16} />
           </button>
+          <button
+            aria-label="Reader settings"
+            onClick={() => setSettingsOpen((value) => !value)}
+            className={`rounded-lg p-2 ${settingsOpen ? "bg-zinc-800 text-amber-400" : "text-zinc-400 hover:bg-zinc-800"}`}
+          >
+            <SlidersHorizontal size={16} />
+          </button>
         </div>
       </div>
+      {settingsOpen && (
+        <div className="absolute right-3 top-14 z-40 w-64 space-y-3 rounded-xl border border-zinc-800 bg-zinc-950 p-3 shadow-2xl">
+          <div className="flex items-center justify-between">
+            <b className="text-sm">Reader settings</b>
+            <span className="text-xs text-zinc-500">This title</span>
+          </div>
+          <label className="block text-xs text-zinc-400">
+            Mode
+            <select
+              value={overrides.mode ?? ""}
+              onChange={(event) =>
+                saveReaderOverride({ mode: (event.target.value || null) as Mode | null })
+              }
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-100"
+            >
+              <option value="">Default ({globals.current.mode})</option>
+              <option value="single">Single</option>
+              <option value="double">Double</option>
+              <option value="webtoon">Webtoon</option>
+            </select>
+          </label>
+          <label className="block text-xs text-zinc-400">
+            Direction
+            <select
+              value={overrides.direction ?? ""}
+              onChange={(event) =>
+                saveReaderOverride({ direction: (event.target.value || null) as Direction | null })
+              }
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-100"
+            >
+              <option value="">Default ({globals.current.direction})</option>
+              <option value="ltr">Left to right</option>
+              <option value="rtl">Right to left</option>
+            </select>
+          </label>
+          <label className="block text-xs text-zinc-400">
+            Fit
+            <select
+              value={overrides.fit ?? ""}
+              onChange={(event) =>
+                saveReaderOverride({ fit: (event.target.value || null) as Fit | null })
+              }
+              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-zinc-100"
+            >
+              <option value="">Default ({globals.current.fit})</option>
+              <option value="width">Fit width</option>
+              <option value="height">Fit height</option>
+              <option value="original">Original</option>
+            </select>
+          </label>
+          <p className="text-[11px] leading-snug text-zinc-500">
+            Overrides apply to this title only. Choose Default to follow the global reader setting.
+          </p>
+        </div>
+      )}
       {mode === "webtoon" ? (
         <Webtoon pages={pages} index={index} setIndex={setIndex} />
       ) : (

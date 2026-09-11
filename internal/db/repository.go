@@ -351,7 +351,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +426,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 
 func (r *Repository) ListLibraryBySource(sourceID string) ([]Manga, error) {
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at
 		FROM manga m WHERE m.in_library=1 AND m.source_id=? ORDER BY m.title`, strings.TrimSpace(sourceID))
 	if manga == nil {
 		manga = []Manga{}
@@ -690,10 +690,51 @@ func (r *Repository) GetManga(id string) (Manga, error) {
 	var manga Manga
 	err := r.db.Get(&manga, `SELECT id, source_id, title,
 		alt_titles, description, authors, artists, genres, status, cover_url,
-		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, created_at, updated_at,
+		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, reader_mode, reader_direction, reader_fit, created_at, updated_at,
 		details_fetched_at
 		FROM manga WHERE id = ?`, id)
 	return manga, err
+}
+
+// SetMangaReaderOverrides records the per-title reader preferences. A nil
+// value clears the override so the reader falls back to the global setting.
+func (r *Repository) SetMangaReaderOverrides(id string, mode, direction, fit *string) (Manga, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Manga{}, errors.New("manga id is required")
+	}
+	if err := validateReaderValue(mode, "single", "double", "webtoon"); err != nil {
+		return Manga{}, err
+	}
+	if err := validateReaderValue(direction, "ltr", "rtl"); err != nil {
+		return Manga{}, err
+	}
+	if err := validateReaderValue(fit, "width", "height", "original"); err != nil {
+		return Manga{}, err
+	}
+	result, err := r.db.Exec(`UPDATE manga SET reader_mode=?, reader_direction=?, reader_fit=?, updated_at=? WHERE id=?`,
+		mode, direction, fit, time.Now().Unix(), id)
+	if err != nil {
+		return Manga{}, err
+	}
+	if err := requireChange(result, "update reader overrides"); err != nil {
+		return Manga{}, err
+	}
+	return r.GetManga(id)
+}
+
+// validateReaderValue reports whether a nullable override is one of the
+// permitted values. A nil value is always permitted and clears the override.
+func validateReaderValue(value *string, allowed ...string) error {
+	if value == nil {
+		return nil
+	}
+	for _, item := range allowed {
+		if *value == item {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported reader value %q", *value)
 }
 
 // SetMangaDetailsFetched stamps the last successful full-details fetch.

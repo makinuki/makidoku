@@ -13,6 +13,9 @@ export type Manga = {
   inLibrary: boolean;
   downloadFormat: string;
   downloadNewChapters?: boolean;
+  readerMode?: "single" | "double" | "webtoon" | null;
+  readerDirection?: "ltr" | "rtl" | null;
+  readerFit?: "width" | "height" | "original" | null;
   createdAt: number;
   updatedAt: number;
   detailsFetchedAt?: number;

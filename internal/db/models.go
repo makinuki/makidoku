@@ -246,10 +246,50 @@ type ReadingDay struct {
 }
 
 type ReadingStats struct {
-	ReadingSeconds int64        `json:"readingSeconds"`
-	TitleCount     int          `json:"titleCount"`
-	ChapterCount   int          `json:"chapterCount"`
-	Daily          []ReadingDay `json:"daily"`
+	ReadingSeconds int64         `json:"readingSeconds"`
+	TitleCount     int           `json:"titleCount"`
+	ChapterCount   int           `json:"chapterCount"`
+	Daily          []ReadingDay  `json:"daily"`
+	Overview       StatsOverview `json:"overview"`
+	Titles         StatsTitles   `json:"titles"`
+	Chapters       StatsChapters `json:"chapters"`
+	Trackers       StatsTrackers `json:"trackers"`
+	TopTitles      []TopTitle    `json:"topTitles"`
+}
+
+// StatsOverview summarizes library-wide reading state.
+type StatsOverview struct {
+	LibraryMangaCount   int   `json:"libraryMangaCount"`
+	CompletedMangaCount int   `json:"completedMangaCount"`
+	TotalReadDuration   int64 `json:"totalReadDuration"`
+}
+
+// StatsTitles summarizes how much of the library is being tracked or updated.
+type StatsTitles struct {
+	UpdateEnabledCount int `json:"updateEnabledCount"`
+	StartedMangaCount  int `json:"startedMangaCount"`
+}
+
+// StatsChapters summarizes chapter consumption and downloads.
+type StatsChapters struct {
+	TotalChapterCount int `json:"totalChapterCount"`
+	ReadChapterCount  int `json:"readChapterCount"`
+	DownloadCount     int `json:"downloadCount"`
+}
+
+// StatsTrackers summarizes remote tracker bindings.
+type StatsTrackers struct {
+	TrackedTitleCount int     `json:"trackedTitleCount"`
+	MeanScore         float64 `json:"meanScore"`
+	TrackerCount      int     `json:"trackerCount"`
+}
+
+// TopTitle is one entry of the per-title reading breakdown.
+type TopTitle struct {
+	MangaID      string `db:"manga_id" json:"mangaId"`
+	Title        string `db:"title" json:"title"`
+	Seconds      int64  `db:"seconds" json:"seconds"`
+	ChaptersRead int    `db:"chapters_read" json:"chaptersRead"`
 }
 
 type TrackerBinding struct {

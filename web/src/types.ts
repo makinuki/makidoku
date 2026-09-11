@@ -235,6 +235,11 @@ export type ReadingStats = {
   titleCount: number;
   chapterCount: number;
   daily: ReadingDay[];
+  overview: { libraryMangaCount: number; completedMangaCount: number; totalReadDuration: number };
+  titles: { updateEnabledCount: number; startedMangaCount: number };
+  chapters: { totalChapterCount: number; readChapterCount: number; downloadCount: number };
+  trackers: { trackedTitleCount: number; meanScore: number; trackerCount: number };
+  topTitles: { mangaId: string; title: string; seconds: number; chaptersRead: number }[];
 };
 export type MigrationCandidate = { source: Source; result: SearchResult };
 export type MigrationCandidates = {

@@ -1016,3 +1016,57 @@ func TestMangaReaderOverridesRoundTrip(t *testing.T) {
 		t.Fatal("unsupported reader mode was accepted")
 	}
 }
+
+// The statistics payload reports grouped counters built from local state, plus
+// a per-title reading breakdown ordered by recorded time.
+func TestReadingStatsGroups(t *testing.T) {
+	repo := testRepository(t)
+	library, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "stats", Title: "Stats", Status: "ongoing", InLibrary: true, DownloadNewChapters: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "stats-2", Title: "Stats Two", Status: "ongoing", InLibrary: true}); err != nil {
+		t.Fatal(err)
+	}
+	read, err := repo.UpsertChapter(Chapter{MangaID: library.ID, SourceChapterID: "stats-c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloaded, err := repo.UpsertChapter(Chapter{MangaID: library.ID, SourceChapterID: "stats-c2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetChapterRead(read.ID, library.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: library.ID, LastReadChapterID: read.ID, LastReadPage: 5, TotalPages: 5, IsCompleted: true, SessionSeconds: 120}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkChapterDownloaded(downloaded.ID, "/tmp/stats-c2.cbz"); err != nil {
+		t.Fatal(err)
+	}
+	score := 8.5
+	if _, err := repo.UpsertTrackerBinding(TrackerBinding{MangaID: library.ID, TrackerType: "anilist", RemoteID: "42", RemoteTitle: "Stats", RemoteScore: &score}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := repo.ReadingStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Overview.LibraryMangaCount != 2 || stats.Overview.CompletedMangaCount != 1 || stats.Overview.TotalReadDuration != 120 {
+		t.Fatalf("overview = %+v", stats.Overview)
+	}
+	if stats.Titles.UpdateEnabledCount != 1 || stats.Titles.StartedMangaCount != 1 {
+		t.Fatalf("titles = %+v", stats.Titles)
+	}
+	if stats.Chapters.TotalChapterCount != 2 || stats.Chapters.ReadChapterCount != 1 || stats.Chapters.DownloadCount != 1 {
+		t.Fatalf("chapters = %+v", stats.Chapters)
+	}
+	if stats.Trackers.TrackedTitleCount != 1 || stats.Trackers.TrackerCount != 1 || stats.Trackers.MeanScore != 8.5 {
+		t.Fatalf("trackers = %+v", stats.Trackers)
+	}
+	if len(stats.TopTitles) != 1 || stats.TopTitles[0].Title != "Stats" || stats.TopTitles[0].Seconds != 120 || stats.TopTitles[0].ChaptersRead != 1 {
+		t.Fatalf("top titles = %+v", stats.TopTitles)
+	}
+}

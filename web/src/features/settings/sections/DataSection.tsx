@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Download, FolderOpen, LoaderCircle } from "lucide-react";
 import { api } from "../../../api";
 import { Modal } from "../../../components/Modal";
@@ -148,6 +149,9 @@ export function DataSection() {
         <div className="mt-4 flex gap-6 text-xs text-zinc-500">
           <span>{titleCount} titles</span>
           <span>{chapterCount} chapters</span>
+          <Link to="/stats" className="text-amber-300 hover:underline">
+            View full statistics
+          </Link>
         </div>
       </SettingsCard>
     </SectionPage>

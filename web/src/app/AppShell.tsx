@@ -4,6 +4,7 @@ import {
   Download,
   History,
   Library,
+  BarChart3,
   Search,
   Settings,
   Wifi,
@@ -43,6 +44,7 @@ export function AppShell({
     ["/browse", "Browse", Search],
     ["/updates", "Updates", RefreshCw],
     ["/history", "History", History],
+    ["/stats", "Statistics", BarChart3],
     ["/downloads", "Downloads", Download],
   ] as const;
   const searchLabel = searchMode === "settings" ? "Search settings" : "Search library";

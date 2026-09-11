@@ -20,6 +20,7 @@ import { AdvancedSection } from "./features/settings/sections/AdvancedSection";
 import { UpdatesPage } from "./features/updates/UpdatesPage";
 import { GlobalSearch } from "./features/search/GlobalSearch";
 import { RecommendationsPage } from "./features/manga/RecommendationsPage";
+import { StatsPage } from "./features/stats/StatsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/downloads" element={<DownloadsPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/updates" element={<UpdatesPage />} />
+          <Route path="/stats" element={<StatsPage />} />
           <Route path="/settings" element={<SettingsLayout />}>
             <Route index element={<SettingsIndexPage />} />
             <Route path="appearance" element={<AppearanceSection />} />

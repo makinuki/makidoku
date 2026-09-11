@@ -953,6 +953,44 @@ func (r *Repository) ReadingStats() (ReadingStats, error) {
 	if stats.Daily == nil {
 		stats.Daily = []ReadingDay{}
 	}
+	stats.Overview = StatsOverview{
+		LibraryMangaCount: stats.TitleCount,
+		TotalReadDuration: stats.ReadingSeconds,
+	}
+	if err := r.db.Get(&stats.Overview.CompletedMangaCount, `SELECT COUNT(*) FROM reading_progress p JOIN manga m ON m.id=p.manga_id WHERE m.in_library=1 AND p.is_completed=1`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.Titles.UpdateEnabledCount, `SELECT COUNT(*) FROM manga WHERE in_library=1 AND download_new_chapters=1`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.Titles.StartedMangaCount, `SELECT COUNT(*) FROM (SELECT manga_id FROM reading_progress UNION SELECT manga_id FROM history_events)`); err != nil {
+		return ReadingStats{}, err
+	}
+	stats.Chapters.TotalChapterCount = stats.ChapterCount
+	if err := r.db.Get(&stats.Chapters.ReadChapterCount, `SELECT COUNT(*) FROM chapter_read_state s JOIN chapters c ON c.id=s.chapter_id JOIN manga m ON m.id=c.manga_id WHERE m.in_library=1 AND s.read=1`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.Chapters.DownloadCount, `SELECT COUNT(*) FROM chapters c JOIN manga m ON m.id=c.manga_id WHERE m.in_library=1 AND c.downloaded=1`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.Trackers.TrackedTitleCount, `SELECT COUNT(DISTINCT manga_id) FROM tracker_bindings`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.Trackers.MeanScore, `SELECT COALESCE(AVG(remote_score), 0) FROM tracker_bindings WHERE remote_score IS NOT NULL`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Get(&stats.Trackers.TrackerCount, `SELECT COUNT(DISTINCT tracker_type) FROM tracker_bindings`); err != nil {
+		return ReadingStats{}, err
+	}
+	if err := r.db.Select(&stats.TopTitles, `SELECT s.manga_id AS manga_id, m.title AS title, SUM(s.seconds) AS seconds,
+		(SELECT COUNT(*) FROM chapter_read_state cs JOIN chapters c ON c.id=cs.chapter_id WHERE c.manga_id=s.manga_id AND cs.read=1) AS chapters_read
+		FROM reading_sessions s JOIN manga m ON m.id=s.manga_id
+		GROUP BY s.manga_id, m.title ORDER BY seconds DESC LIMIT 10`); err != nil {
+		return ReadingStats{}, err
+	}
+	if stats.TopTitles == nil {
+		stats.TopTitles = []TopTitle{}
+	}
 	return stats, nil
 }
 

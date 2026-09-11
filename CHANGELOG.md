@@ -17,11 +17,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   previously pointed at the plugin base URL; the locator is now recorded from
   listings, refreshed when a source rotates it, and resolved through the
   search export for titles stored before it was recorded.
-- Rework the library around one toolbar: search, category, sort, and a filter,
-  sort, and display sheet. Titles wrap to two lines, cards show an unread count
-  and reading progress, and a continue action opens the last read chapter. The
-  selected view is stored in the settings service, and the header search action
-  focuses the library search on the library routes.
+- Rework the library around one toolbar: a category selector, sort, and a
+  filter, sort, and display sheet. Titles wrap to two lines, cards show an
+  unread count and reading progress, and a continue action opens the last read
+  chapter. The selected view is stored in the settings service, and the header
+  control is the single search surface on every page.
 
 ## [0.1.0] - 2026-08-26
 

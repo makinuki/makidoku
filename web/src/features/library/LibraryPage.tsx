@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowDown, ArrowUp, Play, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Play, SlidersHorizontal, X } from "lucide-react";
 import { api } from "../../api";
 import type { Category, LibraryManga } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
@@ -30,7 +30,6 @@ export function LibraryPage() {
   const [items, setItems] = useState<LibraryManga[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [view, setView] = useState<LibraryView>(defaultLibraryView);
-  const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -76,8 +75,8 @@ export function LibraryPage() {
   const updateView = useCallback((patch: Partial<LibraryView>) => {
     setView((current) => mergeLibraryView(current, patch));
   }, []);
-  const visible = useMemo(() => visibleLibrary(items, view, query), [items, view, query]);
-  const counts = useMemo(() => categoryCounts(items, view, query), [items, view, query]);
+  const visible = useMemo(() => visibleLibrary(items, view, ""), [items, view]);
+  const counts = useMemo(() => categoryCounts(items, view, ""), [items, view]);
   const sources = useMemo(() => librarySources(items), [items]);
   const chips = filterChips(view, (id) => sources.find((source) => source.id === id)?.name ?? id);
   const activeCount = activeFilterCount(view);
@@ -90,27 +89,6 @@ export function LibraryPage() {
         </span>
       </PageHeader>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <label className="flex min-w-56 flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2">
-          <Search size={16} className="shrink-0 text-zinc-500" />
-          <input
-            id="library-search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search your library"
-            aria-label="Search your library"
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
-          />
-          {query && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => setQuery("")}
-              className="text-zinc-500 hover:text-white"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </label>
         <select
           aria-label="Category"
           value={view.category}
@@ -206,14 +184,11 @@ export function LibraryPage() {
       ) : visible.length === 0 ? (
         <EmptyState
           title="No titles match"
-          text="Adjust the search text or clear the active filters."
+          text="Select another category or clear the active filters."
           action={
             <button
               type="button"
-              onClick={() => {
-                setQuery("");
-                updateView({ filters: emptyFilters });
-              }}
+              onClick={() => updateView({ filters: emptyFilters, category: 0 })}
               className="mt-3 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-200"
             >
               Clear filters

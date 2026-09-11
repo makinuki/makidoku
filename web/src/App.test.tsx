@@ -2612,7 +2612,7 @@ describe("details page action feedback", () => {
 });
 
 describe("library layout", () => {
-  it("filters the grid and stores the layout in the settings service", async () => {
+  it("keeps a single search surface and stores the layout in the settings service", async () => {
     window.history.pushState({}, "", "/");
     const writes: Array<{ url: string; body: string }> = [];
     vi.stubGlobal(
@@ -2661,11 +2661,12 @@ describe("library layout", () => {
     expect(await screen.findByText("Alpha")).toBeInTheDocument();
     expect(screen.getByText("Beta")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Search your library"), {
-      target: { value: "alp" },
-    });
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
-    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    // The header control is the only search surface; the library page carries
+    // no second one.
+    expect(screen.queryByPlaceholderText("Search your library")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Search library" }));
+    expect(screen.getByPlaceholderText("Search your library")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.getByLabelText("4 unread chapters")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Filters" }));

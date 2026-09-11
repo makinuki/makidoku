@@ -19,6 +19,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   privacy, browse feeds, saved searches, merged sources, alternative titles,
   tags, and the source metadata record. A title marked fetch-once is left out
   of the scheduled update, and a custom cover overrides the source cover.
+- Edit a title's custom info, bookmark a chapter, manage merged sources, and
+  list browse feeds and saved searches through the API. A validated backup is
+  staged so importing it does not upload the file a second time, and the
+  import report names the site an unmatched source appears to be.
 - Derive chapter numbers for releases that do not declare one. A number
   introduced by a "ch." marker wins over a bare number, volume, version, and
   season markers are ignored, and alphabetic suffixes map onto fractional

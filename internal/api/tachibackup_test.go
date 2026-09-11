@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -86,6 +87,63 @@ func newBackupServer(t *testing.T) (*chi.Mux, *db.Repository) {
 	router := chi.NewRouter()
 	server.Mount(router)
 	return router, repo
+}
+
+// A caller that asks for a stream gets newline-delimited progress followed by
+// the summary; a caller that does not keeps the plain JSON response.
+func TestImportTachibackupStreamsProgress(t *testing.T) {
+	router, _ := newBackupServer(t)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "backup.tachibk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(backupFixture()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("stream", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/backup/tachibackup/import", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "ndjson") {
+		t.Fatalf("content type = %q", contentType)
+	}
+	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected progress and a summary, got %q", recorder.Body.String())
+	}
+	var progress struct {
+		Phase     string `json:"phase"`
+		Processed int    `json:"processed"`
+		Total     int    `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &progress); err != nil {
+		t.Fatal(err)
+	}
+	if progress.Phase != "manga" || progress.Processed != 1 || progress.Total != 1 {
+		t.Fatalf("progress = %+v", progress)
+	}
+	var final struct {
+		Summary struct {
+			Manga int `json:"manga"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &final); err != nil {
+		t.Fatal(err)
+	}
+	if final.Summary.Manga != 1 {
+		t.Fatalf("summary = %+v", final.Summary)
+	}
 }
 
 // A validation stages the upload and returns a token, so the import step can

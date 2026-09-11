@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { api } from "../../../api";
-import type { Source, TachibackupReport, TachibackupSummary } from "../../../types";
+import type {
+  Source,
+  TachibackupProgress,
+  TachibackupReport,
+  TachibackupSummary,
+} from "../../../types";
 import { useSettings } from "../SettingsLayout";
 import { SettingsCard } from "../SettingsPrimitives";
 
@@ -22,6 +27,7 @@ export function TachibackupImport() {
   const [validating, setValidating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [summary, setSummary] = useState<TachibackupSummary | null>(null);
+  const [progress, setProgress] = useState<TachibackupProgress | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -64,12 +70,13 @@ export function TachibackupImport() {
     if (!uploadId && !file) return;
     setImporting(true);
     setError("");
+    setProgress(null);
     try {
-      const result = await api.importTachibackup(uploadId ?? file!, {
-        sourceMap: mapping,
-        skipUnmatched,
-        skipOutOfLibrary,
-      });
+      const result = await api.importTachibackupStream(
+        uploadId ?? file!,
+        { sourceMap: mapping, skipUnmatched, skipOutOfLibrary },
+        setProgress,
+      );
       setSummary(result);
       setReport(null);
       setFile(null);
@@ -80,6 +87,7 @@ export function TachibackupImport() {
       setError(e instanceof Error ? e.message : "Unable to import the backup");
     } finally {
       setImporting(false);
+      setProgress(null);
     }
   };
 
@@ -203,6 +211,20 @@ export function TachibackupImport() {
             {importing && <LoaderCircle size={15} className="animate-spin" />}
             {importing ? "Importing…" : `Import ${report.counts.manga} titles`}
           </button>
+
+          {importing && progress && progress.total > 0 && (
+            <div className="space-y-1">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-amber-400 transition-[width]"
+                  style={{ width: `${Math.min(100, (progress.processed / progress.total) * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-zinc-500">
+                {progress.processed} of {progress.total} titles
+              </p>
+            </div>
+          )}
         </div>
       )}
 

@@ -26,6 +26,7 @@ import type {
   Recommendation,
   ReadingStats,
   TachibackupOptions,
+  TachibackupProgress,
   TachibackupReport,
   TachibackupSummary,
 } from "./types";
@@ -286,6 +287,60 @@ export const api = {
     }
     body.append("options", JSON.stringify(options));
     return request<TachibackupSummary>("/api/backup/tachibackup/import", { method: "POST", body });
+  },
+  // importTachibackupStream reads newline-delimited progress from the import
+  // endpoint and resolves with the final summary.
+  importTachibackupStream: async (
+    input: File | string,
+    options: TachibackupOptions,
+    onProgress: (progress: TachibackupProgress) => void,
+  ): Promise<TachibackupSummary> => {
+    const body = new FormData();
+    if (typeof input === "string") {
+      body.append("uploadId", input);
+    } else {
+      body.append("file", input);
+    }
+    body.append("options", JSON.stringify(options));
+    body.append("stream", "true");
+    const response = await fetch("/api/backup/tachibackup/import", { method: "POST", body });
+    if (!response.ok || !response.body) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload?.error?.message || `Request failed (${response.status})`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let summary: TachibackupSummary | undefined;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (let index = buffer.indexOf("\n"); index >= 0; index = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        if (!line) continue;
+        const parsed = JSON.parse(line) as {
+          error?: string;
+          summary?: TachibackupSummary;
+          phase?: string;
+          processed?: number;
+          total?: number;
+        };
+        if (parsed.error) throw new Error(parsed.error);
+        if (parsed.summary) {
+          summary = parsed.summary;
+        } else if (parsed.phase !== undefined) {
+          onProgress({
+            phase: parsed.phase,
+            processed: parsed.processed ?? 0,
+            total: parsed.total ?? 0,
+          });
+        }
+      }
+    }
+    if (!summary) throw new Error("The import ended without a summary");
+    return summary;
   },
   readerImage: (page: Page) => `/api/pages/${idPath(page.id)}/image`,
 };

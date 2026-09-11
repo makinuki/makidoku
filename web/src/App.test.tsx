@@ -901,6 +901,7 @@ describe("MakiDoku app shell", () => {
       }
       if (path === "/api/backup/tachibackup/validate") {
         return Response.json({
+          uploadId: "staged-token",
           counts: { manga: 1, chapters: 2, categories: 1, history: 1, trackings: 0 },
           sources: [
             { backupSourceId: 7, name: "Other Site", mangaCount: 1, deferred: true },
@@ -921,19 +922,32 @@ describe("MakiDoku app shell", () => {
       }
       if (path === "/api/backup/tachibackup/import") {
         importBody = init?.body as FormData;
-        return Response.json({
-          categories: 1,
-          manga: 1,
-          mergedManga: 0,
-          deferredManga: 1,
-          skippedManga: 0,
-          chapters: 2,
-          readChapters: 1,
-          history: 1,
-          readingSessions: 0,
-          tracking: 0,
-          skippedTracking: 0,
-        });
+        // The wizard consumes newline-delimited progress followed by a
+        // summary line, not a single JSON document.
+        return new Response(
+          `${JSON.stringify({ phase: "manga", processed: 1, total: 1 })}\n` +
+            `${JSON.stringify({
+              summary: {
+                categories: 1,
+                manga: 1,
+                mergedManga: 0,
+                deferredManga: 1,
+                skippedManga: 0,
+                outOfLibrary: 0,
+                chapters: 2,
+                readChapters: 1,
+                history: 1,
+                readingSessions: 0,
+                tracking: 0,
+                skippedTracking: 0,
+                feeds: 0,
+                savedSearches: 0,
+                merges: 0,
+                metadata: 0,
+              },
+            })}\n`,
+          { status: 200, headers: { "Content-Type": "application/x-ndjson" } },
+        );
       }
       return Response.json([]);
     });
@@ -954,6 +968,8 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByText("matched by name")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Import 1 titles" }));
     expect(await screen.findByText(/Restored 1 titles/)).toBeInTheDocument();
+    expect(importBody?.get("uploadId")).toBe("staged-token");
+    expect(importBody?.get("stream")).toBe("true");
     expect(importBody?.get("options")).toContain('"7":""');
     expect(importBody?.get("options")).toContain('"9":"mangadex"');
   });

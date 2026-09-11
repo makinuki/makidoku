@@ -304,6 +304,12 @@ export type TachibackupOptions = {
   skipOutOfLibrary?: boolean;
 };
 
+export type TachibackupProgress = {
+  phase: string;
+  processed: number;
+  total: number;
+};
+
 export type TachibackupSummary = {
   categories: number;
   manga: number;

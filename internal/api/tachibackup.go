@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -61,12 +62,55 @@ func (s *Server) importTachibackup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if wantsStream(r) {
+		s.streamTachibackupImport(w, plan)
+		return
+	}
 	summary, err := tachibackup.Import(s.repo.DB(), plan)
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// wantsStream reports whether the caller asked for newline-delimited progress.
+// A caller that does not ask keeps the plain JSON summary response.
+func wantsStream(r *http.Request) bool {
+	if strings.EqualFold(strings.TrimSpace(r.FormValue("stream")), "true") {
+		return true
+	}
+	return strings.Contains(r.Header.Get("Accept"), "application/x-ndjson")
+}
+
+// streamTachibackupImport writes one JSON progress object per line and ends
+// with a summary line. A failure after the headers are sent is reported as an
+// error line, because the status code can no longer change.
+func (s *Server) streamTachibackupImport(w http.ResponseWriter, plan *tachibackup.Plan) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeLocalError(w, http.StatusInternalServerError, errors.New("streaming is unavailable"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(w)
+	write := func(value any) {
+		if encoder.Encode(value) == nil {
+			flusher.Flush()
+		}
+	}
+	summary, err := tachibackup.ImportWithProgress(s.repo.DB(), plan, func(progress tachibackup.Progress) {
+		write(progress)
+	})
+	if err != nil {
+		write(map[string]string{"error": err.Error()})
+		return
+	}
+	write(struct {
+		Summary tachibackup.Summary `json:"summary"`
+	}{Summary: summary})
 }
 
 func (s *Server) planTachibackup(w http.ResponseWriter, data []byte, options tachibackup.Options) (*tachibackup.Plan, bool) {

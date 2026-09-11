@@ -47,9 +47,28 @@ type importTarget struct {
 	deferred bool
 }
 
+// Progress reports how far an import has advanced. Phase names the stage and
+// Processed of Total counts the units that stage has completed.
+type Progress struct {
+	Phase     string `json:"phase"`
+	Processed int    `json:"processed"`
+	Total     int    `json:"total"`
+}
+
+// ProgressFunc receives import progress. It is called on the importing
+// goroutine, so it must not block.
+type ProgressFunc func(Progress)
+
 // Import applies a plan in one transaction. Re-importing the same file merges
 // onto the existing library rather than duplicating it.
 func Import(db *sqlx.DB, plan *Plan) (Summary, error) {
+	return ImportWithProgress(db, plan, nil)
+}
+
+// ImportWithProgress applies a plan and reports per-title progress. Progress
+// is advisory: a failure after it has been reported still rolls the
+// transaction back.
+func ImportWithProgress(db *sqlx.DB, plan *Plan, progress ProgressFunc) (Summary, error) {
 	var summary Summary
 	if plan == nil || plan.backup == nil {
 		return summary, errors.New("import plan is empty")
@@ -68,11 +87,13 @@ func Import(db *sqlx.DB, plan *Plan) (Summary, error) {
 		return summary, err
 	}
 
+	total := len(plan.backup.Manga)
 	for index := range plan.backup.Manga {
 		manga := &plan.backup.Manga[index]
 		resolved := plan.sources[manga.Source]
 		if resolved == nil || resolved.skip {
 			summary.SkippedManga++
+			reportProgress(progress, "manga", index+1, total)
 			continue
 		}
 		if !manga.Favorite {
@@ -81,6 +102,7 @@ func Import(db *sqlx.DB, plan *Plan) (Summary, error) {
 			// library view.
 			if plan.skipOutOfLibrary {
 				summary.SkippedManga++
+				reportProgress(progress, "manga", index+1, total)
 				continue
 			}
 			summary.OutOfLibrary++
@@ -97,12 +119,21 @@ func Import(db *sqlx.DB, plan *Plan) (Summary, error) {
 		if err := importManga(tx, plan, manga, target, categoryIDs, &summary); err != nil {
 			return summary, fmt.Errorf("import %q: %w", manga.Title, err)
 		}
+		reportProgress(progress, "manga", index+1, total)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return summary, fmt.Errorf("commit import: %w", err)
 	}
 	return summary, nil
+}
+
+// reportProgress hands one progress sample to the caller when it wants them.
+func reportProgress(progress ProgressFunc, phase string, processed, total int) {
+	if progress == nil {
+		return
+	}
+	progress(Progress{Phase: phase, Processed: processed, Total: total})
 }
 
 // importCategories creates or updates the backup's categories and returns a

@@ -343,7 +343,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +418,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 
 func (r *Repository) ListLibraryBySource(sourceID string) ([]Manga, error) {
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.source_manga_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.created_at,m.updated_at,m.details_fetched_at
 		FROM manga m WHERE m.in_library=1 AND m.source_id=? ORDER BY m.title`, strings.TrimSpace(sourceID))
 	if manga == nil {
 		manga = []Manga{}
@@ -598,10 +598,10 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 	}
 
 	_, err = r.db.Exec(`INSERT INTO manga(
-		id, source_id, source_manga_id, title, alt_titles, description,
+		id, source_id, title, alt_titles, description,
 		authors, artists, genres, status, cover_url, in_library,
 		download_format, download_new_chapters, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title,
 		alt_titles = excluded.alt_titles,
@@ -613,7 +613,7 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 		cover_url = excluded.cover_url,
 		download_format = excluded.download_format,
 		updated_at = excluded.updated_at`,
-		manga.ID, manga.SourceID, manga.SourceMangaID, manga.Title,
+		manga.ID, manga.SourceID, manga.Title,
 		manga.AltTitles, manga.Description, manga.Authors, manga.Artists,
 		manga.Genres, manga.Status, manga.CoverURL, manga.InLibrary,
 		manga.DownloadFormat, manga.DownloadNewChapters, manga.CreatedAt, manga.UpdatedAt)
@@ -673,7 +673,7 @@ func (r *Repository) SetMangaCover(id, path, contentType string, fetchedAt int64
 
 func (r *Repository) GetManga(id string) (Manga, error) {
 	var manga Manga
-	err := r.db.Get(&manga, `SELECT id, source_id, source_manga_id, title,
+	err := r.db.Get(&manga, `SELECT id, source_id, title,
 		alt_titles, description, authors, artists, genres, status, cover_url,
 		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, created_at, updated_at,
 		details_fetched_at
@@ -1517,7 +1517,7 @@ const queueSelect = `SELECT
 	q.downloaded_pages, q.done_pages, q.error_message, q.queued_at,
 	c.manga_id, cs.source_chapter_id, c.chapter_number, c.volume,
 	c.title AS chapter_title, c.language, c.scanlator,
-	c.source_id, m.source_manga_id, m.title AS manga_title,
+	c.source_id, m.title AS manga_title,
 	m.description AS manga_description, m.authors AS manga_authors,
 	m.artists AS manga_artists, m.genres AS manga_genres, m.download_format,
 	s.name AS source_name

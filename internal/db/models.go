@@ -40,10 +40,13 @@ type Category struct {
 	SortOrder int    `db:"sort_order" json:"sortOrder"`
 }
 
+// Manga is a stored library entry. SourceMangaID is a transient input that
+// names the source-side entry when the title is linked through manga_sources;
+// it is not a column on the manga row.
 type Manga struct {
 	ID                  string  `db:"id" json:"id"`
 	SourceID            string  `db:"source_id" json:"sourceId"`
-	SourceMangaID       string  `db:"source_manga_id" json:"-"`
+	SourceMangaID       string  `db:"-" json:"-"`
 	Title               string  `db:"title" json:"title"`
 	AltTitles           *string `db:"alt_titles" json:"altTitles"`
 	Description         *string `db:"description" json:"description"`
@@ -305,7 +308,6 @@ type DownloadQueueItem struct {
 	DownloadQueue
 	MangaID          string   `db:"manga_id" json:"mangaId"`
 	SourceID         string   `db:"source_id" json:"sourceId"`
-	SourceMangaID    string   `db:"source_manga_id" json:"-"`
 	MangaTitle       string   `db:"manga_title" json:"mangaTitle"`
 	MangaDescription *string  `db:"manga_description" json:"mangaDescription,omitempty"`
 	MangaAuthors     *string  `db:"manga_authors" json:"mangaAuthors,omitempty"`

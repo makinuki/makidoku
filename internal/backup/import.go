@@ -82,9 +82,9 @@ func Import(db *sqlx.DB, data []byte) error {
 	}
 	for _, raw := range doc.Manga {
 		m, _ := raw.(map[string]any)
-		if _, err := tx.Exec(`INSERT INTO manga(id,source_id,source_manga_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,download_new_chapters,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,alt_titles=excluded.alt_titles,description=excluded.description,authors=excluded.authors,artists=excluded.artists,genres=excluded.genres,status=excluded.status,cover_url=excluded.cover_url,in_library=excluded.in_library,download_format=excluded.download_format,download_new_chapters=excluded.download_new_chapters,updated_at=excluded.updated_at`,
-			stringValue(m["id"]), stringValue(m["source_id"]), stringValue(m["source_manga_id"]), stringValue(m["title"]), nullableString(m["alt_titles"]), nullableString(m["description"]), nullableString(m["authors"]), nullableString(m["artists"]), nullableString(m["genres"]), stringValue(m["status"]), stringValue(m["cover_url"]), boolValue(m["in_library"]), stringValueDefault(m["download_format"], "cbz"), boolValue(m["download_new_chapters"]), int64Value(m["created_at"]), int64Value(m["updated_at"])); err != nil {
+		if _, err := tx.Exec(`INSERT INTO manga(id,source_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,download_new_chapters,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,alt_titles=excluded.alt_titles,description=excluded.description,authors=excluded.authors,artists=excluded.artists,genres=excluded.genres,status=excluded.status,cover_url=excluded.cover_url,in_library=excluded.in_library,download_format=excluded.download_format,download_new_chapters=excluded.download_new_chapters,updated_at=excluded.updated_at`,
+			stringValue(m["id"]), stringValue(m["source_id"]), stringValue(m["title"]), nullableString(m["alt_titles"]), nullableString(m["description"]), nullableString(m["authors"]), nullableString(m["artists"]), nullableString(m["genres"]), stringValue(m["status"]), stringValue(m["cover_url"]), boolValue(m["in_library"]), stringValueDefault(m["download_format"], "cbz"), boolValue(m["download_new_chapters"]), int64Value(m["created_at"]), int64Value(m["updated_at"])); err != nil {
 			return fmt.Errorf("import manga %q: %w", stringValue(m["id"]), err)
 		}
 	}

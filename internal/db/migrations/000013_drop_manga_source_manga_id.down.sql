@@ -1,0 +1,1 @@
+ALTER TABLE manga ADD COLUMN source_manga_id TEXT NOT NULL DEFAULT '';

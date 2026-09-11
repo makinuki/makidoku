@@ -11,6 +11,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 - Reuse an existing chapter record when a source re-issues the same chapter
   under a new identifier, instead of creating a duplicate and reporting a new
   release.
+- Drop the unused manga.source_manga_id column. A title's source-side
+  identifier is stored only in manga_sources, which is the authoritative link.
 
 ## [0.1.0] - 2026-08-26
 

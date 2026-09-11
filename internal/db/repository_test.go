@@ -916,3 +916,27 @@ func TestUpsertChapterReusesCanonicalIDForReissuedSource(t *testing.T) {
 		t.Fatalf("read state was lost: %+v", state)
 	}
 }
+
+// The manga row carries no source-side identifier: the link lives in
+// manga_sources and resolves through GetMangaSource.
+func TestMangaSchemaHasNoSourceMangaIDColumn(t *testing.T) {
+	repo := testRepository(t)
+	var columns int
+	if err := repo.DB().Get(&columns, `SELECT COUNT(*) FROM pragma_table_info('manga') WHERE name='source_manga_id'`); err != nil {
+		t.Fatal(err)
+	}
+	if columns != 0 {
+		t.Fatalf("manga.source_manga_id still present after migration")
+	}
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "yosuga", Title: "Yosuga", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := repo.GetMangaSource(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.SourceID != "mangadex" || link.SourceMangaID != "yosuga" {
+		t.Fatalf("source link = %+v", link)
+	}
+}

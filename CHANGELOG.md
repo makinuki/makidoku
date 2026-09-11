@@ -6,6 +6,18 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+- Derive chapter numbers for releases that do not declare one. A number
+  introduced by a "ch." marker wins over a bare number, volume, version, and
+  season markers are ignored, and alphabetic suffixes map onto fractional
+  parts.
+- Store per-title reader overrides. A title can pin its reader mode,
+  direction, and image fit; the reader settings panel writes them, and an
+  unset value follows the global setting.
+- Add a statistics page with grouped counters, a daily reading chart, and a
+  most-read titles table, fed by additive fields on the statistics endpoint.
+- Add batch actions to the library. A selection mode offers bulk read,
+  library, category, download, and remove operations and reports the titles
+  that failed.
 - Add incognito mode. While it is on, reading progress, history, session time,
   and automatic tracker updates are not recorded; the reader reports the
   stored position without writing anything. The flag persists as a privacy

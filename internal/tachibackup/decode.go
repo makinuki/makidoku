@@ -82,6 +82,12 @@ func decodeBackup(data []byte) (*Backup, error) {
 				return err
 			}
 			out.Sources = append(out.Sources, source)
+		case 104:
+			out.Preferences++
+		case 105:
+			out.SourcePreferences++
+		case 106:
+			out.ExtensionStores++
 		}
 		return nil
 	})

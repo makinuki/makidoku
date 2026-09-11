@@ -88,7 +88,7 @@ func testBackup() []byte {
 		testVarint(13, 1_600_000_000_000),
 		testVarint(14, 0),
 		testBytes(16, chapter),
-		testVarint(17, 7),
+		testVarint(17, 3),
 		testBytes(18, tracking),
 		testVarint(103, 2),
 		testBytes(104, history),

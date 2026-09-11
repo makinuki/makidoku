@@ -9,6 +9,12 @@ type Backup struct {
 	Manga      []Manga
 	Categories []Category
 	Sources    []Source
+	// Preferences, SourcePreferences and ExtensionStores are counted but never
+	// stored: they describe the writing install, not the library. Preference
+	// values can carry credentials, so they are not modelled at all.
+	Preferences       int
+	SourcePreferences int
+	ExtensionStores   int
 }
 
 // Manga is one library entry. Categories holds backup category ids, Tracking

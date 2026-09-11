@@ -24,12 +24,23 @@ type Summary struct {
 	MergedManga     int `json:"mergedManga"`
 	DeferredManga   int `json:"deferredManga"`
 	SkippedManga    int `json:"skippedManga"`
+	OutOfLibrary    int `json:"outOfLibrary"`
 	Chapters        int `json:"chapters"`
 	ReadChapters    int `json:"readChapters"`
 	History         int `json:"history"`
 	ReadingSessions int `json:"readingSessions"`
 	Tracking        int `json:"tracking"`
 	SkippedTracking int `json:"skippedTracking"`
+}
+
+// importTarget is the resolved destination for one title's writes: the local
+// source, the translation rules its identifiers follow, and its front page.
+// A deferred target has no installed source, so identifiers stay verbatim.
+type importTarget struct {
+	sourceID string
+	kind     keyKind
+	baseURL  string
+	deferred bool
 }
 
 // Import applies a plan in one transaction. Re-importing the same file merges
@@ -53,19 +64,30 @@ func Import(db *sqlx.DB, plan *Plan) (Summary, error) {
 	for index := range plan.backup.Manga {
 		manga := &plan.backup.Manga[index]
 		resolved := plan.sources[manga.Source]
-		if !manga.Favorite || resolved == nil || resolved.skip {
+		if resolved == nil || resolved.skip {
 			summary.SkippedManga++
 			continue
 		}
-		sourceID := resolved.ref.ID
+		if !manga.Favorite {
+			// A title outside the library still carries chapters, read state
+			// and history, so it is restored without being added to the
+			// library view.
+			if plan.skipOutOfLibrary {
+				summary.SkippedManga++
+				continue
+			}
+			summary.OutOfLibrary++
+		}
+		target := importTarget{sourceID: resolved.ref.ID, kind: resolved.kind, baseURL: resolved.ref.BaseURL}
 		if resolved.deferred {
-			sourceID, err = placeholderSource(tx, manga.Source, resolved.name)
+			target.sourceID, err = placeholderSource(tx, manga.Source, resolved.name)
 			if err != nil {
 				return summary, err
 			}
+			target.deferred = true
 			summary.DeferredManga++
 		}
-		if err := importManga(tx, manga, sourceID, categoryIDs, &summary); err != nil {
+		if err := importManga(tx, manga, target, categoryIDs, &summary); err != nil {
 			return summary, fmt.Errorf("import %q: %w", manga.Title, err)
 		}
 	}
@@ -76,6 +98,10 @@ func Import(db *sqlx.DB, plan *Plan) (Summary, error) {
 	return summary, nil
 }
 
+// importCategories creates or updates the backup's categories and returns a
+// lookup from backup category order to local category id. The writer records
+// the category order on each title rather than the category identifier, so the
+// order is the key the per-title assignment needs.
 func importCategories(tx *sqlx.Tx, backup *Backup, summary *Summary) (map[int64]int64, error) {
 	out := map[int64]int64{}
 	for _, category := range backup.Categories {
@@ -99,7 +125,7 @@ func importCategories(tx *sqlx.Tx, backup *Backup, summary *Summary) (map[int64]
 		} else if _, err := tx.Exec(`UPDATE categories SET sort_order=? WHERE id=?`, category.Order, id); err != nil {
 			return nil, fmt.Errorf("update category %q: %w", name, err)
 		}
-		out[category.ID] = id
+		out[category.Order] = id
 	}
 	return out, nil
 }
@@ -123,11 +149,21 @@ func placeholderSource(tx *sqlx.Tx, backupSourceID int64, name string) (string, 
 	return id, nil
 }
 
-func importManga(tx *sqlx.Tx, manga *Manga, sourceID string, categoryIDs map[int64]int64, summary *Summary) error {
+func importManga(tx *sqlx.Tx, manga *Manga, target importTarget, categoryOrders map[int64]int64, summary *Summary) error {
 	title := strings.TrimSpace(manga.Title)
 	if title == "" {
 		title = manga.URL
 	}
+	// The recorded locator belongs to the writing application; an installed
+	// source expects its own identifier. A deferred title keeps the recorded
+	// locator because there is nothing to translate it for yet.
+	seriesID := manga.URL
+	pageURL := strings.TrimSpace(manga.URL)
+	if !target.deferred {
+		seriesID = seriesKey(target.kind, manga.URL)
+		pageURL = seriesPageURL(target.kind, manga.URL, seriesID, target.baseURL)
+	}
+	sourceID := target.sourceID
 	mode, direction, fit := readerOverrides(manga)
 	now := time.Now().Unix()
 	createdAt := millisToSeconds(manga.DateAdded)
@@ -140,18 +176,22 @@ func importManga(tx *sqlx.Tx, manga *Manga, sourceID string, categoryIDs map[int
 	}
 	status := mangaStatus(manga.Status)
 	genres := jsonArray(manga.Genre)
+	libraryFlag := 0
+	if manga.Favorite {
+		libraryFlag = 1
+	}
 
 	var mangaID string
-	err := tx.Get(&mangaID, `SELECT manga_id FROM manga_sources WHERE source_id=? AND source_manga_id=?`, sourceID, manga.URL)
+	err := tx.Get(&mangaID, `SELECT manga_id FROM manga_sources WHERE source_id=? AND source_manga_id=?`, sourceID, seriesID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if mangaID, err = identity.New(); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO manga(id,source_id,title,alt_titles,description,authors,artists,genres,status,cover_url,in_library,download_format,download_new_chapters,reader_mode,reader_direction,reader_fit,created_at,updated_at)
-			VALUES(?,?,?,NULL,?,?,?,?,?,?,1,'cbz',0,?,?,?,?,?)`,
+			VALUES(?,?,?,NULL,?,?,?,?,?,?,?,'cbz',0,?,?,?,?,?)`,
 			mangaID, sourceID, title, optional(manga.Description), jsonArray([]string{manga.Author}), jsonArray([]string{manga.Artist}), genres, status, manga.ThumbnailURL,
-			mode, direction, fit, createdAt, updatedAt); err != nil {
+			libraryFlag, mode, direction, fit, createdAt, updatedAt); err != nil {
 			return fmt.Errorf("create manga: %w", err)
 		}
 	default:
@@ -161,10 +201,10 @@ func importManga(tx *sqlx.Tx, manga *Manga, sourceID string, categoryIDs map[int
 		summary.MergedManga++
 		if _, err := tx.Exec(`UPDATE manga SET title=?, description=COALESCE(?,description), authors=COALESCE(?,authors),
 			artists=COALESCE(?,artists), genres=COALESCE(?,genres), status=?, cover_url=CASE WHEN ?<>'' THEN ? ELSE cover_url END,
-			in_library=1, reader_mode=COALESCE(?,reader_mode), reader_direction=COALESCE(?,reader_direction),
+			in_library=MAX(in_library,?), reader_mode=COALESCE(?,reader_mode), reader_direction=COALESCE(?,reader_direction),
 			reader_fit=COALESCE(?,reader_fit), updated_at=? WHERE id=?`,
 			title, optional(manga.Description), jsonArray([]string{manga.Author}), jsonArray([]string{manga.Artist}), genres, status,
-			manga.ThumbnailURL, manga.ThumbnailURL, mode, direction, fit, updatedAt, mangaID); err != nil {
+			manga.ThumbnailURL, manga.ThumbnailURL, libraryFlag, mode, direction, fit, updatedAt, mangaID); err != nil {
 			return fmt.Errorf("update manga: %w", err)
 		}
 	}
@@ -179,13 +219,15 @@ func importManga(tx *sqlx.Tx, manga *Manga, sourceID string, categoryIDs map[int
 		primary = 0
 	}
 	if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,is_primary,first_seen_at,last_seen_at)
-		VALUES(?,?,?,NULL,?,?,?)
+		VALUES(?,?,?,?,?,?,?)
 		ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`,
-		mangaID, sourceID, manga.URL, primary, now, now); err != nil {
+		mangaID, sourceID, seriesID, optional(pageURL), primary, now, now); err != nil {
 		return fmt.Errorf("link manga source: %w", err)
 	}
-	for _, categoryID := range manga.Categories {
-		localID, ok := categoryIDs[categoryID]
+	// The backup records category order on each title, not the category id.
+	// A title with no categories field carries no assignment.
+	for _, categoryOrder := range manga.Categories {
+		localID, ok := categoryOrders[categoryOrder]
 		if !ok {
 			continue
 		}
@@ -194,7 +236,7 @@ func importManga(tx *sqlx.Tx, manga *Manga, sourceID string, categoryIDs map[int
 		}
 	}
 
-	chapterIDs, err := importChapters(tx, manga, mangaID, sourceID, now, summary)
+	chapterIDs, err := importChapters(tx, manga, mangaID, target, seriesID, now, summary)
 	if err != nil {
 		return err
 	}
@@ -207,15 +249,23 @@ func importManga(tx *sqlx.Tx, manga *Manga, sourceID string, categoryIDs map[int
 	return nil
 }
 
-func importChapters(tx *sqlx.Tx, manga *Manga, mangaID, sourceID string, now int64, summary *Summary) (map[string]string, error) {
+// importChapters writes the chapters a title carries and returns a lookup from
+// the recorded chapter locator to the local chapter id. seriesID is the
+// translated series identifier, which a source-specific chapter key may embed.
+func importChapters(tx *sqlx.Tx, manga *Manga, mangaID string, target importTarget, seriesID string, now int64, summary *Summary) (map[string]string, error) {
 	chapterIDs := map[string]string{}
+	sourceID := target.sourceID
 	for _, chapter := range manga.Chapters {
 		url := strings.TrimSpace(chapter.URL)
 		if url == "" {
 			continue
 		}
+		key := url
+		if !target.deferred {
+			key = chapterKey(target.kind, chapter.URL, seriesID, target.baseURL)
+		}
 		var chapterID string
-		err := tx.Get(&chapterID, `SELECT chapter_id FROM chapter_sources WHERE source_id=? AND source_chapter_id=?`, sourceID, url)
+		err := tx.Get(&chapterID, `SELECT chapter_id FROM chapter_sources WHERE source_id=? AND source_chapter_id=?`, sourceID, key)
 		if errors.Is(err, sql.ErrNoRows) {
 			if chapterID, err = identity.New(); err != nil {
 				return nil, err
@@ -236,7 +286,7 @@ func importChapters(tx *sqlx.Tx, manga *Manga, mangaID, sourceID string, now int
 				return nil, fmt.Errorf("create chapter: %w", err)
 			}
 			if _, err := tx.Exec(`INSERT INTO chapter_sources(chapter_id,source_id,source_chapter_id,first_seen_at,last_seen_at)
-				VALUES(?,?,?,?,?)`, chapterID, sourceID, url, now, now); err != nil {
+				VALUES(?,?,?,?,?)`, chapterID, sourceID, key, now, now); err != nil {
 				return nil, fmt.Errorf("link chapter source: %w", err)
 			}
 			summary.Chapters++
@@ -378,9 +428,10 @@ func importTracking(tx *sqlx.Tx, manga *Manga, mangaID string, summary *Summary)
 			summary.SkippedTracking++
 			continue
 		}
-		remoteID := strconv.FormatInt(tracking.MediaID, 10)
-		if tracking.MediaID == 0 {
-			remoteID = strconv.FormatInt(int64(tracking.MediaIDInt), 10)
+		// The writer prefers its legacy 32-bit identifier when it is set.
+		remoteID := strconv.FormatInt(int64(tracking.MediaIDInt), 10)
+		if tracking.MediaIDInt == 0 {
+			remoteID = strconv.FormatInt(tracking.MediaID, 10)
 		}
 		if remoteID == "0" || remoteID == "" {
 			summary.SkippedTracking++
@@ -405,7 +456,7 @@ func importTracking(tx *sqlx.Tx, manga *Manga, mangaID string, summary *Summary)
 			ON CONFLICT(manga_id,tracker_type) DO UPDATE SET remote_id=excluded.remote_id, remote_title=excluded.remote_title,
 				remote_score=excluded.remote_score, remote_status=excluded.remote_status, last_synced_chapter=excluded.last_synced_chapter,
 				total_remote_chapters=excluded.total_remote_chapters, started_at=excluded.started_at, finished_at=excluded.finished_at`,
-			mangaID, trackerType, remoteID, tracking.Title, scoreValue, trackerStatus(tracking.Status),
+			mangaID, trackerType, remoteID, tracking.Title, scoreValue, trackerStatus(trackerType, tracking.Status),
 			float64(tracking.LastChapterRead), total,
 			derefSeconds(tracking.StartedReadingDate), derefSeconds(tracking.FinishedReadingDate)); err != nil {
 			return fmt.Errorf("restore tracker binding: %w", err)

@@ -1,6 +1,12 @@
 package tachibackup
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
+
+// sampleTitleLimit bounds how many example titles a source report carries.
+const sampleTitleLimit = 3
 
 // Counts summarises the records a backup carries.
 type Counts struct {
@@ -23,11 +29,21 @@ type SourceReport struct {
 	MatchedSourceName string `json:"matchedSourceName,omitempty"`
 	Match             string `json:"match,omitempty"`
 	Deferred          bool   `json:"deferred"`
+	// DetectedSite and SuggestedName identify an unmatched source from the
+	// locators it carries, so a user can confirm a mapping without having to
+	// recognise a numeric identifier.
+	DetectedSite  string `json:"detectedSite,omitempty"`
+	SuggestedName string `json:"suggestedName,omitempty"`
+	// SampleTitles and SampleURL show what the source holds, which is what a
+	// user needs in order to decide how to map it.
+	SampleTitles []string `json:"sampleTitles,omitempty"`
+	SampleURL    string   `json:"sampleURL,omitempty"`
 }
 
 // TrackerReport describes one tracker present in a backup.
 type TrackerReport struct {
 	SyncID      int32  `json:"syncId"`
+	Name        string `json:"name,omitempty"`
 	TrackerType string `json:"trackerType,omitempty"`
 	Supported   bool   `json:"supported"`
 	MangaCount  int    `json:"mangaCount"`
@@ -41,6 +57,14 @@ type Report struct {
 	Trackers             []TrackerReport `json:"trackers"`
 	UnmatchedTitles      int             `json:"unmatchedTitles"`
 	UnsupportedTrackings int             `json:"unsupportedTrackings"`
+	// OutOfLibraryTitles counts titles the backup records outside the library
+	// which still carry chapters, read state or history.
+	OutOfLibraryTitles int `json:"outOfLibraryTitles"`
+	// Preferences counts records the importer never persists. They are reported
+	// so the user knows what the file carried.
+	Preferences       int `json:"preferences"`
+	SourcePreferences int `json:"sourcePreferences"`
+	ExtensionStores   int `json:"extensionStores"`
 }
 
 // Options controls how backup sources and titles are resolved.
@@ -51,12 +75,16 @@ type Options struct {
 	// SkipUnmatched drops titles whose source could not be matched instead of
 	// deferring them.
 	SkipUnmatched bool `json:"skipUnmatched,omitempty"`
+	// SkipOutOfLibrary drops titles the backup records outside the library.
+	// They are imported by default because they still carry read state.
+	SkipOutOfLibrary bool `json:"skipOutOfLibrary,omitempty"`
 }
 
 // resolvedSource is the plan for one backup source.
 type resolvedSource struct {
 	name     string
 	ref      SourceRef
+	kind     keyKind
 	match    string
 	manga    int
 	deferred bool
@@ -66,27 +94,35 @@ type resolvedSource struct {
 // Plan is a report together with the per-source decisions an import applies.
 type Plan struct {
 	Report
-	backup  *Backup
-	sources map[int64]*resolvedSource
+	backup           *Backup
+	sources          map[int64]*resolvedSource
+	skipOutOfLibrary bool
 }
 
 // Build resolves every source in a backup against the installed sources and
 // returns the resulting plan. No database access and no writes occur here.
 func Build(backup *Backup, installed []SourceRef, options Options) *Plan {
 	plan := &Plan{
-		backup:  backup,
-		sources: map[int64]*resolvedSource{},
+		backup:           backup,
+		sources:          map[int64]*resolvedSource{},
+		skipOutOfLibrary: options.SkipOutOfLibrary,
 	}
 	if backup == nil {
 		return plan
 	}
 	plan.Counts.Manga = len(backup.Manga)
 	plan.Counts.Categories = len(backup.Categories)
+	plan.Preferences = backup.Preferences
+	plan.SourcePreferences = backup.SourcePreferences
+	plan.ExtensionStores = backup.ExtensionStores
 	for index := range backup.Manga {
 		manga := &backup.Manga[index]
 		plan.Counts.Chapters += len(manga.Chapters)
 		plan.Counts.History += len(manga.History)
 		plan.Counts.Trackings += len(manga.Tracking)
+		if !manga.Favorite {
+			plan.OutOfLibraryTitles++
+		}
 	}
 
 	names := map[int64]string{}
@@ -99,6 +135,8 @@ func Build(backup *Backup, installed []SourceRef, options Options) *Plan {
 		names[source.SourceID] = source.Name
 	}
 	seriesURLs := map[int64][]string{}
+	coverURLs := map[int64][]string{}
+	sampleTitles := map[int64][]string{}
 	for index := range backup.Manga {
 		manga := &backup.Manga[index]
 		resolved, ok := plan.sources[manga.Source]
@@ -108,32 +146,41 @@ func Build(backup *Backup, installed []SourceRef, options Options) *Plan {
 			order = append(order, manga.Source)
 		}
 		resolved.manga++
+		if len(sampleTitles[manga.Source]) < sampleTitleLimit {
+			if title := strings.TrimSpace(manga.Title); title != "" {
+				sampleTitles[manga.Source] = append(sampleTitles[manga.Source], title)
+			}
+		}
 		if manga.URL != "" {
 			seriesURLs[manga.Source] = append(seriesURLs[manga.Source], manga.URL)
 		}
 		if manga.ThumbnailURL != "" {
-			seriesURLs[manga.Source] = append(seriesURLs[manga.Source], manga.ThumbnailURL)
+			coverURLs[manga.Source] = append(coverURLs[manga.Source], manga.ThumbnailURL)
 		}
 	}
 
 	for _, sourceID := range order {
 		resolved := plan.sources[sourceID]
+		probes := make([]string, 0, len(seriesURLs[sourceID])+len(coverURLs[sourceID]))
+		probes = append(probes, seriesURLs[sourceID]...)
+		probes = append(probes, coverURLs[sourceID]...)
 		if override, present := options.SourceMap[sourceID]; present {
 			if ref, found := findSource(installed, override); found {
 				resolved.ref, resolved.match = ref, "manual"
 			} else {
 				resolved.deferred, resolved.match = true, "deferred"
 			}
-		} else if ref, match, ok := matchSource(resolved.name, seriesURLs[sourceID], installed); ok {
+		} else if ref, match, ok := matchSource(resolved.name, probes, installed); ok {
 			resolved.ref, resolved.match = ref, match
 		} else {
 			resolved.deferred, resolved.match = true, "unmatched"
 		}
+		resolved.kind = keyKindFor(resolved.ref.Name, resolved.ref.PluginKey, resolved.name)
 		if resolved.deferred {
 			resolved.skip = options.SkipUnmatched
 			plan.UnmatchedTitles += resolved.manga
 		}
-		plan.Sources = append(plan.Sources, SourceReport{
+		report := SourceReport{
 			BackupSourceID:    sourceID,
 			Name:              resolved.name,
 			MangaCount:        resolved.manga,
@@ -141,7 +188,20 @@ func Build(backup *Backup, installed []SourceRef, options Options) *Plan {
 			MatchedSourceName: resolved.ref.Name,
 			Match:             resolved.match,
 			Deferred:          resolved.deferred,
-		})
+			SampleTitles:      sampleTitles[sourceID],
+		}
+		if len(seriesURLs[sourceID]) > 0 {
+			report.SampleURL = seriesURLs[sourceID][0]
+		}
+		if resolved.deferred {
+			detection := detectSite(probes)
+			report.DetectedSite = detection.Host
+			report.SuggestedName = detection.Name
+			if strings.TrimSpace(report.Name) == "" {
+				report.Name = detection.Name
+			}
+		}
+		plan.Sources = append(plan.Sources, report)
 	}
 
 	trackers := map[int32]*TrackerReport{}
@@ -151,7 +211,7 @@ func Build(backup *Backup, installed []SourceRef, options Options) *Plan {
 			entry, ok := trackers[tracking.SyncID]
 			if !ok {
 				name, supported := TrackerTypeName(tracking.SyncID)
-				entry = &TrackerReport{SyncID: tracking.SyncID, TrackerType: name, Supported: supported}
+				entry = &TrackerReport{SyncID: tracking.SyncID, Name: TrackerDisplayName(tracking.SyncID), TrackerType: name, Supported: supported}
 				trackers[tracking.SyncID] = entry
 				trackerOrder = append(trackerOrder, tracking.SyncID)
 			}
@@ -220,6 +280,23 @@ var trackerTypes = map[int32]string{
 	11: "mangabaka",
 }
 
+// trackerDisplayNames names every identifier the backup format defines,
+// including the trackers MakiDoku does not implement, so a report can say
+// which tracker a skipped binding belonged to.
+var trackerDisplayNames = map[int32]string{
+	1:  "MyAnimeList",
+	2:  "AniList",
+	3:  "Kitsu",
+	4:  "Shikimori",
+	5:  "Bangumi",
+	6:  "Komga",
+	7:  "MangaUpdates",
+	8:  "Kavita",
+	9:  "Suwayomi",
+	11: "MangaBaka",
+	60: "MdList",
+}
+
 // TrackerTypeName resolves a numeric tracker identifier. The second result
 // reports whether MakiDoku has a tracker for it.
 func TrackerTypeName(syncID int32) (string, bool) {
@@ -227,9 +304,30 @@ func TrackerTypeName(syncID int32) (string, bool) {
 	return name, ok
 }
 
-// trackerStatuses maps the numeric tracker status onto the label stored with a
+// TrackerDisplayName returns a human-readable name for a tracker identifier,
+// falling back to the numeric value when the format does not define it.
+func TrackerDisplayName(syncID int32) string {
+	if name, ok := trackerDisplayNames[syncID]; ok {
+		return name
+	}
+	return ""
+}
+
+// trackerStatus maps the numeric tracker status onto the label stored with a
 // binding.
-func trackerStatus(status int32) *string {
+//
+// The writing application omits a status equal to its declared default, and
+// the default is zero for every tracker. Zero names a real status only where
+// the tracker's own status space starts there; elsewhere an absent status
+// stays unknown rather than being guessed.
+func trackerStatus(trackerType string, status int32) *string {
+	if status == 0 {
+		if trackerType == "mangaupdates" {
+			label := "reading"
+			return &label
+		}
+		return nil
+	}
 	labels := map[int32]string{
 		1: "reading",
 		2: "completed",

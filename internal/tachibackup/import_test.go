@@ -66,7 +66,8 @@ func fixture(sourceName string, sourceID int64, seriesURL, chapterURL, thumbnail
 		testString(9, thumbnailURL),
 		testVarint(13, 1_600_000_000_000),
 		testBytes(16, chapter),
-		testVarint(17, 7),
+		// The writer records the category order on the title, not the id.
+		testVarint(17, 3),
 		testBytes(18, tracking),
 		testBytes(18, unmappedTracking),
 		testVarint(103, 2),

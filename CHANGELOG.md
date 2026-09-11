@@ -23,6 +23,9 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   list browse feeds and saved searches through the API. A validated backup is
   staged so importing it does not upload the file a second time, and the
   import report names the site an unmatched source appears to be.
+- Manage merged sources and their metadata from the web client. The details
+  page gains a sources dialog, and the browse tab lists feeds and saved
+  searches and replays a stored search against the installed plugin.
 - Derive chapter numbers for releases that do not declare one. A number
   introduced by a "ch." marker wins over a bare number, volume, version, and
   season markers are ignored, and alphabetic suffixes map onto fractional

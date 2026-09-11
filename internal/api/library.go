@@ -179,6 +179,53 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// sourceSeriesURL returns the source page to open for a stored title. A
+// locator recorded from a listing wins; otherwise the title is looked up once
+// through the search export, the only contract channel that declares a series
+// URL. The plugin base URL is the last resort, so the link stays usable while
+// the locator is unknown.
+func (s *Server) sourceSeriesURL(ctx context.Context, manga db.Manga) string {
+	source, err := s.repo.GetMangaSource(manga.ID)
+	if err != nil {
+		return s.sourceURL(manga.SourceID)
+	}
+	if source.URL != "" {
+		return source.URL
+	}
+	if resolved := s.searchSeriesURL(ctx, manga.Title, source); resolved != "" {
+		return resolved
+	}
+	return s.sourceURL(manga.SourceID)
+}
+
+// searchSeriesURL matches a title against its source and persists the locator
+// of the listing the title was created from. A title that does not match is
+// attempted once per process so a miss cannot drive a source request on every
+// read.
+func (s *Server) searchSeriesURL(ctx context.Context, title string, source db.MangaSource) string {
+	if s.engine == nil || strings.TrimSpace(title) == "" {
+		return ""
+	}
+	if _, seen := s.seriesURLLookups.LoadOrStore(source.MangaID, struct{}{}); seen {
+		return ""
+	}
+	result, err := s.engine.Search(ctx, source.SourceID, engine.SearchQuery{Query: title, Page: 1})
+	if err != nil {
+		slog.Debug("series url lookup failed", "manga", source.MangaID, "err", err)
+		return ""
+	}
+	for _, item := range result.Items {
+		if item.ID != source.SourceMangaID || item.URL == "" {
+			continue
+		}
+		if err := s.repo.SetSourceURL(source.MangaID, source.SourceID, item.URL); err != nil {
+			slog.Warn("series url not persisted", "manga", source.MangaID, "err", err)
+		}
+		return item.URL
+	}
+	return ""
+}
+
 // getManga is local-first: stored details serve the read directly so the
 // library works without connectivity. Only records that never completed a
 // details fetch resolve the plugin once to materialize chapters.
@@ -205,7 +252,7 @@ func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
-	aggregate.SourceURL = s.sourceURL(aggregate.Manga.SourceID)
+	aggregate.SourceURL = s.sourceSeriesURL(r.Context(), aggregate.Manga)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -233,7 +280,7 @@ func (s *Server) refreshManga(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
-	aggregate.SourceURL = s.sourceURL(aggregate.Manga.SourceID)
+	aggregate.SourceURL = s.sourceSeriesURL(r.Context(), aggregate.Manga)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 
@@ -355,7 +402,7 @@ func (s *Server) addMangaByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
-	aggregate.SourceURL = s.sourceURL(aggregate.Manga.SourceID)
+	aggregate.SourceURL = s.sourceSeriesURL(r.Context(), aggregate.Manga)
 	writeJSON(w, http.StatusOK, aggregate)
 }
 

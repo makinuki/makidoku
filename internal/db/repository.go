@@ -51,9 +51,17 @@ func (r *Repository) resolveSource(reference string) (string, error) {
 // boundary.
 func (r *Repository) GetMangaSource(mangaID string) (MangaSource, error) {
 	var source MangaSource
-	err := r.db.Get(&source, `SELECT ms.manga_id, ms.source_id, ms.source_manga_id, COALESCE(s.plugin_key, '') AS plugin_key
+	err := r.db.Get(&source, `SELECT ms.manga_id, ms.source_id, ms.source_manga_id, COALESCE(s.plugin_key, '') AS plugin_key, COALESCE(ms.url, '') AS url
 		FROM manga_sources ms JOIN sources s ON s.id=ms.source_id WHERE ms.manga_id=? ORDER BY ms.is_primary DESC LIMIT 1`, mangaID)
 	return source, err
+}
+
+// SetSourceURL records the series page declared for one source link. The
+// locator belongs to the link rather than the manga row because one title can
+// be linked to several sources.
+func (r *Repository) SetSourceURL(mangaID, sourceID, url string) error {
+	_, err := r.db.Exec(`UPDATE manga_sources SET url=? WHERE manga_id=? AND source_id=?`, strings.TrimSpace(url), mangaID, sourceID)
+	return err
 }
 
 // MigrateMangaSource atomically retires every chapter of a manga that does
@@ -629,10 +637,11 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 			return Manga{}, fmt.Errorf("invalidate cover cache %s: %w", manga.ID, err)
 		}
 	}
-	_, err = r.db.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,is_primary,first_seen_at,last_seen_at)
-		VALUES(?,?,?,?,?,?)
-		ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`,
-		manga.ID, sourceID, manga.SourceMangaID, true, now, now)
+	_, err = r.db.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,is_primary,first_seen_at,last_seen_at)
+		VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at,
+			url=COALESCE(NULLIF(excluded.url,''),url)`,
+		manga.ID, sourceID, manga.SourceMangaID, manga.SourcePageURL, true, now, now)
 	if err != nil {
 		return Manga{}, fmt.Errorf("link manga source %s: %w", manga.ID, err)
 	}
@@ -642,7 +651,8 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 // UpsertMangaStub records a bare listing entry for a search result without
 // overwriting any stored detail of an existing entry. Listing flows must use
 // it instead of UpsertManga so a search pass cannot degrade previously
-// fetched metadata.
+// fetched metadata; a listing that carries a series URL still refreshes the
+// stored locator.
 func (r *Repository) UpsertMangaStub(manga Manga) (Manga, error) {
 	manga.SourceID = strings.TrimSpace(manga.SourceID)
 	manga.SourceMangaID = strings.TrimSpace(manga.SourceMangaID)
@@ -660,6 +670,11 @@ func (r *Repository) UpsertMangaStub(manga Manga) (Manga, error) {
 	}
 	if err != nil {
 		return Manga{}, err
+	}
+	if manga.SourcePageURL != "" {
+		if err := r.SetSourceURL(existingID, sourceID, manga.SourcePageURL); err != nil {
+			return Manga{}, err
+		}
 	}
 	return r.GetManga(existingID)
 }

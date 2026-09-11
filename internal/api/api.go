@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +44,9 @@ type Server struct {
 	settings      *settings.Service
 	updater       *updater.Service
 	lifetime      atomic.Pointer[context.Context]
+	// seriesURLLookups marks the titles whose series page URL lookup already
+	// ran, so a title the source cannot match is not searched on every read.
+	seriesURLLookups sync.Map
 }
 
 // Lifetime returns the daemon run context when available, falling back to a

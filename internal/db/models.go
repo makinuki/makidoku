@@ -40,13 +40,15 @@ type Category struct {
 	SortOrder int    `db:"sort_order" json:"sortOrder"`
 }
 
-// Manga is a stored library entry. SourceMangaID is a transient input that
-// names the source-side entry when the title is linked through manga_sources;
-// it is not a column on the manga row.
+// Manga is a stored library entry. SourceMangaID and SourcePageURL are
+// transient inputs that name the source-side entry and its series page when
+// the title is linked through manga_sources; neither is a column on the manga
+// row.
 type Manga struct {
 	ID                  string  `db:"id" json:"id"`
 	SourceID            string  `db:"source_id" json:"sourceId"`
 	SourceMangaID       string  `db:"-" json:"-"`
+	SourcePageURL       string  `db:"-" json:"-"`
 	Title               string  `db:"title" json:"title"`
 	AltTitles           *string `db:"alt_titles" json:"altTitles"`
 	Description         *string `db:"description" json:"description"`
@@ -133,6 +135,9 @@ type MangaSource struct {
 	SourceID      string `db:"source_id"`
 	SourceMangaID string `db:"source_manga_id"`
 	PluginKey     string `db:"plugin_key"`
+	// URL is the series page this link declared, empty until a listing that
+	// carries one has been seen.
+	URL string `db:"url"`
 }
 
 type HistoryItem struct {

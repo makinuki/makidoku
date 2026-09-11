@@ -13,6 +13,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   release.
 - Drop the unused manga.source_manga_id column. A title's source-side
   identifier is stored only in manga_sources, which is the authoritative link.
+- Open the series page on the source site from the details view. The link
+  previously pointed at the plugin base URL; the locator is now recorded from
+  listings, refreshed when a source rotates it, and resolved through the
+  search export for titles stored before it was recorded.
 
 ## [0.1.0] - 2026-08-26
 

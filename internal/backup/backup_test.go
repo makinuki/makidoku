@@ -18,7 +18,8 @@ func TestExportImportRestoresLibraryGraph(t *testing.T) {
 	if _, err := first.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('mangadex','mangadex','MangaDex','1',1,'en','https://mangadex.org','mangadex.wasm',?)`, time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
-	manga, err := repo.UpsertManga(db.Manga{SourceID: "mangadex", SourceMangaID: "backup", Title: "Backup", Status: "ongoing", CoverURL: "cover", InLibrary: true})
+	series := "https://mangadex.org/title/uuid/backup"
+	manga, err := repo.UpsertManga(db.Manga{SourceID: "mangadex", SourceMangaID: "backup", SourcePageURL: series, Title: "Backup", Status: "ongoing", CoverURL: "cover", InLibrary: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestExportImportRestoresLibraryGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if link.SourceID != "mangadex" || link.SourceMangaID != "backup" || link.PluginKey == "" {
+	if link.SourceID != "mangadex" || link.SourceMangaID != "backup" || link.PluginKey == "" || link.URL != series {
 		t.Fatalf("restored manga source = %+v", link)
 	}
 	restoredChapter := got.Chapters[0]

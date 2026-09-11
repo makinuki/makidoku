@@ -268,12 +268,12 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	_ = s.engine.TouchSource(chi.URLParam(r, "sourceID"))
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		manga, upsertErr := s.repo.UpsertMangaStub(db.Manga{SourceID: chi.URLParam(r, "sourceID"), SourceMangaID: item.ID, Title: item.Title, CoverURL: engine.SelectCover(item.CoverURL, item.Covers, engine.PreferredCoverWidth), Status: "unknown"})
+		manga, upsertErr := s.repo.UpsertMangaStub(db.Manga{SourceID: chi.URLParam(r, "sourceID"), SourceMangaID: item.ID, SourcePageURL: item.URL, Title: item.Title, CoverURL: engine.SelectCover(item.CoverURL, item.Covers, engine.PreferredCoverWidth), Status: "unknown"})
 		if upsertErr != nil {
 			writeLocalError(w, http.StatusConflict, upsertErr)
 			return
 		}
-		items = append(items, map[string]any{"id": manga.ID, "title": item.Title, "coverUrl": "/api/manga/" + manga.ID + "/cover", "latestChapter": item.LatestChapter, "url": ""})
+		items = append(items, map[string]any{"id": manga.ID, "title": item.Title, "coverUrl": "/api/manga/" + manga.ID + "/cover", "latestChapter": item.LatestChapter, "url": item.URL})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"page": result.Page, "hasNextPage": result.HasNextPage, "items": items})
 }

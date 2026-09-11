@@ -101,10 +101,11 @@ func Import(db *sqlx.DB, data []byte) error {
 				lastSeen = now
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,is_primary,first_seen_at,last_seen_at)
-			VALUES(?,?,?,?,?,?) ON CONFLICT(source_id,source_manga_id) DO UPDATE SET
-			manga_id=excluded.manga_id,is_primary=excluded.is_primary,last_seen_at=excluded.last_seen_at`,
-			stringValue(m["manga_id"]), stringValue(m["source_id"]), stringValue(m["source_manga_id"]), boolValue(m["is_primary"]), firstSeen, lastSeen); err != nil {
+		if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,is_primary,first_seen_at,last_seen_at)
+			VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id,source_manga_id) DO UPDATE SET
+			manga_id=excluded.manga_id,is_primary=excluded.is_primary,last_seen_at=excluded.last_seen_at,
+			url=COALESCE(excluded.url,url)`,
+			stringValue(m["manga_id"]), stringValue(m["source_id"]), stringValue(m["source_manga_id"]), nullableString(m["url"]), boolValue(m["is_primary"]), firstSeen, lastSeen); err != nil {
 			return fmt.Errorf("import manga source link %q: %w", stringValue(m["manga_id"]), err)
 		}
 	}

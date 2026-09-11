@@ -940,3 +940,38 @@ func TestMangaSchemaHasNoSourceMangaIDColumn(t *testing.T) {
 		t.Fatalf("source link = %+v", link)
 	}
 }
+
+// The series page a listing declares belongs to the source link, so it
+// survives detail upserts that carry no listing URL.
+func TestMangaSourceStoresSeriesPageURL(t *testing.T) {
+	repo := testRepository(t)
+	series := "https://mangadex.org/title/uuid/yosuga-no-sora"
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "yosuga", SourcePageURL: series, Title: "Yosuga", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := repo.GetMangaSource(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.URL != series {
+		t.Fatalf("series page = %q, want %q", link.URL, series)
+	}
+
+	// A details refresh carries no locator and must not clear the stored one.
+	if _, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "yosuga", Title: "Yosuga", Status: "ongoing"}); err != nil {
+		t.Fatal(err)
+	}
+	if link, err = repo.GetMangaSource(manga.ID); err != nil || link.URL != series {
+		t.Fatalf("series page after detail upsert = %q (err %v)", link.URL, err)
+	}
+
+	// A listing that reappears under a rotated locator refreshes it.
+	rotated := "https://mangadex.org/title/uuid/yosuga-no-sora-a1b2c3d4"
+	if _, err := repo.UpsertMangaStub(Manga{SourceID: "mangadex", SourceMangaID: "yosuga", SourcePageURL: rotated, Title: "Yosuga"}); err != nil {
+		t.Fatal(err)
+	}
+	if link, err = repo.GetMangaSource(manga.ID); err != nil || link.URL != rotated {
+		t.Fatalf("series page after listing = %q (err %v)", link.URL, err)
+	}
+}

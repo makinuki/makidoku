@@ -115,7 +115,7 @@ func placeholderSource(tx *sqlx.Tx, backupSourceID int64, name string) (string, 
 	}
 	_, err := tx.Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed,installed_at)
 		VALUES(?,NULL,?,?,?,?,?,NULL,0,?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name`,
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name WHERE sources.installed=0`,
 		id, label+" (imported)", "0", 1, "en", "", time.Now().Unix())
 	if err != nil {
 		return "", fmt.Errorf("create placeholder source: %w", err)

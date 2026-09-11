@@ -47,7 +47,10 @@ func (s *Service) Run(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	var mangaIDs []string
-	if err := s.repo.DB().Select(&mangaIDs, `SELECT id FROM manga WHERE in_library=1 ORDER BY id`); err != nil {
+	// A title marked fetch-once is left out of the scheduled refresh; its
+	// chapters still refresh on demand.
+	if err := s.repo.DB().Select(&mangaIDs, `SELECT id FROM manga WHERE in_library=1
+		AND COALESCE(update_strategy,'') <> 'only_fetch_once' ORDER BY id`); err != nil {
 		return 0, err
 	}
 	count := 0

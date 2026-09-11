@@ -88,6 +88,26 @@ func decodeBackup(data []byte) (*Backup, error) {
 			out.SourcePreferences++
 		case 106:
 			out.ExtensionStores++
+		case 600:
+			raw, err := f.bytes()
+			if err != nil {
+				return err
+			}
+			search, err := decodeSavedSearch(raw)
+			if err != nil {
+				return err
+			}
+			out.SavedSearches = append(out.SavedSearches, search)
+		case 610:
+			raw, err := f.bytes()
+			if err != nil {
+				return err
+			}
+			feed, err := decodeFeed(raw)
+			if err != nil {
+				return err
+			}
+			out.Feeds = append(out.Feeds, feed)
 		}
 		return nil
 	})
@@ -196,6 +216,45 @@ func decodeManga(data []byte) (Manga, error) {
 			out.Notes, err = f.string()
 		case 111:
 			out.Initialized, err = f.boolean()
+		case 112:
+			out.Memo, err = f.string()
+		case 600:
+			var raw []byte
+			if raw, err = f.bytes(); err != nil {
+				return err
+			}
+			var reference MergedReference
+			if reference, err = decodeMergedReference(raw); err != nil {
+				return err
+			}
+			out.MergedReferences = append(out.MergedReferences, reference)
+		case 601:
+			var raw []byte
+			if raw, err = f.bytes(); err != nil {
+				return err
+			}
+			var metadata FlatMetadata
+			if metadata, err = decodeFlatMetadata(raw); err != nil {
+				return err
+			}
+			out.FlatMetadata = &metadata
+		case 602:
+			out.CustomStatus, err = f.int32()
+		case 603:
+			out.CustomThumbnailURL, err = f.string()
+		case 800:
+			out.CustomTitle, err = f.string()
+		case 801:
+			out.CustomArtist, err = f.string()
+		case 802:
+			out.CustomAuthor, err = f.string()
+		case 804:
+			out.CustomDescription, err = f.string()
+		case 805:
+			var genre string
+			if genre, err = f.string(); err == nil {
+				out.CustomGenre = append(out.CustomGenre, genre)
+			}
 		}
 		return err
 	})
@@ -231,6 +290,8 @@ func decodeChapter(data []byte) (Chapter, error) {
 			out.LastModifiedAt, err = f.int64()
 		case 12:
 			out.Version, err = f.int64()
+		case 13:
+			out.Memo, err = f.string()
 		}
 		return err
 	})
@@ -267,6 +328,8 @@ func decodeCategory(data []byte) (Category, error) {
 			out.ID, err = f.int64()
 		case 100:
 			out.Flags, err = f.int64()
+		case 900:
+			out.Hidden, err = f.boolean()
 		}
 		return err
 	})
@@ -319,6 +382,170 @@ func decodeSource(data []byte) (Source, error) {
 			out.Name, err = f.string()
 		case 2:
 			out.SourceID, err = f.int64()
+		}
+		return err
+	})
+	return out, err
+}
+
+func decodeSavedSearch(data []byte) (SavedSearch, error) {
+	var out SavedSearch
+	err := forEachField(data, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			out.Name, err = f.string()
+		case 2:
+			out.Query, err = f.string()
+		case 3:
+			out.FilterList, err = f.string()
+		case 4:
+			out.Source, err = f.int64()
+		}
+		return err
+	})
+	return out, err
+}
+
+func decodeFeed(data []byte) (Feed, error) {
+	// The writer declares global true by default and omits it, so an absent
+	// field means a global feed.
+	out := Feed{Global: true}
+	err := forEachField(data, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			out.Source, err = f.int64()
+		case 2:
+			out.Global, err = f.boolean()
+		case 9:
+			var raw []byte
+			if raw, err = f.bytes(); err != nil {
+				return err
+			}
+			var search SavedSearch
+			if search, err = decodeSavedSearch(raw); err != nil {
+				return err
+			}
+			out.SavedSearch = &search
+		}
+		return err
+	})
+	return out, err
+}
+
+func decodeMergedReference(data []byte) (MergedReference, error) {
+	var out MergedReference
+	err := forEachField(data, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			out.IsInfoManga, err = f.boolean()
+		case 2:
+			out.GetChapterUpdates, err = f.boolean()
+		case 3:
+			out.ChapterSortMode, err = f.int32()
+		case 4:
+			out.ChapterPriority, err = f.int32()
+		case 5:
+			out.DownloadChapters, err = f.boolean()
+		case 6:
+			out.MergeURL, err = f.string()
+		case 7:
+			out.MangaURL, err = f.string()
+		case 8:
+			out.MangaSourceID, err = f.int64()
+		}
+		return err
+	})
+	return out, err
+}
+
+func decodeFlatMetadata(data []byte) (FlatMetadata, error) {
+	var out FlatMetadata
+	err := forEachField(data, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			var raw []byte
+			if raw, err = f.bytes(); err != nil {
+				return err
+			}
+			out.Uploader, out.Extra, out.IndexedExtra, out.ExtraVersion, err = decodeSearchMetadata(raw)
+		case 2:
+			var raw []byte
+			if raw, err = f.bytes(); err != nil {
+				return err
+			}
+			var tag FlatMetadataTag
+			if tag, err = decodeFlatMetadataTag(raw); err != nil {
+				return err
+			}
+			out.Tags = append(out.Tags, tag)
+		case 3:
+			var raw []byte
+			if raw, err = f.bytes(); err != nil {
+				return err
+			}
+			var title FlatMetadataTitle
+			if title, err = decodeFlatMetadataTitle(raw); err != nil {
+				return err
+			}
+			out.Titles = append(out.Titles, title)
+		}
+		return err
+	})
+	return out, err
+}
+
+// decodeSearchMetadata reads the nested metadata record that carries the
+// uploader, the opaque source blob and its indexed form.
+func decodeSearchMetadata(raw []byte) (string, string, string, int32, error) {
+	var uploader, extra, indexed string
+	var version int32
+	err := forEachField(raw, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			uploader, err = f.string()
+		case 2:
+			extra, err = f.string()
+		case 3:
+			indexed, err = f.string()
+		case 4:
+			version, err = f.int32()
+		}
+		return err
+	})
+	return uploader, extra, indexed, version, err
+}
+
+func decodeFlatMetadataTag(data []byte) (FlatMetadataTag, error) {
+	var out FlatMetadataTag
+	err := forEachField(data, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			out.Namespace, err = f.string()
+		case 2:
+			out.Name, err = f.string()
+		case 3:
+			out.Type, err = f.int32()
+		}
+		return err
+	})
+	return out, err
+}
+
+func decodeFlatMetadataTitle(data []byte) (FlatMetadataTitle, error) {
+	var out FlatMetadataTitle
+	err := forEachField(data, func(f field) error {
+		var err error
+		switch f.num {
+		case 1:
+			out.Title, err = f.string()
+		case 2:
+			out.Type, err = f.int32()
 		}
 		return err
 	})

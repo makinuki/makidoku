@@ -184,6 +184,116 @@ func TestDecodeRejectsEmptyAndGarbage(t *testing.T) {
 	}
 }
 
+func TestDecodeParityFields(t *testing.T) {
+	searchMetadata := testConcat(
+		testString(1, "uploader"),
+		testString(2, `{"k":"v"}`),
+		testString(3, "indexed"),
+		testVarint(4, 3),
+	)
+	tag := testConcat(testString(1, "ns"), testString(2, "Tag"), testVarint(3, 5))
+	title := testConcat(testString(1, "Alt Title"), testVarint(2, 1))
+	flat := testConcat(testBytes(1, searchMetadata), testBytes(2, tag), testBytes(3, title))
+	merged := testConcat(
+		testVarint(1, 1),
+		testVarint(2, 1),
+		testVarint(3, 2),
+		testVarint(4, 3),
+		testVarint(5, 1),
+		testString(6, "https://mangadex.org/title/main"),
+		testString(7, "https://mangadex.org/title/merged"),
+		testVarint(8, 2499283573021220255),
+	)
+	chapter := testConcat(
+		testString(1, "https://mangadex.org/chapter/aaa"),
+		testString(2, "Chapter 1"),
+		testVarint(5, 1),
+		testVarint(10, 7),
+		testVarint(12, 4),
+		testString(13, `{"chapterId":1}`),
+	)
+	manga := testConcat(
+		testVarint(1, 1),
+		testString(2, "series"),
+		testString(3, "Title"),
+		testBytes(16, chapter),
+		testString(112, `{"chapterListDeduplicated":false}`),
+		testBytes(600, merged),
+		testBytes(601, flat),
+		testVarint(602, 1),
+		testString(603, "https://example.test/custom.jpg"),
+		testString(800, "Custom Title"),
+		testString(801, "Custom Artist"),
+		testString(802, "Custom Author"),
+		testString(804, "Custom Description"),
+		testString(805, "Custom Genre"),
+	)
+	category := testConcat(
+		testString(1, "Hidden"),
+		testVarint(3, 1),
+		testVarint(900, 1),
+	)
+	feedSearch := testConcat(
+		testString(1, "Feed Search"),
+		testString(2, "query"),
+		testString(3, `[{"x":1}]`),
+		testVarint(4, 42),
+	)
+	feed := testConcat(testVarint(1, 42), testVarint(2, 0), testBytes(9, feedSearch))
+	saved := testConcat(testString(1, "Saved"), testString(2, "q"), testString(3, "[]"), testVarint(4, 42))
+	root := testConcat(
+		testBytes(1, manga),
+		testBytes(2, category),
+		testBytes(600, saved),
+		testBytes(610, feed),
+	)
+	backup, err := Decode(root)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(backup.SavedSearches) != 1 || backup.SavedSearches[0].Name != "Saved" || backup.SavedSearches[0].Source != 42 {
+		t.Fatalf("saved searches = %+v", backup.SavedSearches)
+	}
+	if len(backup.Feeds) != 1 || backup.Feeds[0].Global || backup.Feeds[0].Source != 42 {
+		t.Fatalf("feeds = %+v", backup.Feeds)
+	}
+	if backup.Feeds[0].SavedSearch == nil || backup.Feeds[0].SavedSearch.FilterList != `[{"x":1}]` {
+		t.Fatalf("feed saved search = %+v", backup.Feeds[0].SavedSearch)
+	}
+	if !backup.Categories[0].Hidden {
+		t.Fatal("category hidden flag not decoded")
+	}
+	decoded := backup.Manga[0]
+	if decoded.Memo != `{"chapterListDeduplicated":false}` {
+		t.Fatalf("memo = %q", decoded.Memo)
+	}
+	if decoded.CustomTitle != "Custom Title" || decoded.CustomDescription != "Custom Description" {
+		t.Fatalf("custom fields = %+v", decoded)
+	}
+	if len(decoded.CustomGenre) != 1 || decoded.CustomGenre[0] != "Custom Genre" {
+		t.Fatalf("custom genre = %v", decoded.CustomGenre)
+	}
+	if decoded.CustomStatus != 1 || decoded.CustomThumbnailURL != "https://example.test/custom.jpg" {
+		t.Fatalf("custom status/cover = %d %q", decoded.CustomStatus, decoded.CustomThumbnailURL)
+	}
+	if len(decoded.MergedReferences) != 1 || decoded.MergedReferences[0].MangaURL != "https://mangadex.org/title/merged" {
+		t.Fatalf("merged references = %+v", decoded.MergedReferences)
+	}
+	metadata := decoded.FlatMetadata
+	if metadata == nil || metadata.Uploader != "uploader" || metadata.ExtraVersion != 3 {
+		t.Fatalf("flat metadata = %+v", metadata)
+	}
+	if len(metadata.Tags) != 1 || metadata.Tags[0].Name != "Tag" || metadata.Tags[0].Namespace != "ns" {
+		t.Fatalf("metadata tags = %+v", metadata.Tags)
+	}
+	if len(metadata.Titles) != 1 || metadata.Titles[0].Title != "Alt Title" {
+		t.Fatalf("metadata titles = %+v", metadata.Titles)
+	}
+	if decoded.Chapters[0].Memo != `{"chapterId":1}` || !decoded.Chapters[0].Bookmark || decoded.Chapters[0].SourceOrder != 7 {
+		t.Fatalf("chapter parity fields = %+v", decoded.Chapters[0])
+	}
+}
+
 func TestDecodeAbsentFavoriteMeansInLibrary(t *testing.T) {
 	// A writer that omits fields equal to their defaults never emits
 	// favourite=true, so an absent flag must decode as favourited.

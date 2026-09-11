@@ -412,7 +412,13 @@ func (s *Server) mangaCover(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if manga.CoverURL == "" {
+	// A user override wins over the source cover. The override is stored as a
+	// URL and is fetched through the same path as the source cover.
+	coverURL := manga.CoverURL
+	if manga.CustomCoverURL != nil && strings.TrimSpace(*manga.CustomCoverURL) != "" {
+		coverURL = strings.TrimSpace(*manga.CustomCoverURL)
+	}
+	if coverURL == "" {
 		writeError(w, engine.CodedError(engine.CodeNotFound, "manga has no cover"))
 		return
 	}
@@ -425,7 +431,7 @@ func (s *Server) mangaCover(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
-	data, err := s.engine.FetchImage(r.Context(), source.SourceID, manga.CoverURL, nil)
+	data, err := s.engine.FetchImage(r.Context(), source.SourceID, coverURL, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -435,7 +441,7 @@ func (s *Server) mangaCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cacheRoot := filepath.Join(s.engine.DataDir(), "covers")
-	key := fmt.Sprintf("%x", sha256.Sum256(append([]byte(manga.CoverURL), data...)))
+	key := fmt.Sprintf("%x", sha256.Sum256(append([]byte(coverURL), data...)))
 	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return

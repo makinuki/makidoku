@@ -117,6 +117,107 @@ func decodeFixture(t *testing.T, payload []byte) *Backup {
 	return backup
 }
 
+func TestImportRestoresParityFields(t *testing.T) {
+	repo := openTestDB(t)
+	chapter := testConcat(
+		testString(1, "https://mangadex.org/chapter/aaa"),
+		testString(2, "Chapter 1"),
+		testVarint(5, 1),
+		testVarint(10, 7),
+		testVarint(12, 4),
+		testString(13, `{"chapterId":1}`),
+	)
+	manga := testConcat(
+		testVarint(1, 2499283573021220255),
+		testString(2, "sample-uuid"),
+		testString(3, "Sample Title"),
+		testBytes(16, chapter),
+		testString(112, `{"chapterListDeduplicated":false}`),
+		testVarint(107, 1_650_000_000_000),
+		testString(108, "BadGroup"),
+		testVarint(109, 3),
+		testVarint(111, 1),
+		testVarint(602, 1),
+		testString(603, "https://example.test/custom.jpg"),
+		testString(800, "Custom Title"),
+	)
+	source := testConcat(testString(1, "MangaDex"), testVarint(2, 2499283573021220255))
+	search := testConcat(testString(1, "Feed Search"), testString(2, "query"), testString(3, "[]"), testVarint(4, 2499283573021220255))
+	feed := testConcat(testVarint(1, 2499283573021220255), testBytes(9, search))
+	payload := testConcat(testBytes(1, manga), testBytes(101, source), testBytes(610, feed))
+	plan := Build(decodeFixture(t, payload), installedRefs(t, repo), Options{})
+	summary, err := Import(repo.DB(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Feeds != 1 || summary.SavedSearches != 1 {
+		t.Fatalf("summary feeds=%d searches=%d", summary.Feeds, summary.SavedSearches)
+	}
+	var stored struct {
+		CustomTitle        *string `db:"custom_title"`
+		CustomStatus       *string `db:"custom_status"`
+		CustomCoverURL     *string `db:"custom_cover_url"`
+		Memo               *string `db:"memo"`
+		SourceVersion      *int64  `db:"source_version"`
+		FavoriteModifiedAt *int64  `db:"favorite_modified_at"`
+		Initialized        bool    `db:"initialized"`
+		ExcludedScanlators *string `db:"excluded_scanlators"`
+	}
+	if err := repo.DB().Get(&stored, `SELECT custom_title,custom_status,custom_cover_url,memo,source_version,
+		favorite_modified_at,initialized,excluded_scanlators FROM manga`); err != nil {
+		t.Fatal(err)
+	}
+	if stored.CustomTitle == nil || *stored.CustomTitle != "Custom Title" {
+		t.Fatalf("custom title = %v", stored.CustomTitle)
+	}
+	if stored.CustomStatus == nil || *stored.CustomStatus != "Ongoing" {
+		t.Fatalf("custom status = %v", stored.CustomStatus)
+	}
+	if stored.CustomCoverURL == nil || *stored.CustomCoverURL != "https://example.test/custom.jpg" {
+		t.Fatalf("custom cover = %v", stored.CustomCoverURL)
+	}
+	if stored.Memo == nil || *stored.Memo != `{"chapterListDeduplicated":false}` {
+		t.Fatalf("memo = %v", stored.Memo)
+	}
+	if stored.SourceVersion == nil || *stored.SourceVersion != 3 {
+		t.Fatalf("source version = %v", stored.SourceVersion)
+	}
+	if stored.FavoriteModifiedAt == nil || *stored.FavoriteModifiedAt != 1_650_000_000 {
+		t.Fatalf("favorite modified = %v", stored.FavoriteModifiedAt)
+	}
+	if !stored.Initialized {
+		t.Fatal("initialized not stored")
+	}
+	if stored.ExcludedScanlators == nil || *stored.ExcludedScanlators != `["BadGroup"]` {
+		t.Fatalf("excluded scanlators = %v", stored.ExcludedScanlators)
+	}
+	var chapterRow struct {
+		Bookmark      bool    `db:"bookmark"`
+		SourceOrder   *int64  `db:"source_order"`
+		SourceVersion *int64  `db:"source_version"`
+		Memo          *string `db:"memo"`
+	}
+	if err := repo.DB().Get(&chapterRow, `SELECT bookmark,source_order,source_version,memo FROM chapters`); err != nil {
+		t.Fatal(err)
+	}
+	if !chapterRow.Bookmark || chapterRow.SourceOrder == nil || *chapterRow.SourceOrder != 7 {
+		t.Fatalf("chapter flags = %+v", chapterRow)
+	}
+	if chapterRow.SourceVersion == nil || *chapterRow.SourceVersion != 4 || chapterRow.Memo == nil || *chapterRow.Memo != `{"chapterId":1}` {
+		t.Fatalf("chapter parity = %+v", chapterRow)
+	}
+	var feedCount, searchCount int
+	if err := repo.DB().Get(&feedCount, `SELECT COUNT(*) FROM source_feeds`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Get(&searchCount, `SELECT COUNT(*) FROM saved_searches`); err != nil {
+		t.Fatal(err)
+	}
+	if feedCount != 1 || searchCount != 1 {
+		t.Fatalf("feeds=%d searches=%d", feedCount, searchCount)
+	}
+}
+
 func TestBuildMatchesSourcesByNameAndHost(t *testing.T) {
 	repo := openTestDB(t)
 	installed := installedRefs(t, repo)

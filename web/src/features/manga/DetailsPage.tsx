@@ -34,6 +34,7 @@ import { formatTimestamp } from "../../time";
 import { useDateFormat } from "../../hooks/useDateFormat";
 import { TrackerLogo, trackerLabel } from "../../components/TrackerLogo";
 import { useTrackerEvents } from "../../hooks/useTrackerEvents";
+import { CustomInfoModal } from "./CustomInfoModal";
 
 export function DetailsPage() {
   const { mangaId = "" } = useParams();
@@ -45,7 +46,7 @@ export function DetailsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<"tracker" | "migration">();
+  const [modal, setModal] = useState<"tracker" | "migration" | "custom">();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -58,7 +59,9 @@ export function DetailsPage() {
   const [chapterSort, setChapterSort] = useState<"number-desc" | "number-asc" | "source">(
     "number-desc",
   );
-  const [chapterFilter, setChapterFilter] = useState<"all" | "unread" | "downloaded">("all");
+  const [chapterFilter, setChapterFilter] = useState<
+    "all" | "unread" | "downloaded" | "bookmarked"
+  >("all");
   const [autoDownloadBusy, setAutoDownloadBusy] = useState(false);
   const [suggestions, setSuggestions] = useState<Recommendation[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
@@ -124,6 +127,7 @@ export function DetailsPage() {
     if (languageFilter && chapter.language !== languageFilter) return false;
     if (chapterFilter === "unread" && chapter.read) return false;
     if (chapterFilter === "downloaded" && !chapter.downloaded) return false;
+    if (chapterFilter === "bookmarked" && !chapter.bookmark) return false;
     return true;
   });
   const groups = groupByVolume(visible, chapterSort);
@@ -292,6 +296,12 @@ export function DetailsPage() {
               <ExternalLink size={15} /> Tracking
             </button>
             <button
+              onClick={() => setModal("custom")}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
+            >
+              <Tag size={15} /> Custom info
+            </button>
+            <button
               onClick={() => setModal("migration")}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
             >
@@ -424,6 +434,7 @@ export function DetailsPage() {
               <option value="all">All chapters</option>
               <option value="unread">Unread only</option>
               <option value="downloaded">Downloaded only</option>
+              <option value="bookmarked">Bookmarked only</option>
             </select>
           </label>
         </div>
@@ -480,6 +491,23 @@ export function DetailsPage() {
                       <span className="text-xs text-zinc-500">{chapterMeta(chapter)}</span>
                     </Link>
                     {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
+                    <button
+                      type="button"
+                      aria-label={`${chapter.bookmark ? "Remove bookmark from" : "Bookmark"} ${formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}`}
+                      onClick={() =>
+                        void api
+                          .setChapterBookmark(chapter.id, !chapter.bookmark)
+                          .then(reload)
+                          .catch((e) =>
+                            setActionError(
+                              e instanceof Error ? e.message : "Unable to update the bookmark",
+                            ),
+                          )
+                      }
+                      className={`rounded-lg p-1.5 ${chapter.bookmark ? "text-amber-300" : "text-zinc-600 hover:text-amber-300"}`}
+                    >
+                      <Bookmark size={16} />
+                    </button>
                     <button
                       type="button"
                       aria-label={`${chapter.read ? "Mark unread" : "Mark read"} ${formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}`}
@@ -580,6 +608,13 @@ export function DetailsPage() {
             void reload();
             navigate(`/manga/${encodeURIComponent(nextMangaId)}`);
           }}
+        />
+      )}
+      {modal === "custom" && (
+        <CustomInfoModal
+          manga={manga}
+          onClose={() => setModal(undefined)}
+          onSaved={reload}
         />
       )}
     </div>

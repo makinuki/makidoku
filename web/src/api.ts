@@ -79,6 +79,24 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(overrides),
     }),
+  // updateMangaCustom sends the custom-info overrides to change. A field left
+  // out is unchanged; an empty string clears the override.
+  updateMangaCustom: (
+    mangaId: string,
+    update: {
+      title?: string;
+      artist?: string;
+      author?: string;
+      description?: string;
+      genres?: string;
+      status?: string;
+      coverUrl?: string;
+    },
+  ) =>
+    request<Manga>(`/api/manga/${idPath(mangaId)}/custom`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    }),
   categories: () => request<Category[]>("/api/categories"),
   createCategory: (name: string) =>
     request<Category>("/api/categories", { method: "POST", body: JSON.stringify({ name }) }),
@@ -119,6 +137,11 @@ export const api = {
     request(`/api/chapters/${encodeURIComponent(chapterId)}/read`, {
       method: "POST",
       body: JSON.stringify({ read }),
+    }),
+  setChapterBookmark: (chapterId: string, bookmark: boolean) =>
+    request(`/api/chapters/${encodeURIComponent(chapterId)}/bookmark`, {
+      method: "POST",
+      body: JSON.stringify({ bookmark }),
     }),
   setMangaChaptersRead: (mangaId: string, chapterIds: string[], read: boolean) =>
     request(`/api/manga/${encodeURIComponent(mangaId)}/chapters/read`, {

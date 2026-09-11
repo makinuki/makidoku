@@ -20,6 +20,23 @@ export type Manga = {
   createdAt: number;
   updatedAt: number;
   detailsFetchedAt?: number;
+  // User overrides restored from a backup or set in the custom-info dialog.
+  // A set value wins over the source value at render time.
+  customTitle?: string;
+  customArtist?: string;
+  customAuthor?: string;
+  customDescription?: string;
+  customGenres?: string;
+  customStatus?: string;
+  customCoverUrl?: string;
+  notes?: string;
+  displayTitle?: string;
+  displayDescription?: string;
+  displayAuthors?: string;
+  displayArtists?: string;
+  displayGenres?: string;
+  displayStatus?: string;
+  displayCoverUrl?: string;
 };
 export type Chapter = {
   id: string;
@@ -33,6 +50,7 @@ export type Chapter = {
   downloaded: boolean;
   downloadPath?: string;
   read?: boolean;
+  bookmark?: boolean;
   downloadStatus?: string;
 };
 export type Progress = {

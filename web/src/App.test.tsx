@@ -3290,6 +3290,64 @@ describe("search robustness", () => {
     );
   });
 
+  it("bookmarks a chapter and saves custom info", async () => {
+    const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+    const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    let bookmark = false;
+    let customUpdate: unknown;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/health") return Response.json({ ok: true });
+      if (path === "/api/categories") return Response.json([]);
+      if (path === `/api/chapters/${chapterId}/bookmark` && init?.method === "POST") {
+        bookmark = true;
+        return Response.json({ id: chapterId, bookmark: true });
+      }
+      if (path === `/api/manga/${mangaId}/custom` && init?.method === "PATCH") {
+        customUpdate = JSON.parse(String(init.body));
+        return Response.json({ id: mangaId });
+      }
+      if (path === `/api/manga/${mangaId}`) {
+        return Response.json({
+          manga: {
+            id: mangaId,
+            sourceId: "source",
+            title: "Yosuga no Sora",
+            status: "completed",
+            coverUrl: `/api/manga/${mangaId}/cover`,
+            inLibrary: true,
+            downloadFormat: "cbz",
+            createdAt: 1,
+            updatedAt: 1,
+            detailsFetchedAt: 1,
+          },
+          categories: [],
+          chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false, bookmark }],
+          trackers: [],
+        });
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Bookmark Chapter 1" }));
+    expect(
+      await screen.findByRole("button", { name: "Remove bookmark from Chapter 1" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Custom info" }));
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Custom Title" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(customUpdate).toEqual({ title: "Custom Title" }));
+  });
+
   it("opens the full recommendations view after loading suggestions", async () => {
     const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
     window.history.pushState({}, "", `/manga/${mangaId}`);

@@ -63,6 +63,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   contextual: on settings routes it searches every setting label, description,
   and section, and a result opens the owning section with the setting
   highlighted.
+- Keep the rest of the app responsive while covers load. A cover is proxied at
+  the source's own resolution, so one image can be several megabytes: the
+  transfer now runs against its own budget and a small concurrency limit,
+  finishes and caches even when the view changes, and every card requests its
+  cover only when it nears the viewport.
 
 ## [0.1.0] - 2026-08-26
 

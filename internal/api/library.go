@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/makinuki/makidoku/internal/chapterrecog"
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/engine"
 )
@@ -41,13 +42,14 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 	// A source that re-issues a chapter under a new identifier, for example
 	// after rotating a URL suffix, must update the existing local chapter
 	// instead of forking a duplicate or reporting a new release.
-	adopted := replacementChapterIDs(before, details.Chapters)
+	chapters := withDerivedChapterNumbers(details.Title, details.Chapters)
+	adopted := replacementChapterIDs(before, chapters)
 	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return nil, err
 	}
 	newIDs := []string{}
-	for _, item := range details.Chapters {
+	for _, item := range chapters {
 		chapter, err := s.repo.UpsertChapter(db.Chapter{
 			ID:              adopted[item.ID],
 			MangaID:         updated.ID,
@@ -71,6 +73,21 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 		return nil, err
 	}
 	return newIDs, nil
+}
+
+// withDerivedChapterNumbers fills in a number for chapters the source left
+// unnumbered, using the chapter title. Deriving the number before matching and
+// storage keeps identity, ordering, and migration consistent for releases that
+// carry no explicit number. A declared number is never replaced.
+func withDerivedChapterNumbers(mangaTitle string, chapters []engine.ChapterItem) []engine.ChapterItem {
+	out := make([]engine.ChapterItem, len(chapters))
+	for i, item := range chapters {
+		out[i] = item
+		if item.Number == nil {
+			out[i].Number = chapterrecog.Parse(mangaTitle, item.Title, nil)
+		}
+	}
+	return out
 }
 
 // replacementChapterIDs maps incoming source chapter IDs to an existing local

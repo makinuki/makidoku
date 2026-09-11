@@ -619,11 +619,7 @@ export function DetailsPage() {
         />
       )}
       {modal === "custom" && (
-        <CustomInfoModal
-          manga={manga}
-          onClose={() => setModal(undefined)}
-          onSaved={reload}
-        />
+        <CustomInfoModal manga={manga} onClose={() => setModal(undefined)} onSaved={reload} />
       )}
       {modal === "sources" && (
         <SourcesMetadataModal

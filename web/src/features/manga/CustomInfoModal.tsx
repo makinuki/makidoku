@@ -89,10 +89,9 @@ export function CustomInfoModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const initial = Object.fromEntries(fields.map((field) => [field.key, field.custom(manga)])) as Record<
-    FieldKey,
-    string
-  >;
+  const initial = Object.fromEntries(
+    fields.map((field) => [field.key, field.custom(manga)]),
+  ) as Record<FieldKey, string>;
   const [values, setValues] = useState<Record<FieldKey, string>>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");

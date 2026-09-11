@@ -217,7 +217,9 @@ export function TachibackupImport() {
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                 <div
                   className="h-full rounded-full bg-amber-400 transition-[width]"
-                  style={{ width: `${Math.min(100, (progress.processed / progress.total) * 100)}%` }}
+                  style={{
+                    width: `${Math.min(100, (progress.processed / progress.total) * 100)}%`,
+                  }}
                 />
               </div>
               <p className="text-xs text-zinc-500">

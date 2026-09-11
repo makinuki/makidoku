@@ -370,8 +370,7 @@ export const api = {
     return summary;
   },
   readerImage: (page: Page) => `/api/pages/${idPath(page.id)}/image`,
-  mangaMerges: (mangaId: string) =>
-    request<MangaMerge[]>(`/api/manga/${idPath(mangaId)}/sources`),
+  mangaMerges: (mangaId: string) => request<MangaMerge[]>(`/api/manga/${idPath(mangaId)}/sources`),
   addMangaMerge: (
     mangaId: string,
     merge: {
@@ -395,7 +394,12 @@ export const api = {
   feeds: () => request<Feed[]>("/api/feeds"),
   savedSearches: (sourceId: string) =>
     request<SavedSearch[]>(`/api/saved-searches?sourceId=${encodeURIComponent(sourceId)}`),
-  createSavedSearch: (search: { sourceId: string; name: string; query: string; filters?: string }) =>
+  createSavedSearch: (search: {
+    sourceId: string;
+    name: string;
+    query: string;
+    filters?: string;
+  }) =>
     request<SavedSearch>("/api/saved-searches", {
       method: "POST",
       body: JSON.stringify(search),

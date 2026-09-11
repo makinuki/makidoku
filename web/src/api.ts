@@ -12,6 +12,10 @@ import type {
   CatalogEntry,
   MigrationCandidates,
   MigrationResponse,
+  Feed,
+  MangaMerge,
+  MangaMetadata,
+  SavedSearch,
   TrackerInfo,
   TrackerSearchResult,
   Health,
@@ -366,6 +370,38 @@ export const api = {
     return summary;
   },
   readerImage: (page: Page) => `/api/pages/${idPath(page.id)}/image`,
+  mangaMerges: (mangaId: string) =>
+    request<MangaMerge[]>(`/api/manga/${idPath(mangaId)}/sources`),
+  addMangaMerge: (
+    mangaId: string,
+    merge: {
+      sourceId: string;
+      sourceMangaId: string;
+      url?: string;
+      getChapterUpdates?: boolean;
+      downloadChapters?: boolean;
+    },
+  ) =>
+    request<MangaMerge>(`/api/manga/${idPath(mangaId)}/sources`, {
+      method: "POST",
+      body: JSON.stringify(merge),
+    }),
+  deleteMangaMerge: (mangaId: string, mergeId: string) =>
+    request<void>(`/api/manga/${idPath(mangaId)}/sources/${idPath(mergeId)}`, {
+      method: "DELETE",
+    }),
+  mangaMetadata: (mangaId: string) =>
+    request<MangaMetadata>(`/api/manga/${idPath(mangaId)}/metadata`),
+  feeds: () => request<Feed[]>("/api/feeds"),
+  savedSearches: (sourceId: string) =>
+    request<SavedSearch[]>(`/api/saved-searches?sourceId=${encodeURIComponent(sourceId)}`),
+  createSavedSearch: (search: { sourceId: string; name: string; query: string; filters?: string }) =>
+    request<SavedSearch>("/api/saved-searches", {
+      method: "POST",
+      body: JSON.stringify(search),
+    }),
+  deleteSavedSearch: (searchId: string) =>
+    request<void>(`/api/saved-searches/${idPath(searchId)}`, { method: "DELETE" }),
 };
 
 export type Api = typeof api;

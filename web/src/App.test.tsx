@@ -584,6 +584,83 @@ describe("MakiDoku app shell", () => {
     expect(window.location.pathname).toBe("/browse");
   });
 
+  it("replays a saved search from the feeds panel with its stored filters", async () => {
+    window.history.pushState({}, "", "/browse");
+    const searchCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/health") return Response.json({ ok: true });
+        if (path === "/api/sources") {
+          return Response.json([
+            {
+              id: "mangadex",
+              name: "MangaDex",
+              version: "1",
+              abiVersion: 1,
+              lang: "en",
+              baseUrl: "https://mangadex.org",
+              iconUrl: "",
+              nsfw: false,
+              installedAt: 1,
+              loaded: true,
+              hasClearance: false,
+            },
+          ]);
+        }
+        if (path === "/api/feeds") {
+          return Response.json([{ id: "f1", sourceId: "mangadex", global: false, feedOrder: 0 }]);
+        }
+        if (path === "/api/saved-searches?sourceId=") {
+          return Response.json([
+            {
+              id: "s1",
+              sourceId: "mangadex",
+              feedId: "f1",
+              name: "Action picks",
+              query: "action",
+              filters: '{"status":"completed","dropped":"gone"}',
+              searchOrder: 0,
+            },
+          ]);
+        }
+        if (path === "/api/sources/mangadex/filters") {
+          return Response.json([
+            {
+              id: "status",
+              title: "Status",
+              type: "select",
+              options: [
+                { label: "All", value: "" },
+                { label: "Completed", value: "completed" },
+              ],
+              default: "",
+            },
+          ]);
+        }
+        if (path.startsWith("/api/sources/mangadex/search")) {
+          searchCalls.push(path);
+          return Response.json({ page: 1, hasNextPage: false, items: [] });
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByText("Feeds and saved searches")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Open" }));
+    await waitFor(() => expect(searchCalls.some((call) => call.includes("filters="))).toBe(true));
+    const filtered = decodeURIComponent(searchCalls.find((call) => call.includes("filters="))!);
+    expect(filtered).toContain("q=action");
+    expect(filtered).toContain('"status":"completed"');
+    expect(filtered).not.toContain("dropped");
+  });
+
   it("submits source searches only when Enter is pressed", async () => {
     window.history.pushState({}, "", "/browse");
     let searchCalls = 0;

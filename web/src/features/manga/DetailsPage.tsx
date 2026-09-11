@@ -8,6 +8,7 @@ import {
   Ellipsis,
   ExternalLink,
   LoaderCircle,
+  Layers,
   Play,
   RefreshCw,
   RotateCw,
@@ -35,6 +36,7 @@ import { useDateFormat } from "../../hooks/useDateFormat";
 import { TrackerLogo, trackerLabel } from "../../components/TrackerLogo";
 import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 import { CustomInfoModal } from "./CustomInfoModal";
+import { SourcesMetadataModal } from "./SourcesMetadataModal";
 
 export function DetailsPage() {
   const { mangaId = "" } = useParams();
@@ -46,7 +48,7 @@ export function DetailsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<"tracker" | "migration" | "custom">();
+  const [modal, setModal] = useState<"tracker" | "migration" | "custom" | "sources">();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -300,6 +302,12 @@ export function DetailsPage() {
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
             >
               <Tag size={15} /> Custom info
+            </button>
+            <button
+              onClick={() => setModal("sources")}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
+            >
+              <Layers size={15} /> Sources
             </button>
             <button
               onClick={() => setModal("migration")}
@@ -615,6 +623,13 @@ export function DetailsPage() {
           manga={manga}
           onClose={() => setModal(undefined)}
           onSaved={reload}
+        />
+      )}
+      {modal === "sources" && (
+        <SourcesMetadataModal
+          mangaId={manga.id}
+          title={manga.displayTitle ?? manga.title}
+          onClose={() => setModal(undefined)}
         />
       )}
     </div>

@@ -273,6 +273,44 @@ export type MigrationResponse = {
 };
 export type MigrationSource = { source: Source; count: number; imported?: boolean };
 
+export type MangaMerge = {
+  id: string;
+  mangaId: string;
+  sourceId: string;
+  sourceMangaId: string;
+  url?: string;
+  isInfoManga: boolean;
+  getChapterUpdates: boolean;
+  chapterSortMode: number;
+  chapterPriority: number;
+  downloadChapters: boolean;
+  mergeOrder: number;
+};
+
+export type MangaMetadata = {
+  metadata?: {
+    mangaId: string;
+    uploader?: string;
+    extra: string;
+    indexedExtra?: string;
+    extraVersion: number;
+  };
+  titles: { id: string; mangaId: string; title: string; titleType: number }[];
+  tags: { id: string; mangaId: string; namespace?: string; name: string; tagType: number }[];
+};
+
+export type Feed = { id: string; sourceId: string; global: boolean; feedOrder: number };
+
+export type SavedSearch = {
+  id: string;
+  sourceId: string;
+  feedId?: string;
+  name: string;
+  query: string;
+  filters: string;
+  searchOrder: number;
+};
+
 export type TachibackupCounts = {
   manga: number;
   chapters: number;

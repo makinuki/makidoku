@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   Download,
+  Rss,
   LoaderCircle,
   Pin,
   PinOff,
@@ -19,9 +21,11 @@ import { Modal } from "../../components/Modal";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 import type {
   CatalogEntry,
+  Feed,
   FilterSchema,
   Manga,
   MigrationSource,
+  SavedSearch,
   SearchResult,
   Source,
 } from "../../types";
@@ -89,6 +93,7 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [failedSources, setFailedSources] = useState({ failed: 0, total: 0 });
+  const pendingFilters = useRef<Record<string, unknown>>({});
 
   const loadSources = async () => {
     try {
@@ -120,7 +125,14 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
       .then((schemas) => {
         if (!active) return;
         setFilterSchemas(schemas);
-        setFilterValues(defaultFilterValues(schemas));
+        const restored: Record<string, unknown> = {};
+        for (const schema of schemas) {
+          if (schema.id in pendingFilters.current) {
+            restored[schema.id] = pendingFilters.current[schema.id];
+          }
+        }
+        pendingFilters.current = {};
+        setFilterValues({ ...defaultFilterValues(schemas), ...restored });
       })
       .catch(() => {
         if (!active) return;
@@ -215,6 +227,21 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
     }
   };
 
+  // openSavedSearch replays a stored search: it selects the source, applies the
+  // saved query and hands the stored filter values to the schema loader, which
+  // keeps only the ids the plugin still defines.
+  const openSavedSearch = (
+    sourceId: string,
+    savedQuery: string,
+    filters: Record<string, unknown>,
+  ) => {
+    pendingFilters.current = filters;
+    setSelected(sourceId);
+    setDraftQuery(savedQuery);
+    setQuery(savedQuery.trim());
+    setPage(1);
+  };
+
   if (sources.length === 0 && !error) {
     return (
       <EmptyState
@@ -295,6 +322,7 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
             ),
         )}
       </div>
+      <FeedsPanel sources={sources} onOpen={openSavedSearch} />
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -372,6 +400,121 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
       )}
     </>
   );
+}
+
+// FeedsPanel lists the browse feeds a restore carried together with their
+// saved searches. A feed whose source is not installed stays visible but its
+// searches cannot run; a search replays by selecting the matching plugin.
+function FeedsPanel({
+  sources,
+  onOpen,
+}: {
+  sources: Source[];
+  onOpen: (sourceId: string, query: string, filters: Record<string, unknown>) => void;
+}) {
+  const [feeds, setFeeds] = useState<Feed[]>([]);
+  const [searches, setSearches] = useState<SavedSearch[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    void Promise.all([api.feeds(), api.savedSearches("")])
+      .then(([feedList, searchList]) => {
+        setFeeds(feedList);
+        setSearches(searchList);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Unable to load feeds"));
+  }, []);
+
+  if (error) return <p role="alert" className="mb-6 text-xs text-red-300">{error}</p>;
+  if (feeds.length === 0 && searches.length === 0) return null;
+
+  const remove = async (searchId: string) => {
+    try {
+      await api.deleteSavedSearch(searchId);
+      setSearches((items) => items.filter((item) => item.id !== searchId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to remove the saved search");
+    }
+  };
+
+  const sourceName = (id: string) => sources.find((source) => source.id === id)?.name ?? id;
+  const installed = (id: string) => sources.some((source) => source.id === id);
+  const sourceIds = Array.from(
+    new Set([...feeds.map((feed) => feed.sourceId), ...searches.map((search) => search.sourceId)]),
+  );
+
+  const row = (search: SavedSearch) => {
+    const available = installed(search.sourceId);
+    return (
+      <div
+        key={search.id}
+        className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+      >
+        <span className="min-w-0">
+          <b className="block truncate text-sm">{search.name}</b>
+          <small className="block truncate text-zinc-500">{search.query || "No query"}</small>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            disabled={!available}
+            title={available ? `Search ${sourceName(search.sourceId)}` : "Source not installed"}
+            onClick={() => onOpen(search.sourceId, search.query, parseFilters(search.filters))}
+            className="rounded-md border border-zinc-700 px-2 py-1 text-xs disabled:opacity-40"
+          >
+            Open
+          </button>
+          <button
+            type="button"
+            aria-label={`Remove saved search ${search.name}`}
+            onClick={() => void remove(search.id)}
+            className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
+          >
+            <Trash2 size={14} />
+          </button>
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <Rss size={16} /> Feeds and saved searches
+      </h2>
+      <div className="mt-3 space-y-4">
+        {sourceIds.map((sourceId) => {
+          const entries = searches.filter((search) => search.sourceId === sourceId);
+          return (
+            <div key={sourceId}>
+              <p className="mb-1.5 flex items-center gap-2 text-xs uppercase tracking-wide text-zinc-500">
+                <Bookmark size={13} /> {sourceName(sourceId)}
+                {!installed(sourceId) && <span className="text-amber-300">not installed</span>}
+              </p>
+              {entries.length ? (
+                <div className="space-y-1.5">{entries.map((search) => row(search))}</div>
+              ) : (
+                <p className="text-xs text-zinc-600">No saved searches.</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function parseFilters(raw: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
 }
 
 function PluginsTab() {

@@ -19,6 +19,10 @@ const DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 const (
 	// defaultFetchTimeout bounds a single makinuki_fetch attempt.
 	defaultFetchTimeout = 30 * time.Second
+	// ImageFetchTimeout bounds one daemon-owned image transfer. Covers are
+	// served at the source's own resolution, so a single image can be several
+	// megabytes and take far longer than a page request over a slow link.
+	ImageFetchTimeout = 2 * time.Minute
 	// maxResponseBytes caps the body copied into plugin memory. The instance
 	// budget is 64 MB, so a larger body cannot be handed across the boundary
 	// safely.
@@ -46,6 +50,9 @@ type Fetcher struct {
 
 	mu      sync.Mutex
 	clients map[string]*http.Client
+	// imageClients share the transport and cookie jar of the request client
+	// for a source but allow a longer transfer budget.
+	imageClients map[string]*http.Client
 }
 
 type rawHTTPResponse struct {
@@ -56,11 +63,12 @@ type rawHTTPResponse struct {
 
 func NewFetcher(storage Storage, resolver ChallengeResolver) *Fetcher {
 	return &Fetcher{
-		transport: http.DefaultTransport,
-		timeout:   defaultFetchTimeout,
-		storage:   storage,
-		resolver:  resolver,
-		clients:   map[string]*http.Client{},
+		transport:    http.DefaultTransport,
+		timeout:      defaultFetchTimeout,
+		storage:      storage,
+		resolver:     resolver,
+		clients:      map[string]*http.Client{},
+		imageClients: map[string]*http.Client{},
 	}
 }
 
@@ -79,6 +87,24 @@ func (f *Fetcher) client(sourceID string) *http.Client {
 		c.Jar = jar
 	}
 	f.clients[sourceID] = c
+	return c
+}
+
+// imageClient returns the per-source client used for image transfers. It keeps
+// the source's cookie jar and clearance behaviour while allowing a longer
+// budget than a plugin page request.
+func (f *Fetcher) imageClient(sourceID string) *http.Client {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.imageClients[sourceID]; ok {
+		return c
+	}
+	jar, err := cookiejar.New(nil)
+	c := &http.Client{Transport: f.transport, Timeout: ImageFetchTimeout}
+	if err == nil {
+		c.Jar = jar
+	}
+	f.imageClients[sourceID] = c
 	return c
 }
 
@@ -101,11 +127,11 @@ func (f *Fetcher) Do(ctx context.Context, sourceID string, req HttpRequest) (*Ht
 // plugin requests. Page headers, session cookies and anti-bot clearance are
 // preserved, and the returned buffer is capped at the host transfer limit.
 func (f *Fetcher) FetchImage(ctx context.Context, sourceID, target string, headers map[string]string) ([]byte, error) {
-	resp, herr := f.do(ctx, sourceID, HttpRequest{
+	resp, herr := f.doWith(ctx, sourceID, HttpRequest{
 		URL:     target,
 		Method:  http.MethodGet,
 		Headers: headers,
-	})
+	}, f.imageClient)
 	if herr != nil {
 		return nil, CodedError(herr.Error, "%s", herr.Message)
 	}
@@ -117,12 +143,20 @@ func (f *Fetcher) FetchImage(ctx context.Context, sourceID, target string, heade
 }
 
 func (f *Fetcher) do(ctx context.Context, sourceID string, req HttpRequest) (*rawHTTPResponse, *HttpError) {
+	return f.doWith(ctx, sourceID, req, f.client)
+}
+
+// clientPicker selects the HTTP client used for one request. Page requests use
+// the plugin budget; image transfers use the longer image budget.
+type clientPicker func(sourceID string) *http.Client
+
+func (f *Fetcher) doWith(ctx context.Context, sourceID string, req HttpRequest, pick clientPicker) (*rawHTTPResponse, *HttpError) {
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = http.MethodGet
 	}
 
-	resp, usedCookie, herr := f.attempt(ctx, sourceID, method, req)
+	resp, usedCookie, herr := f.attemptWith(ctx, sourceID, method, req, pick)
 	if herr != nil {
 		return nil, herr
 	}
@@ -146,7 +180,7 @@ func (f *Fetcher) do(ctx context.Context, sourceID string, req HttpRequest) (*ra
 		return nil, &challenge
 	}
 
-	replayed, _, herr := f.attempt(ctx, sourceID, method, req)
+	replayed, _, herr := f.attemptWith(ctx, sourceID, method, req, pick)
 	if herr != nil {
 		return nil, herr
 	}
@@ -161,6 +195,10 @@ func (f *Fetcher) do(ctx context.Context, sourceID string, req HttpRequest) (*ra
 // attempt performs one HTTP round trip and reports the clearance cookie it
 // applied, so a replay can tell stale clearance from fresh.
 func (f *Fetcher) attempt(ctx context.Context, sourceID, method string, req HttpRequest) (*rawHTTPResponse, string, *HttpError) {
+	return f.attemptWith(ctx, sourceID, method, req, f.client)
+}
+
+func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req HttpRequest, pick clientPicker) (*rawHTTPResponse, string, *HttpError) {
 	target, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil || !target.IsAbs() || (target.Scheme != "http" && target.Scheme != "https") {
 		return nil, "", &HttpError{
@@ -198,7 +236,7 @@ func (f *Fetcher) attempt(ctx context.Context, sourceID, method string, req Http
 		httpReq.Header.Set("User-Agent", DefaultUserAgent)
 	}
 
-	httpResp, err := f.client(sourceID).Do(httpReq)
+	httpResp, err := pick(sourceID).Do(httpReq)
 	if err != nil {
 		// A dropped connection and an expired deadline share one code, so no
 		// further discrimination is needed here.

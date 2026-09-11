@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -402,15 +404,21 @@ func (s *Server) mangaCover(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusNotFound, err)
 		return
 	}
-	if manga.CoverCachePath != nil && *manga.CoverCachePath != "" {
-		if data, readErr := os.ReadFile(*manga.CoverCachePath); readErr == nil {
-			contentType := "application/octet-stream"
-			if manga.CoverContentType != nil && *manga.CoverContentType != "" {
-				contentType = *manga.CoverContentType
-			}
-			writeCoverBytes(w, contentType, data)
-			return
-		}
+	data, contentType, err := s.ensureCover(manga)
+	if err != nil {
+		writeCoverError(w, err)
+		return
+	}
+	writeCoverBytes(w, contentType, data)
+}
+
+// ensureCover returns the bytes of a title's cover, reading them from the local
+// cache when present and fetching them otherwise. The transfer runs under the
+// daemon's own image budget rather than the request context so a navigation
+// cannot abandon a download whose result is cached for the next view.
+func (s *Server) ensureCover(manga db.Manga) ([]byte, string, error) {
+	if data, contentType, ok := readCachedCover(manga); ok {
+		return data, contentType, nil
 	}
 	// A user override wins over the source cover. The override is stored as a
 	// URL and is fetched through the same path as the source cover.
@@ -419,44 +427,94 @@ func (s *Server) mangaCover(w http.ResponseWriter, r *http.Request) {
 		coverURL = strings.TrimSpace(*manga.CustomCoverURL)
 	}
 	if coverURL == "" {
-		writeError(w, engine.CodedError(engine.CodeNotFound, "manga has no cover"))
-		return
+		return nil, "", engine.CodedError(engine.CodeNotFound, "manga has no cover")
 	}
 	if s.engine == nil {
-		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
-		return
+		return nil, "", errEngineUnavailable
 	}
 	source, err := s.repo.GetMangaSource(manga.ID)
 	if err != nil {
-		writeLocalError(w, http.StatusNotFound, err)
-		return
+		return nil, "", err
 	}
-	data, err := s.engine.FetchImage(r.Context(), source.SourceID, coverURL, nil)
+	if err := s.beginImageFetch(s.Lifetime()); err != nil {
+		return nil, "", err
+	}
+	defer s.endImageFetch()
+	// A request that waited for a slot may find the cover already stored by the
+	// transfer it waited behind.
+	if data, contentType, ok := readCachedCover(manga); ok {
+		return data, contentType, nil
+	}
+	ctx, cancel := s.imageFetchContext()
+	defer cancel()
+	data, err := s.engine.FetchImage(ctx, source.SourceID, coverURL, nil)
 	if err != nil {
-		writeError(w, err)
-		return
+		return nil, "", err
 	}
 	if len(data) == 0 {
-		writeError(w, engine.CodedError(engine.CodeNotFound, "cover data is empty"))
-		return
+		return nil, "", engine.CodedError(engine.CodeNotFound, "cover data is empty")
 	}
+	contentType := http.DetectContentType(data)
+	if err := s.storeCover(manga, coverURL, data, contentType); err != nil {
+		return nil, "", err
+	}
+	return data, contentType, nil
+}
+
+// readCachedCover returns the stored cover bytes of a title when a readable
+// cache file exists.
+func readCachedCover(manga db.Manga) ([]byte, string, bool) {
+	if manga.CoverCachePath == nil || *manga.CoverCachePath == "" {
+		return nil, "", false
+	}
+	data, err := os.ReadFile(*manga.CoverCachePath)
+	if err != nil {
+		return nil, "", false
+	}
+	contentType := "application/octet-stream"
+	if manga.CoverContentType != nil && *manga.CoverContentType != "" {
+		contentType = *manga.CoverContentType
+	}
+	return data, contentType, true
+}
+
+// storeCover writes a fetched cover to the cache directory and records its
+// location so later requests serve it from disk.
+func (s *Server) storeCover(manga db.Manga, coverURL string, data []byte, contentType string) error {
 	cacheRoot := filepath.Join(s.engine.DataDir(), "covers")
 	key := fmt.Sprintf("%x", sha256.Sum256(append([]byte(coverURL), data...)))
 	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
+		return err
 	}
 	path := filepath.Join(cacheRoot, key+".img")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
+		return err
 	}
-	contentType := http.DetectContentType(data)
 	if err := s.repo.SetMangaCover(manga.ID, path, contentType, time.Now().Unix()); err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
+		return err
+	}
+	return nil
+}
+
+// writeCoverError maps a cover failure onto the status the web client sees.
+// Coded source failures keep their standardized status; local failures are
+// reported as such instead of borrowing a source code.
+func writeCoverError(w http.ResponseWriter, err error) {
+	var coded *engine.Error
+	if errors.As(err, &coded) {
+		writeError(w, err)
 		return
 	}
-	writeCoverBytes(w, contentType, data)
+	switch {
+	case errors.Is(err, errEngineUnavailable):
+		writeLocalError(w, http.StatusServiceUnavailable, err)
+	case errors.Is(err, sql.ErrNoRows):
+		writeLocalError(w, http.StatusNotFound, err)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		writeLocalError(w, http.StatusServiceUnavailable, err)
+	default:
+		writeLocalError(w, http.StatusInternalServerError, err)
+	}
 }
 
 func writeCoverBytes(w http.ResponseWriter, contentType string, data []byte) {

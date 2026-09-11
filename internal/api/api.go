@@ -53,6 +53,46 @@ type Server struct {
 	// dataDirOverride redirects locally staged artifacts away from the
 	// engine's data directory, which tests use to keep the working tree clean.
 	dataDirOverride string
+	// imageSlots bounds concurrent upstream image transfers. A grid of covers
+	// can otherwise open far more transfers than the link or the source can
+	// serve, and each one holds a browser connection for its whole duration.
+	imageSlots     chan struct{}
+	imageSlotsOnce sync.Once
+}
+
+// imageFetchConcurrency caps simultaneous upstream image transfers.
+const imageFetchConcurrency = 4
+
+// imageGate returns the image transfer semaphore, building it on first use so
+// a Server constructed without NewServer still behaves.
+func (s *Server) imageGate() chan struct{} {
+	s.imageSlotsOnce.Do(func() {
+		if s.imageSlots == nil {
+			s.imageSlots = make(chan struct{}, imageFetchConcurrency)
+		}
+	})
+	return s.imageSlots
+}
+
+// beginImageFetch reserves one image transfer slot, giving up when the caller's
+// context ends first.
+func (s *Server) beginImageFetch(ctx context.Context) error {
+	select {
+	case s.imageGate() <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// endImageFetch releases a slot reserved by beginImageFetch.
+func (s *Server) endImageFetch() { <-s.imageGate() }
+
+// imageFetchContext bounds one daemon-owned image transfer. The HTTP request
+// context is deliberately not used: a transfer already in flight is allowed to
+// finish so its bytes can be cached even when the client navigates away.
+func (s *Server) imageFetchContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(s.Lifetime(), engine.ImageFetchTimeout)
 }
 
 // Lifetime returns the daemon run context when available, falling back to a

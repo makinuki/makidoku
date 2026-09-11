@@ -110,8 +110,16 @@ func (s *Server) sourceIcon(w http.ResponseWriter, r *http.Request) {
 		writeCoverBytes(w, http.DetectContentType(data), data)
 		return
 	}
-	data, err := s.engine.FetchImage(r.Context(), source.ID, source.IconURL, nil)
+	ctx, cancel := s.imageFetchContext()
+	defer cancel()
+	data, err := s.engine.FetchImage(ctx, source.ID, source.IconURL, nil)
 	if err != nil {
+		// An icon the source site no longer serves is not a gateway failure:
+		// the client falls back to its own placeholder for a missing icon.
+		if engine.CodeOf(err) == engine.CodeNotFound {
+			writeError(w, engine.CodedError(engine.CodeNotFound, "source icon is unavailable"))
+			return
+		}
 		writeLocalError(w, http.StatusBadGateway, err)
 		return
 	}

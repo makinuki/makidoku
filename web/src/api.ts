@@ -31,9 +31,11 @@ import type {
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
+  const headers = new Headers();
   // FormData carries its own multipart content type with a generated boundary.
   if (!(init?.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  // Caller headers still win, as they did before the default was conditional.
+  new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
   const response = await fetch(path, {
     ...init,
     headers,

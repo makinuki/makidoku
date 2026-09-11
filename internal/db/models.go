@@ -1,6 +1,9 @@
 package db
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 const (
 	QueuePending     = "PENDING"
@@ -38,6 +41,9 @@ type Category struct {
 	ID        int64  `db:"id" json:"id"`
 	Name      string `db:"name" json:"name"`
 	SortOrder int    `db:"sort_order" json:"sortOrder"`
+	// Hidden categories stay assigned to their titles but are not offered as
+	// a library filter.
+	Hidden bool `db:"hidden" json:"hidden"`
 }
 
 // Manga is a stored library entry. SourceMangaID and SourcePageURL are
@@ -73,6 +79,24 @@ type Manga struct {
 	// DetailsFetchedAt records when full details were last pulled from the
 	// plugin. Search-level records stay NULL until the first details read.
 	DetailsFetchedAt *int64 `db:"details_fetched_at" json:"detailsFetchedAt,omitempty"`
+	// The custom fields carry user overrides restored from a library backup.
+	// When a custom value is set it wins over the source value at render time;
+	// the source columns stay untouched so a refresh keeps working.
+	CustomTitle        *string `db:"custom_title" json:"customTitle,omitempty"`
+	CustomArtist       *string `db:"custom_artist" json:"customArtist,omitempty"`
+	CustomAuthor       *string `db:"custom_author" json:"customAuthor,omitempty"`
+	CustomDescription  *string `db:"custom_description" json:"customDescription,omitempty"`
+	CustomGenres       *string `db:"custom_genres" json:"customGenres,omitempty"`
+	CustomStatus       *string `db:"custom_status" json:"customStatus,omitempty"`
+	CustomCoverURL     *string `db:"custom_cover_url" json:"-"`
+	Notes              *string `db:"notes" json:"notes,omitempty"`
+	Memo               *string `db:"memo" json:"memo,omitempty"`
+	SourceVersion      *int64  `db:"source_version" json:"sourceVersion,omitempty"`
+	UpdateStrategy     *string `db:"update_strategy" json:"updateStrategy,omitempty"`
+	FavoriteModifiedAt *int64  `db:"favorite_modified_at" json:"favoriteModifiedAt,omitempty"`
+	Initialized        bool    `db:"initialized" json:"initialized"`
+	ExcludedScanlators *string `db:"excluded_scanlators" json:"excludedScanlators,omitempty"`
+	ChapterFlags       *int64  `db:"chapter_flags" json:"chapterFlags,omitempty"`
 }
 
 // MarshalJSON exposes a backend-owned cover route instead of the source URL.
@@ -81,7 +105,58 @@ func (m Manga) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		alias
 		CoverURL string `json:"coverUrl"`
-	}{alias: alias(m), CoverURL: "/api/manga/" + m.ID + "/cover"})
+		MangaDisplay
+	}{alias: alias(m), CoverURL: "/api/manga/" + m.ID + "/cover", MangaDisplay: m.display()})
+}
+
+// MangaDisplay carries the values a client renders. A custom override set by
+// the user wins over the source value; the source columns stay untouched so a
+// refresh keeps working.
+type MangaDisplay struct {
+	DisplayTitle       string  `json:"displayTitle"`
+	DisplayDescription *string `json:"displayDescription,omitempty"`
+	DisplayAuthors     *string `json:"displayAuthors,omitempty"`
+	DisplayArtists     *string `json:"displayArtists,omitempty"`
+	DisplayGenres      *string `json:"displayGenres,omitempty"`
+	DisplayStatus      string  `json:"displayStatus"`
+	DisplayCoverURL    string  `json:"displayCoverUrl"`
+}
+
+func (m Manga) display() MangaDisplay {
+	out := MangaDisplay{
+		DisplayTitle:       m.Title,
+		DisplayDescription: m.Description,
+		DisplayAuthors:     m.Authors,
+		DisplayArtists:     m.Artists,
+		DisplayGenres:      m.Genres,
+		DisplayStatus:      m.Status,
+		DisplayCoverURL:    "/api/manga/" + m.ID + "/cover",
+	}
+	if custom := trimmed(m.CustomTitle); custom != "" {
+		out.DisplayTitle = custom
+	}
+	out.DisplayDescription = prefer(m.CustomDescription, out.DisplayDescription)
+	out.DisplayAuthors = prefer(m.CustomAuthor, out.DisplayAuthors)
+	out.DisplayArtists = prefer(m.CustomArtist, out.DisplayArtists)
+	out.DisplayGenres = prefer(m.CustomGenres, out.DisplayGenres)
+	if custom := trimmed(m.CustomStatus); custom != "" {
+		out.DisplayStatus = custom
+	}
+	return out
+}
+
+func trimmed(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func prefer(custom *string, fallback *string) *string {
+	if trimmed(custom) != "" {
+		return custom
+	}
+	return fallback
 }
 
 // LibraryManga is a library title with its user-facing reading metadata.
@@ -109,6 +184,7 @@ func (l LibraryManga) MarshalJSON() ([]byte, error) {
 		UnreadChapters int              `json:"unreadChapters"`
 		SourceName     string           `json:"sourceName,omitempty"`
 		CoverURL       string           `json:"coverUrl"`
+		MangaDisplay
 	}{
 		mangaAlias:     mangaAlias(l.Manga),
 		Categories:     categories,
@@ -116,6 +192,7 @@ func (l LibraryManga) MarshalJSON() ([]byte, error) {
 		UnreadChapters: l.UnreadChapters,
 		SourceName:     l.SourceName,
 		CoverURL:       "/api/manga/" + l.Manga.ID + "/cover",
+		MangaDisplay:   l.Manga.display(),
 	})
 }
 
@@ -145,6 +222,72 @@ type MangaSource struct {
 	URL string `db:"url"`
 }
 
+// Feed is a source browse shortcut. A global feed opens the source itself; a
+// feed that carries a saved search opens the source with that search applied.
+type Feed struct {
+	ID        string `db:"id" json:"id"`
+	SourceID  string `db:"source_id" json:"sourceId"`
+	IsGlobal  bool   `db:"is_global" json:"global"`
+	FeedOrder int64  `db:"feed_order" json:"feedOrder"`
+}
+
+// SavedSearch is one stored source search: a query plus the source's own
+// filter values, kept in the source's encoding so it can be replayed.
+type SavedSearch struct {
+	ID          string  `db:"id" json:"id"`
+	SourceID    string  `db:"source_id" json:"sourceId"`
+	FeedID      *string `db:"feed_id" json:"feedId,omitempty"`
+	Name        string  `db:"name" json:"name"`
+	Query       string  `db:"query" json:"query"`
+	Filters     string  `db:"filters" json:"filters"`
+	SearchOrder int64   `db:"search_order" json:"searchOrder"`
+}
+
+// MangaMerge is one additional source merged into a title. The role flags
+// describe how the merged source participates; the link itself is also
+// recorded in manga_sources so the refresh path can pull its chapters.
+type MangaMerge struct {
+	ID                string  `db:"id" json:"id"`
+	MangaID           string  `db:"manga_id" json:"mangaId"`
+	SourceID          string  `db:"source_id" json:"sourceId"`
+	SourceMangaID     string  `db:"source_manga_id" json:"sourceMangaId"`
+	URL               *string `db:"url" json:"url,omitempty"`
+	IsInfoManga       bool    `db:"is_info_manga" json:"isInfoManga"`
+	GetChapterUpdates bool    `db:"get_chapter_updates" json:"getChapterUpdates"`
+	ChapterSortMode   int64   `db:"chapter_sort_mode" json:"chapterSortMode"`
+	ChapterPriority   int64   `db:"chapter_priority" json:"chapterPriority"`
+	DownloadChapters  bool    `db:"download_chapters" json:"downloadChapters"`
+	MergeOrder        int64   `db:"merge_order" json:"mergeOrder"`
+}
+
+// MangaTitle is one alternative title of a title, with the type the source
+// assigned to it.
+type MangaTitle struct {
+	ID        string `db:"id" json:"id"`
+	MangaID   string `db:"manga_id" json:"mangaId"`
+	Title     string `db:"title" json:"title"`
+	TitleType int64  `db:"title_type" json:"titleType"`
+}
+
+// MangaTag is one tag of a title, optionally namespaced.
+type MangaTag struct {
+	ID        string  `db:"id" json:"id"`
+	MangaID   string  `db:"manga_id" json:"mangaId"`
+	Namespace *string `db:"namespace" json:"namespace,omitempty"`
+	Name      string  `db:"name" json:"name"`
+	TagType   int64   `db:"tag_type" json:"tagType"`
+}
+
+// MangaMetadata is the free-form metadata record a source can attach to a
+// title. Extra is stored verbatim because only the source understands it.
+type MangaMetadata struct {
+	MangaID      string  `db:"manga_id" json:"mangaId"`
+	Uploader     *string `db:"uploader" json:"uploader,omitempty"`
+	Extra        string  `db:"extra" json:"extra"`
+	IndexedExtra *string `db:"indexed_extra" json:"indexedExtra,omitempty"`
+	ExtraVersion int64   `db:"extra_version" json:"extraVersion"`
+}
+
 type HistoryItem struct {
 	Manga    Manga           `json:"manga"`
 	Chapter  Chapter         `json:"chapter"`
@@ -164,8 +307,16 @@ type Chapter struct {
 	Scanlator       *string  `db:"scanlator" json:"scanlator"`
 	Downloaded      bool     `db:"downloaded" json:"downloaded"`
 	DownloadPath    *string  `db:"download_path" json:"downloadPath"`
-	Read            bool     `db:"-" json:"read"`
-	DownloadStatus  string   `db:"download_status" json:"downloadStatus,omitempty"`
+	// Bookmark is the user-facing flag. The remaining source fields mirror the
+	// source's own record and are kept for round-tripping and merge decisions.
+	Bookmark             bool    `db:"bookmark" json:"bookmark"`
+	SourceOrder          *int64  `db:"source_order" json:"sourceOrder,omitempty"`
+	SourceVersion        *int64  `db:"source_version" json:"sourceVersion,omitempty"`
+	SourceLastModifiedAt *int64  `db:"source_last_modified_at" json:"sourceLastModifiedAt,omitempty"`
+	SourceFetchedAt      *int64  `db:"source_fetched_at" json:"sourceFetchedAt,omitempty"`
+	Memo                 *string `db:"memo" json:"memo,omitempty"`
+	Read                 bool    `db:"-" json:"read"`
+	DownloadStatus       string  `db:"download_status" json:"downloadStatus,omitempty"`
 }
 
 // Page is the backend-owned reader contract. The source URL and request
@@ -304,6 +455,12 @@ type TrackerBinding struct {
 	TotalRemoteChapters *int     `db:"total_remote_chapters" json:"totalRemoteChapters"`
 	StartedAt           *int64   `db:"started_at" json:"startedAt,omitempty"`
 	FinishedAt          *int64   `db:"finished_at" json:"finishedAt,omitempty"`
+	// RemoteURL, RemoteLibraryID and IsPrivate mirror the binding's remote
+	// record. They are informational; only the remote identifier is used to
+	// address the entry.
+	RemoteURL       *string `db:"remote_url" json:"remoteUrl,omitempty"`
+	RemoteLibraryID *string `db:"remote_library_id" json:"remoteLibraryId,omitempty"`
+	IsPrivate       bool    `db:"is_private" json:"isPrivate"`
 }
 
 type TrackerCredential struct {

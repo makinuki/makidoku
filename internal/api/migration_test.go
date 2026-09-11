@@ -16,6 +16,46 @@ import (
 	"github.com/makinuki/makidoku/internal/identity"
 )
 
+// A placeholder source created by a restore is not served by the engine, so
+// the migration picker lists it from the store to let its titles move onto an
+// installed source.
+func TestMigrationSourcesIncludeImported(t *testing.T) {
+	repo, router, _, _ := migrationTestRouter(t)
+	importedID := "imported-999"
+	if _, err := repo.DB().Exec(`INSERT INTO sources(id,plugin_key,name,version,abi_version,lang,base_url,wasm_path,installed,installed_at)
+		VALUES(?,NULL,?,?,?,?,?,NULL,0,?)`, importedID, "Other Site (imported)", "0", 1, "en", "", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertManga(db.Manga{SourceID: importedID, SourceMangaID: "remote-x", Title: "Imported Title", Status: "unknown", InLibrary: true}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/migration/sources", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	var entries []struct {
+		Source struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"source"`
+		Count    int  `json:"count"`
+		Imported bool `json:"imported"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Source.ID == importedID {
+			if !entry.Imported || entry.Count != 1 {
+				t.Fatalf("imported entry = %+v", entry)
+			}
+			return
+		}
+	}
+	t.Fatalf("imported source missing from %+v", entries)
+}
+
 // migrationTestRouter wires two sources so a title can migrate between them.
 func migrationTestRouter(t *testing.T) (*db.Repository, chi.Router, string, string) {
 	t.Helper()

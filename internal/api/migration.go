@@ -62,12 +62,30 @@ func (s *Server) migrationSources(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		Source engine.InstalledSource `json:"source"`
 		Count  int                    `json:"count"`
+		// Imported marks a placeholder source created by a restore, which the
+		// engine does not serve but whose titles can be moved onto a real one.
+		Imported bool `json:"imported,omitempty"`
 	}
 	out := make([]entry, 0, len(sources))
 	for _, source := range sources {
 		if counts[source.ID] > 0 {
 			out = append(out, entry{Source: source, Count: counts[source.ID]})
 		}
+	}
+	imported, err := s.repo.ListImportedSources()
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	for _, source := range imported {
+		if counts[source.ID] == 0 {
+			continue
+		}
+		out = append(out, entry{
+			Source:   engine.InstalledSource{ID: source.ID, Name: source.Name, BaseURL: source.BaseURL},
+			Count:    counts[source.ID],
+			Imported: true,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

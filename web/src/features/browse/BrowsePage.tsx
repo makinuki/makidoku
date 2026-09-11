@@ -672,7 +672,14 @@ function MigrateTab() {
               }`}
             >
               <SourceIcon source={item.source} />
-              <span className="min-w-0 flex-1 truncate text-sm">{item.source.name}</span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {item.source.name}
+                {item.imported && (
+                  <small className="ml-1 rounded bg-zinc-800 px-1 text-[10px] text-amber-300">
+                    imported
+                  </small>
+                )}
+              </span>
               <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
                 {item.count}
               </span>

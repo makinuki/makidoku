@@ -253,7 +253,7 @@ export type MigrationResponse = {
   source: string;
   chapterMap: Record<string, string>;
 };
-export type MigrationSource = { source: Source; count: number };
+export type MigrationSource = { source: Source; count: number; imported?: boolean };
 
 export type TachibackupCounts = {
   manga: number;

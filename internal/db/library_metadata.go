@@ -14,6 +14,18 @@ import (
 // can carry beyond the core rows: browse feeds, saved searches, merged
 // sources, alternative titles and tags, and the free-form metadata record.
 
+// ListImportedSources returns the placeholder sources a restore created for
+// titles whose original source is not installed. Their titles can be moved
+// onto an installed source once one is available.
+func (r *Repository) ListImportedSources() ([]Source, error) {
+	sources := []Source{}
+	if err := r.db.Select(&sources, `SELECT id,COALESCE(plugin_key,'') AS plugin_key,name,version,abi_version,lang,base_url,COALESCE(wasm_path,'') AS wasm_path,installed_at
+		FROM sources WHERE installed=0 AND id LIKE 'imported-%' ORDER BY name`); err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
 // ListFeeds returns every browse feed ordered by source and feed order.
 func (r *Repository) ListFeeds() ([]Feed, error) {
 	feeds := []Feed{}

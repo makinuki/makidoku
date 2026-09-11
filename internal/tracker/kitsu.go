@@ -126,14 +126,15 @@ func (k *Kitsu) Search(ctx context.Context, text string) ([]SearchResult, error)
 	}
 	return r, nil
 }
+
 // kitsuLibraryEntry is the library entry payload shared by the status read
 // and the scrobble lookup.
 type kitsuLibraryEntry struct {
-	ID       string `json:"id"`
-	Progress int    `json:"progress"`
-	Rating   *int   `json:"rating"`
-	Status   string `json:"status"`
-	StartedAt string `json:"startedAt"`
+	ID         string `json:"id"`
+	Progress   int    `json:"progress"`
+	Rating     *int   `json:"rating"`
+	Status     string `json:"status"`
+	StartedAt  string `json:"startedAt"`
 	FinishedAt string `json:"finishedAt"`
 }
 

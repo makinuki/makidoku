@@ -79,21 +79,35 @@ func TestRunContinuesAfterTitleFailure(t *testing.T) {
 // automatic download policy is applied by the hook, not here.
 func TestRunForwardsNewChaptersToEnqueue(t *testing.T) {
 	handle, err := db.Open(filepath.Join(t.TempDir(), "updates-download.db"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer handle.Close()
-	if _, err := handle.Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','Source','1',1,'en','https://source.test','s.wasm',1)`); err != nil { t.Fatal(err) }
+	if _, err := handle.Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('s','Source','1',1,'en','https://source.test','s.wasm',1)`); err != nil {
+		t.Fatal(err)
+	}
 	repo := db.NewRepository(handle)
 	manga, err := repo.UpsertManga(db.Manga{SourceID: "s", SourceMangaID: "m", Title: "M", Status: "ongoing", InLibrary: true})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceChapterID: "c"})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := New(repo, func(context.Context, string) ([]string, error) { return []string{chapter.ID}, nil })
 	var queued []string
 	service.SetEnqueue(func(_ context.Context, gotManga string, chapterIDs []string) error {
-		if gotManga != manga.ID { t.Fatalf("manga id = %s", gotManga) }
+		if gotManga != manga.ID {
+			t.Fatalf("manga id = %s", gotManga)
+		}
 		queued = append(queued, chapterIDs...)
 		return nil
 	})
-	if _, err := service.Run(context.Background()); err != nil { t.Fatal(err) }
-	if len(queued) != 1 || queued[0] != chapter.ID { t.Fatalf("queued = %v", queued) }
+	if _, err := service.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) != 1 || queued[0] != chapter.ID {
+		t.Fatalf("queued = %v", queued)
+	}
 }

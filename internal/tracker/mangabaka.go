@@ -77,6 +77,7 @@ func (m *MangaBaka) FetchUserStatus(ctx context.Context, b db.TrackerBinding, c 
 	}
 	return Status{RemoteID: strconv.FormatInt(id, 10), Title: b.RemoteTitle, Status: out.Data.State, Score: normalizeHundredPointScore(out.Data.Rating), Progress: progress, TotalChapters: b.TotalRemoteChapters, StartedAt: parseTrackerDate(out.Data.StartDate), FinishedAt: parseTrackerDate(out.Data.FinishDate)}, nil
 }
+
 // UpdateTracking patches the library entry. MangaBaka rates on a 0 to 100
 // wire scale regardless of the account's step size, and stores ISO dates.
 func (m *MangaBaka) UpdateTracking(ctx context.Context, b db.TrackerBinding, update TrackingUpdate, c Credential) error {

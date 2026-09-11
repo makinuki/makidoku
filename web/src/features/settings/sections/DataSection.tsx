@@ -5,6 +5,7 @@ import { api } from "../../../api";
 import { Modal } from "../../../components/Modal";
 import { useSettings } from "../SettingsLayout";
 import { SectionPage, SettingRows, SettingsCard } from "../SettingsPrimitives";
+import { TachibackupImport } from "./TachibackupImport";
 
 export function DataSection() {
   const { reload, setStatus, setError } = useSettings();
@@ -154,6 +155,7 @@ export function DataSection() {
           </Link>
         </div>
       </SettingsCard>
+      <TachibackupImport />
     </SectionPage>
   );
 }

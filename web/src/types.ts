@@ -254,3 +254,55 @@ export type MigrationResponse = {
   chapterMap: Record<string, string>;
 };
 export type MigrationSource = { source: Source; count: number };
+
+export type TachibackupCounts = {
+  manga: number;
+  chapters: number;
+  categories: number;
+  history: number;
+  trackings: number;
+};
+
+export type TachibackupSourceReport = {
+  backupSourceId: number;
+  name: string;
+  mangaCount: number;
+  matchedSourceId?: string;
+  matchedSourceName?: string;
+  match?: string;
+  deferred: boolean;
+};
+
+export type TachibackupTrackerReport = {
+  syncId: number;
+  trackerType?: string;
+  supported: boolean;
+  mangaCount: number;
+};
+
+export type TachibackupReport = {
+  counts: TachibackupCounts;
+  sources: TachibackupSourceReport[];
+  trackers: TachibackupTrackerReport[];
+  unmatchedTitles: number;
+  unsupportedTrackings: number;
+};
+
+export type TachibackupOptions = {
+  sourceMap?: Record<number, string>;
+  skipUnmatched?: boolean;
+};
+
+export type TachibackupSummary = {
+  categories: number;
+  manga: number;
+  mergedManga: number;
+  deferredManga: number;
+  skippedManga: number;
+  chapters: number;
+  readChapters: number;
+  history: number;
+  readingSessions: number;
+  tracking: number;
+  skippedTracking: number;
+};

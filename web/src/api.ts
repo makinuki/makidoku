@@ -25,12 +25,18 @@ import type {
   MigrationSource,
   Recommendation,
   ReadingStats,
+  TachibackupOptions,
+  TachibackupReport,
+  TachibackupSummary,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  // FormData carries its own multipart content type with a generated boundary.
+  if (!(init?.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers,
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -262,6 +268,17 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: file,
     }),
+  validateTachibackup: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<TachibackupReport>("/api/backup/tachibackup/validate", { method: "POST", body });
+  },
+  importTachibackup: (file: File, options: TachibackupOptions) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("options", JSON.stringify(options));
+    return request<TachibackupSummary>("/api/backup/tachibackup/import", { method: "POST", body });
+  },
   readerImage: (page: Page) => `/api/pages/${idPath(page.id)}/image`,
 };
 

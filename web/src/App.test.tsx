@@ -880,6 +880,84 @@ describe("MakiDoku app shell", () => {
     expect(screen.queryByRole("heading", { name: "Import backup" })).not.toBeInTheDocument();
   });
 
+  it("validates and imports a backup from another app", async () => {
+    window.history.pushState({}, "", "/settings/data");
+    let importBody: FormData | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/settings") return Response.json([]);
+      if (path === "/api/sources") {
+        return Response.json([
+          {
+            id: "mangadex",
+            name: "MangaDex",
+            version: "1",
+            abiVersion: 1,
+            lang: "en",
+            baseUrl: "https://mangadex.org",
+            installedAt: 1,
+          },
+        ]);
+      }
+      if (path === "/api/backup/tachibackup/validate") {
+        return Response.json({
+          counts: { manga: 1, chapters: 2, categories: 1, history: 1, trackings: 0 },
+          sources: [
+            { backupSourceId: 7, name: "Other Site", mangaCount: 1, deferred: true },
+            {
+              backupSourceId: 9,
+              name: "MangaDex",
+              mangaCount: 4,
+              matchedSourceId: "mangadex",
+              matchedSourceName: "MangaDex",
+              match: "name",
+              deferred: false,
+            },
+          ],
+          trackers: [],
+          unmatchedTitles: 1,
+          unsupportedTrackings: 0,
+        });
+      }
+      if (path === "/api/backup/tachibackup/import") {
+        importBody = init?.body as FormData;
+        return Response.json({
+          categories: 1,
+          manga: 1,
+          mergedManga: 0,
+          deferredManga: 1,
+          skippedManga: 0,
+          chapters: 2,
+          readChapters: 1,
+          history: 1,
+          readingSessions: 0,
+          tracking: 0,
+          skippedTracking: 0,
+        });
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.upload(
+      await screen.findByLabelText("Choose .tachibk file"),
+      new File([new Uint8Array([1, 2, 3])], "backup.tachibk", {
+        type: "application/octet-stream",
+      }),
+    );
+    expect(await screen.findByText("Other Site")).toBeInTheDocument();
+    expect(screen.getByText("matched by name")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Import 1 titles" }));
+    expect(await screen.findByText(/Restored 1 titles/)).toBeInTheDocument();
+    expect(importBody?.get("options")).toContain('"7":""');
+    expect(importBody?.get("options")).toContain('"9":"mangadex"');
+  });
+
   it("offers single, double, and webtoon reader modes", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
     vi.stubGlobal(

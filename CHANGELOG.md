@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+- Import a backup exported by the Android app. A .tachibk file is validated
+  against the installed sources before anything is written, sources can be
+  mapped by hand, and titles whose source has no match are kept against a
+  placeholder so their read state and history survive. Categories, chapters,
+  read state, resume position, history, reading sessions, reader overrides,
+  and tracker links are restored, and re-importing the same file merges onto
+  the existing library.
 - Derive chapter numbers for releases that do not declare one. A number
   introduced by a "ch." marker wins over a bare number, volume, version, and
   season markers are ignored, and alphabetic suffixes map onto fractional

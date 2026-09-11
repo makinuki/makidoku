@@ -13,6 +13,12 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   read state, resume position, history, reading sessions, reader overrides,
   and tracker links are restored, and re-importing the same file merges onto
   the existing library.
+- Restore the remaining fields a library backup carries: per-title custom
+  info, notes and memo, source version and update strategy, per-chapter
+  bookmark and source metadata, hidden categories, tracker remote url and
+  privacy, browse feeds, saved searches, merged sources, alternative titles,
+  tags, and the source metadata record. A title marked fetch-once is left out
+  of the scheduled update, and a custom cover overrides the source cover.
 - Derive chapter numbers for releases that do not declare one. A number
   introduced by a "ch." marker wins over a bare number, volume, version, and
   season markers are ignored, and alphabetic suffixes map onto fractional

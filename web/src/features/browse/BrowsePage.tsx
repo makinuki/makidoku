@@ -425,7 +425,12 @@ function FeedsPanel({
       .catch((e) => setError(e instanceof Error ? e.message : "Unable to load feeds"));
   }, []);
 
-  if (error) return <p role="alert" className="mb-6 text-xs text-red-300">{error}</p>;
+  if (error)
+    return (
+      <p role="alert" className="mb-6 text-xs text-red-300">
+        {error}
+      </p>
+    );
   if (feeds.length === 0 && searches.length === 0) return null;
 
   const remove = async (searchId: string) => {
@@ -882,10 +887,12 @@ function MigrateTab() {
 }
 
 function SourceIcon({ source }: { source: Source }) {
-  return source.iconUrl ? (
+  const [failed, setFailed] = useState(false);
+  return source.iconUrl && !failed ? (
     <img
       src={api.sourceIcon(source.id)}
       alt=""
+      onError={() => setFailed(true)}
       className="size-9 shrink-0 rounded-lg object-cover"
     />
   ) : (

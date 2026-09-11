@@ -1,16 +1,46 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, Search, X } from "lucide-react";
-import { api } from "../../api";
+import { api, type RuntimeSetting } from "../../api";
 import type { LibraryManga } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
+import { searchSettings } from "../settings/settingsCatalog";
 
-export function GlobalSearch({ onClose }: { onClose: () => void }) {
+export type SearchMode = "library" | "settings";
+
+export function GlobalSearch({ mode, onClose }: { mode: SearchMode; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<LibraryManga[]>([]);
+  const [settings, setSettings] = useState<RuntimeSetting[]>([]);
   const [error, setError] = useState("");
   const [searching, setSearching] = useState(false);
+
+  // Settings are small in number and already validated by the daemon, so the
+  // list is read once and filtered locally as the query changes.
   useEffect(() => {
+    if (mode !== "settings") return;
+    let active = true;
+    setSearching(true);
+    api
+      .settings()
+      .then((persisted) => {
+        if (!active) return;
+        setSettings(persisted.filter((setting) => !setting.hidden));
+        setError("");
+      })
+      .catch((e) => {
+        if (active) setError(e instanceof Error ? e.message : "Unable to load settings");
+      })
+      .finally(() => {
+        if (active) setSearching(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "library") return;
     // Stale responses are dropped: only the latest query may update the list.
     let active = true;
     setSearching(true);
@@ -18,9 +48,9 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
       () =>
         void api
           .library(query)
-          .then((items) => {
+          .then((library) => {
             if (!active) return;
-            setItems(items);
+            setItems(library);
             setError("");
           })
           .catch((e) => {
@@ -35,7 +65,12 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [mode, query]);
+
+  const results = mode === "settings" ? searchSettings(settings, query) : [];
+  const placeholder = mode === "settings" ? "Search settings" : "Search your library";
+  const noMatches = mode === "settings" ? "No settings match." : "No library matches.";
+  const hasMatches = mode === "settings" ? results.length > 0 : items.length > 0;
   return (
     <div className="fixed inset-0 z-50 bg-black/70 p-4" onMouseDown={onClose}>
       <section
@@ -48,7 +83,8 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search your library"
+            placeholder={placeholder}
+            aria-label={placeholder}
             className="min-w-0 flex-1 bg-transparent outline-none"
           />
           <button
@@ -60,30 +96,48 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="max-h-[60vh] overflow-y-auto p-2">
-          {items.slice(0, 12).map((item) => (
-            <Link
-              key={item.id}
-              to={`/manga/${encodeURIComponent(item.id)}`}
-              onClick={onClose}
-              className="flex items-center gap-3 rounded-lg p-2 hover:bg-zinc-800"
-            >
-              <div className="size-10 overflow-hidden rounded bg-zinc-800">
-                <CoverImg src={item.coverUrl} className="size-full object-cover" />
-              </div>
-              <span className="min-w-0 flex-1">
-                <b className="block truncate text-sm">{item.title}</b>
-                <small className="text-zinc-500">{item.sourceName || "Unknown plugin"}</small>
-              </span>
-              <ChevronRight size={16} className="text-zinc-600" />
-            </Link>
-          ))}
+          {mode === "settings"
+            ? results.map((result) => (
+                <Link
+                  key={result.id}
+                  to={result.to}
+                  onClick={onClose}
+                  className="flex items-center gap-3 rounded-lg p-2 hover:bg-zinc-800"
+                >
+                  <span className="min-w-0 flex-1">
+                    <b className="block truncate text-sm">{result.title}</b>
+                    <small className="text-zinc-500">{result.breadcrumb}</small>
+                  </span>
+                  <ChevronRight size={16} className="text-zinc-600" />
+                </Link>
+              ))
+            : items.slice(0, 12).map((item) => (
+                <Link
+                  key={item.id}
+                  to={`/manga/${encodeURIComponent(item.id)}`}
+                  onClick={onClose}
+                  className="flex items-center gap-3 rounded-lg p-2 hover:bg-zinc-800"
+                >
+                  <div className="size-10 overflow-hidden rounded bg-zinc-800">
+                    <CoverImg src={item.coverUrl} className="size-full object-cover" />
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <b className="block truncate text-sm">{item.title}</b>
+                    <small className="text-zinc-500">{item.sourceName || "Unknown plugin"}</small>
+                  </span>
+                  <ChevronRight size={16} className="text-zinc-600" />
+                </Link>
+              ))}
           {error && (
             <p role="alert" className="p-8 text-center text-sm text-red-300">
               {error}
             </p>
           )}
-          {!items.length && !error && !searching && (
-            <p className="p-8 text-center text-sm text-zinc-500">No library matches.</p>
+          {!error && !searching && !hasMatches && mode === "settings" && !query.trim() && (
+            <p className="p-8 text-center text-sm text-zinc-500">Type to search all settings.</p>
+          )}
+          {!error && !searching && !hasMatches && !(mode === "settings" && !query.trim()) && (
+            <p className="p-8 text-center text-sm text-zinc-500">{noMatches}</p>
           )}
         </div>
       </section>

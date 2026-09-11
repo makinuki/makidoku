@@ -12,8 +12,17 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { Logo } from "../components/Logo";
+import type { SearchMode } from "../features/search/GlobalSearch";
 
-export function AppShell({ children, onSearch }: { children: ReactNode; onSearch: () => void }) {
+export function AppShell({
+  children,
+  onSearch,
+  searchMode,
+}: {
+  children: ReactNode;
+  onSearch: () => void;
+  searchMode: SearchMode;
+}) {
   const [connected, setConnected] = useState<boolean | null>(null);
   useEffect(() => {
     let active = true;
@@ -36,6 +45,7 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
     ["/history", "History", History],
     ["/downloads", "Downloads", Download],
   ] as const;
+  const searchLabel = searchMode === "settings" ? "Search settings" : "Search library";
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 lg:flex">
       <aside className="border-b border-zinc-800 bg-zinc-900/80 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:flex-col lg:border-b-0 lg:border-r">
@@ -74,10 +84,10 @@ export function AppShell({ children, onSearch }: { children: ReactNode; onSearch
           <button
             onClick={onSearch}
             className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-left text-sm text-zinc-400 hover:border-zinc-700"
-            aria-label="Search library"
+            aria-label={searchLabel}
           >
             <Search size={16} />
-            <span className="truncate">Search library...</span>
+            <span className="truncate">{searchLabel}...</span>
             <kbd className="ml-auto hidden rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500 sm:inline">
               Ctrl K
             </kbd>

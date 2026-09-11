@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -814,7 +814,7 @@ describe("MakiDoku app shell", () => {
   });
 
   it("uploads a backup only after confirming from settings", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/data");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/sources" || path === "/api/categories") return Response.json([]);
@@ -840,17 +840,17 @@ describe("MakiDoku app shell", () => {
       "/api/import",
       expect.objectContaining({ method: "POST" }),
     );
-    // The settings data is re-fetched so restored categories and preferences show up.
+    // Restored preferences and statistics are re-read after the import.
     await waitFor(() => {
-      const categoryCalls = fetchMock.mock.calls.filter(
-        ([url]) => String(url) === "/api/categories",
-      );
-      expect(categoryCalls.length).toBeGreaterThanOrEqual(2);
+      const calls = (path: string) =>
+        fetchMock.mock.calls.filter(([url]) => String(url) === path).length;
+      expect(calls("/api/settings")).toBeGreaterThanOrEqual(2);
+      expect(calls("/api/stats")).toBeGreaterThanOrEqual(2);
     });
   });
 
   it("shows an error when a backup import fails", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/data");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -1843,6 +1843,148 @@ describe("tracker binding feedback", () => {
   });
 });
 
+describe("settings sections", () => {
+  const settingRows = () => [
+    {
+      key: "appearance.date_format",
+      value: "relative",
+      default: "relative",
+      type: "string",
+      description: "Timestamp display format",
+      hidden: false,
+    },
+    {
+      key: "library.update_interval",
+      value: 86400000000000,
+      default: 86400000000000,
+      type: "duration",
+      description: "Automatic library update interval in nanoseconds",
+      hidden: false,
+    },
+    {
+      key: "reader.default_mode",
+      value: "single",
+      default: "single",
+      type: "string",
+      description: "Default reader mode",
+      hidden: false,
+    },
+    {
+      key: "library.view.sort",
+      value: "recent",
+      default: "recent",
+      type: "string",
+      description: "Library ordering",
+      hidden: true,
+    },
+  ];
+
+  it("lists the settings sections and opens one", async () => {
+    window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/settings") return Response.json(settingRows());
+        if (path === "/api/health") return Response.json({ ok: true });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    const main = await screen.findByRole("main");
+    for (const title of [
+      "Appearance",
+      "Library",
+      "Reader",
+      "Downloads",
+      "Tracking",
+      "Browse",
+      "Data and storage",
+      "Advanced",
+    ]) {
+      expect(within(main).getByText(title)).toBeInTheDocument();
+    }
+    await user.click(within(main).getByText("Reader"));
+    expect(await screen.findByText("Default mode")).toBeInTheDocument();
+    expect(within(main).queryByText("Date format")).not.toBeInTheDocument();
+    // Hidden view state never reaches a section.
+    expect(within(main).queryByText("Library ordering")).not.toBeInTheDocument();
+  });
+
+  it("saves a setting from its section", async () => {
+    window.history.pushState({}, "", "/settings/reader");
+    const writes: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/settings") return Response.json(settingRows());
+        if (path.startsWith("/api/settings/") && init?.method === "PUT") {
+          writes.push({ url: path, body: String(init.body) });
+          return Response.json({});
+        }
+        if (path === "/api/health") return Response.json({ ok: true });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: /Default mode/ }),
+      "double",
+    );
+    await waitFor(() => {
+      const write = writes.find(
+        (call) => decodeURIComponent(call.url) === "/api/settings/reader.default_mode",
+      );
+      expect(write).toBeTruthy();
+      expect(JSON.parse(write!.body)).toEqual({ value: "double" });
+    });
+    expect(await screen.findByText("reader.default_mode updated.")).toBeInTheDocument();
+  });
+
+  it("searches all settings from the header control", async () => {
+    window.history.pushState({}, "", "/settings");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/settings") return Response.json(settingRows());
+        if (path === "/api/health") return Response.json({ ok: true });
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Search settings" }));
+    fireEvent.change(screen.getByPlaceholderText("Search settings"), {
+      target: { value: "update interval" },
+    });
+    const result = await screen.findByRole("link", { name: /Update interval/ });
+    await user.click(result);
+    await waitFor(() => {
+      expect(document.getElementById("library.update_interval")).toHaveAttribute(
+        "data-highlighted",
+        "true",
+      );
+    });
+    expect(window.location.hash).toBe("#library.update_interval");
+  });
+});
+
 describe("settings credential feedback", () => {
   it("surfaces clearance failures and clears inputs on success", async () => {
     window.history.pushState({}, "", "/browse?tab=plugins");
@@ -1900,7 +2042,7 @@ describe("settings credential feedback", () => {
   });
 
   it("reports tracker token save failures", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/tracking");
     let tokenCalls = 0;
     vi.stubGlobal(
       "fetch",
@@ -1963,7 +2105,7 @@ describe("settings credential feedback", () => {
   // Recent tracker sync outcomes are visible so failures are not silent.
   it("shows recent tracker sync activity", async () => {
     const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/tracking");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2001,7 +2143,7 @@ describe("settings credential feedback", () => {
     const open = vi.fn();
     const originalOpen = Object.getOwnPropertyDescriptor(window, "open");
     Object.defineProperty(window, "open", { value: open, configurable: true, writable: true });
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/tracking");
     let deleted = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -2071,7 +2213,7 @@ describe("settings credential feedback", () => {
   });
 
   it("explains unconfigured browser authorization instead of offering connect", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/tracking");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2107,7 +2249,7 @@ describe("settings credential feedback", () => {
   });
 
   it("shows the encryption secret hint instead of sign-in forms when credentials are unavailable", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/tracking");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2144,7 +2286,7 @@ describe("settings credential feedback", () => {
   });
 
   it("signs in to a username and password tracker and surfaces rejections", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/tracking");
     let loginCalls = 0;
     vi.stubGlobal(
       "fetch",
@@ -2233,6 +2375,7 @@ describe("settings credential feedback", () => {
     const originalOpen = Object.getOwnPropertyDescriptor(window, "open");
     Object.defineProperty(window, "open", { value: open, configurable: true, writable: true });
 
+    window.history.pushState({}, "", "/settings/tracking");
     let connected = false;
     let socketRef: FakeSocket | undefined;
     vi.stubGlobal(
@@ -2303,7 +2446,7 @@ describe("settings credential feedback", () => {
   });
 
   it("removes a category after confirmation", async () => {
-    window.history.pushState({}, "", "/settings");
+    window.history.pushState({}, "", "/settings/library");
     let deleteCalls = 0;
     vi.stubGlobal(
       "fetch",

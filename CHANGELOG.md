@@ -22,6 +22,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   unread count and reading progress, and a continue action opens the last read
   chapter. The selected view is stored in the settings service, and the header
   control is the single search surface on every page.
+- Split settings into a landing list and eight sections. The header search is
+  contextual: on settings routes it searches every setting label, description,
+  and section, and a result opens the owning section with the setting
+  highlighted.
 
 ## [0.1.0] - 2026-08-26
 

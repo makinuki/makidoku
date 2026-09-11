@@ -1,9 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Link } from "react-router-dom";
-import { ArrowDown, ArrowUp, Play, SlidersHorizontal, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  BookCheck,
+  BookX,
+  Check,
+  Download,
+  FolderPlus,
+  Play,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from "lucide-react";
 import { api } from "../../api";
-import type { Category, LibraryManga } from "../../types";
+import type { BulkResult, Category, LibraryManga } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
+import { Modal } from "../../components/Modal";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 import { LibraryFiltersModal } from "./LibraryFiltersModal";
 import {
@@ -13,13 +34,17 @@ import {
   defaultLibraryView,
   emptyFilters,
   filterChips,
+  invertSelection,
   librarySorts,
   librarySources,
   libraryViewFromSettings,
   libraryViewSettings,
   mergeLibraryView,
   naturalDirection,
+  selectAllIds,
   sortLabels,
+  toggleRangeSelection,
+  toggleSelection,
   visibleLibrary,
   withoutFilter,
   type LibrarySort,
@@ -33,6 +58,12 @@ export function LibraryPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [selectionActive, setSelectionActive] = useState(false);
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [categoryOpen, setCategoryOpen] = useState(false);
   // persisted mirrors the view last written to the settings service, so a
   // change writes only the keys that actually differ.
   const persisted = useRef<LibraryView>(defaultLibraryView);
@@ -80,9 +111,81 @@ export function LibraryPage() {
   const sources = useMemo(() => librarySources(items), [items]);
   const chips = filterChips(view, (id) => sources.find((source) => source.id === id)?.name ?? id);
   const activeCount = activeFilterCount(view);
+  const orderedIds = useMemo(() => visible.map((item) => item.id), [visible]);
+  const selectionMode = selectionActive;
+
+  const reloadLibrary = useCallback(async () => {
+    const library = await api.library();
+    setItems(library);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelection(new Set());
+    setAnchor(null);
+    setSelectionActive(false);
+    setNotice("");
+  }, []);
+
+  const handleSelect = useCallback(
+    (id: string, event: MouseEvent) => {
+      setSelectionActive(true);
+      setSelection((current) =>
+        event.shiftKey && anchor
+          ? toggleRangeSelection(current, orderedIds, anchor, id)
+          : toggleSelection(current, id),
+      );
+      setAnchor(id);
+    },
+    [anchor, orderedIds],
+  );
+
+  // Selection is scoped to the visible list: a filter change drops ids that
+  // are no longer shown so a batch action cannot touch hidden titles.
+  useEffect(() => {
+    if (!selectionActive) return;
+    setSelection((current) => {
+      const visibleSet = new Set(orderedIds);
+      const next = new Set([...current].filter((id) => visibleSet.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [orderedIds, selectionActive]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearSelection();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectionMode, clearSelection]);
+
+  const runBulk = useCallback(
+    async (action: () => Promise<BulkResult>, message: string) => {
+      setBusy(true);
+      setError("");
+      setNotice("");
+      try {
+        const result = await action();
+        setNotice(
+          result.failed.length
+            ? `${message}: ${result.updated} applied, ${result.failed.length} failed.`
+            : `${message}: ${result.updated} applied.`,
+        );
+        await reloadLibrary();
+        clearSelection();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Batch action failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [clearSelection, reloadLibrary],
+  );
+
+  const selectedIds = useMemo(() => [...selection], [selection]);
 
   return (
-    <div className="mx-auto max-w-7xl p-5 sm:p-8">
+    <div className={`mx-auto max-w-7xl p-5 sm:p-8 ${selectionMode ? "pb-28" : ""}`}>
       <PageHeader title="Library">
         <span className="text-sm text-zinc-500">
           {visible.length} of {items.length} {items.length === 1 ? "title" : "titles"}
@@ -142,6 +245,15 @@ export function LibraryPage() {
             </span>
           )}
         </button>
+        {items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => (selectionActive ? clearSelection() : setSelectionActive(true))}
+            className="ml-auto rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-600"
+          >
+            {selectionActive ? "Cancel" : "Select"}
+          </button>
+        )}
       </div>
       {chips.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -165,7 +277,33 @@ export function LibraryPage() {
           </button>
         </div>
       )}
+      {notice && <p className="mb-4 text-sm text-amber-300">{notice}</p>}
       {error && <ErrorState message={error} />}
+      {selectionMode && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/40 bg-amber-400/5 px-3 py-2 text-sm">
+          <span className="font-medium text-amber-200">{selection.size} selected</span>
+          <button
+            type="button"
+            onClick={() => {
+              setSelection(selectAllIds(orderedIds));
+              setAnchor(null);
+            }}
+            className="text-zinc-300 hover:text-white"
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelection(invertSelection(selection, orderedIds))}
+            className="text-zinc-300 hover:text-white"
+          >
+            Invert
+          </button>
+          <button type="button" onClick={clearSelection} className="text-zinc-300 hover:text-white">
+            Clear
+          </button>
+        </div>
+      )}
       {loading ? (
         <LoadingState label="Loading library" />
       ) : items.length === 0 ? (
@@ -198,7 +336,14 @@ export function LibraryPage() {
       ) : (
         <div className={cardSizeClasses[view.cardSize]}>
           {visible.map((item) => (
-            <LibraryCard key={item.id} item={item} view={view} />
+            <LibraryCard
+              key={item.id}
+              item={item}
+              view={view}
+              selectionMode={selectionMode}
+              selected={selection.has(item.id)}
+              onSelect={(event) => handleSelect(item.id, event)}
+            />
           ))}
         </div>
       )}
@@ -210,26 +355,182 @@ export function LibraryPage() {
           onClose={() => setFiltersOpen(false)}
         />
       )}
+      {selectionMode && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-3">
+            <SelectionAction
+              icon={<BookCheck size={15} />}
+              label="Mark read"
+              disabled={busy || selection.size === 0}
+              onClick={() => void runBulk(() => api.bulkSetRead(selectedIds, true), "Marked read")}
+            />
+            <SelectionAction
+              icon={<BookX size={15} />}
+              label="Mark unread"
+              disabled={busy || selection.size === 0}
+              onClick={() =>
+                void runBulk(() => api.bulkSetRead(selectedIds, false), "Marked unread")
+              }
+            />
+            <SelectionAction
+              icon={<FolderPlus size={15} />}
+              label="Category"
+              disabled={busy || selection.size === 0}
+              onClick={() => setCategoryOpen(true)}
+            />
+            <SelectionAction
+              icon={<Download size={15} />}
+              label="Download unread"
+              disabled={busy || selection.size === 0}
+              onClick={() =>
+                void runBulk(() => api.bulkDownload(selectedIds, "unread"), "Queued downloads")
+              }
+            />
+            <SelectionAction
+              icon={<Trash2 size={15} />}
+              label="Remove"
+              danger
+              disabled={busy || selection.size === 0}
+              onClick={() =>
+                void runBulk(() => api.bulkRemove(selectedIds), "Removed from library")
+              }
+            />
+          </div>
+        </div>
+      )}
+      {categoryOpen && (
+        <Modal title="Change category" onClose={() => setCategoryOpen(false)}>
+          {categories.length === 0 ? (
+            <p className="text-sm text-zinc-400">
+              Create a category from a title's page before grouping titles.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {categories.map((category) => (
+                <li
+                  key={category.id}
+                  className="flex items-center justify-between rounded-lg border border-zinc-800 px-3 py-2 text-sm"
+                >
+                  <span>{category.name}</span>
+                  <span className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        void runBulk(
+                          () => api.bulkSetCategory(selectedIds, category.id, true),
+                          "Added to category",
+                        )
+                      }
+                      className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-semibold text-zinc-950 disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        void runBulk(
+                          () => api.bulkSetCategory(selectedIds, category.id, false),
+                          "Removed from category",
+                        )
+                      }
+                      className="rounded-lg border border-zinc-700 px-3 py-1 text-xs disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
 
-function LibraryCard({ item, view }: { item: LibraryManga; view: LibraryView }) {
+function SelectionAction({
+  icon,
+  label,
+  onClick,
+  disabled,
+  danger,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:opacity-40 ${
+        danger
+          ? "border-red-900 text-red-300 hover:bg-red-950/40"
+          : "border-zinc-700 text-zinc-200 hover:bg-zinc-800"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function LibraryCard({
+  item,
+  view,
+  selectionMode,
+  selected,
+  onSelect,
+}: {
+  item: LibraryManga;
+  view: LibraryView;
+  selectionMode: boolean;
+  selected: boolean;
+  onSelect: (event: MouseEvent) => void;
+}) {
   const progress =
     item.progress && item.progress.totalPages
       ? Math.round((item.progress.lastReadPage / item.progress.totalPages) * 100)
       : 0;
   const resume = item.progress?.lastReadChapterId;
   const mangaUrl = `/manga/${encodeURIComponent(item.id)}`;
+  const intercept = (event: MouseEvent) => {
+    if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
+      event.preventDefault();
+      onSelect(event);
+    }
+  };
   return (
-    <div className="group min-w-0">
+    <div className={`group min-w-0 ${selected ? "rounded-xl ring-2 ring-amber-400" : ""}`}>
       <div className="relative aspect-3/4 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-        <Link to={mangaUrl} aria-label={item.title} className="absolute inset-0 block">
+        <Link
+          to={mangaUrl}
+          aria-label={item.title}
+          className="absolute inset-0 block"
+          onClick={intercept}
+        >
           <CoverImg
             src={item.coverUrl}
             className="size-full object-cover transition duration-200 group-hover:scale-105"
           />
         </Link>
+        {selectionMode && (
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-2 top-2 grid size-6 place-items-center rounded-full border ${
+              selected
+                ? "border-amber-400 bg-amber-400 text-zinc-950"
+                : "border-zinc-400/80 bg-zinc-950/70 text-transparent"
+            }`}
+          >
+            <Check size={14} />
+          </span>
+        )}
         {view.unreadBadge && item.unreadChapters > 0 && (
           <span
             aria-label={`${item.unreadChapters} unread chapters`}
@@ -238,7 +539,7 @@ function LibraryCard({ item, view }: { item: LibraryManga; view: LibraryView }) 
             {item.unreadChapters}
           </span>
         )}
-        {view.continueButton && resume && (
+        {view.continueButton && resume && !selectionMode && (
           <Link
             to={`/reader/${encodeURIComponent(item.id)}/${encodeURIComponent(resume)}`}
             aria-label={`Continue ${item.title}`}
@@ -248,7 +549,7 @@ function LibraryCard({ item, view }: { item: LibraryManga; view: LibraryView }) 
           </Link>
         )}
       </div>
-      <Link to={mangaUrl}>
+      <Link to={mangaUrl} onClick={intercept}>
         <h2 className="mt-2 line-clamp-2 text-sm font-semibold group-hover:text-amber-300">
           {item.title}
         </h2>

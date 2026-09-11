@@ -154,6 +154,11 @@ func chapterIdentity(number *float64, language string) (string, bool) {
 // needs today.
 func (s *Server) mountLibrary(r chi.Router) {
 	r.Get("/library", s.listLibrary)
+	r.Post("/library/bulk/read", s.bulkSetRead)
+	r.Post("/library/bulk/library", s.bulkSetLibrary)
+	r.Post("/library/bulk/category", s.bulkSetCategory)
+	r.Post("/library/bulk/download", s.bulkDownload)
+	r.Delete("/library/bulk", s.bulkRemoveFromLibrary)
 	r.Get("/manga/{mangaID}", s.getManga)
 	r.Get("/manga/{mangaID}/cover", s.mangaCover)
 	r.Post("/manga/{mangaID}/library", s.addMangaByID)

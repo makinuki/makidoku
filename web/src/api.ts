@@ -1,5 +1,6 @@
 import type {
   Aggregate,
+  BulkResult,
   Category,
   DownloadSnapshot,
   LibraryManga,
@@ -76,6 +77,31 @@ export const api = {
   setCategory: (mangaId: string, category: number, enabled: boolean) =>
     request(`/api/manga/${idPath(mangaId)}/categories/${category}`, {
       method: enabled ? "POST" : "DELETE",
+    }),
+  bulkSetRead: (ids: string[], read: boolean) =>
+    request<BulkResult>("/api/library/bulk/read", {
+      method: "POST",
+      body: JSON.stringify({ ids, read }),
+    }),
+  bulkSetLibrary: (ids: string[], inLibrary: boolean) =>
+    request<BulkResult>("/api/library/bulk/library", {
+      method: "POST",
+      body: JSON.stringify({ ids, inLibrary }),
+    }),
+  bulkSetCategory: (ids: string[], categoryId: number, enabled: boolean) =>
+    request<BulkResult>("/api/library/bulk/category", {
+      method: "POST",
+      body: JSON.stringify({ ids, categoryId, enabled }),
+    }),
+  bulkDownload: (ids: string[], chapters: "unread" | "all") =>
+    request<BulkResult>("/api/library/bulk/download", {
+      method: "POST",
+      body: JSON.stringify({ ids, chapters }),
+    }),
+  bulkRemove: (ids: string[]) =>
+    request<BulkResult>("/api/library/bulk", {
+      method: "DELETE",
+      body: JSON.stringify({ ids }),
     }),
   history: () => request<HistoryEvent[]>("/api/history"),
   deleteHistoryEvent: (id: string) =>

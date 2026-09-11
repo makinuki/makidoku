@@ -7,6 +7,10 @@ import {
   libraryViewFromSettings,
   libraryViewSettings,
   naturalDirection,
+  invertSelection,
+  selectAllIds,
+  toggleRangeSelection,
+  toggleSelection,
   visibleLibrary,
   withoutFilter,
   type LibraryView,
@@ -184,5 +188,28 @@ describe("library view state", () => {
   it("starts text sorts ascending and everything else descending", () => {
     expect(naturalDirection("title")).toBe("asc");
     expect(naturalDirection("recent")).toBe("desc");
+  });
+});
+
+describe("library selection", () => {
+  it("toggles a single id on and off", () => {
+    const selected = toggleSelection(new Set<string>(), "a");
+    expect([...selected]).toEqual(["a"]);
+    expect([...toggleSelection(selected, "a")]).toEqual([]);
+  });
+
+  it("extends a range from the anchor within the visible order", () => {
+    const selected = toggleRangeSelection(new Set(["a"]), ["a", "b", "c", "d"], "a", "c");
+    expect([...selected].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("falls back to a toggle when the anchor is not visible", () => {
+    const selected = toggleRangeSelection(new Set<string>(), ["a", "b"], null, "b");
+    expect([...selected]).toEqual(["b"]);
+  });
+
+  it("inverts and selects within the visible list only", () => {
+    expect([...selectAllIds(["a", "b"])].sort()).toEqual(["a", "b"]);
+    expect([...invertSelection(new Set(["a", "hidden"]), ["a", "b"])].sort()).toEqual(["b"]);
   });
 });

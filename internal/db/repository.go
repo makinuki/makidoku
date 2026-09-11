@@ -837,6 +837,25 @@ func (r *Repository) ListChapters(mangaID string) ([]Chapter, error) {
 	return chapters, err
 }
 
+// BulkChapterIDs returns the chapter IDs of a title in reading order. With
+// unreadOnly set, chapters already marked read are omitted; a missing read
+// state counts as unread.
+func (r *Repository) BulkChapterIDs(mangaID string, unreadOnly bool) ([]string, error) {
+	query := `SELECT c.id FROM chapters c WHERE c.manga_id=? ORDER BY c.chapter_number IS NULL, c.chapter_number, c.id`
+	if unreadOnly {
+		query = `SELECT c.id FROM chapters c
+			LEFT JOIN chapter_read_state s ON s.chapter_id=c.id
+			WHERE c.manga_id=? AND COALESCE(s.read,0)=0
+			ORDER BY c.chapter_number IS NULL, c.chapter_number, c.id`
+	}
+	var ids []string
+	err := r.db.Select(&ids, query, mangaID)
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, err
+}
+
 func (r *Repository) NextChapterIDs(mangaID, chapterID string, limit int) ([]string, error) {
 	if limit <= 0 {
 		return []string{}, nil

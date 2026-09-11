@@ -314,3 +314,53 @@ export function withoutFilter(filters: LibraryFilters, chip: FilterChip): Librar
       return { ...filters, sources: filters.sources.filter((value) => value !== chip.value) };
   }
 }
+
+// Library selection helpers. Selection is a set of manga ids scoped to the
+// visible (filtered) list; a range selection extends from the last anchor
+// within that visible order.
+
+// toggleSelection adds or removes one id.
+export function toggleSelection(selection: Set<string>, id: string): Set<string> {
+  const next = new Set(selection);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
+
+// toggleRangeSelection adds every visible id between the anchor and the target,
+// inclusive. When either end is not in the visible order it falls back to a
+// plain toggle of the target.
+export function toggleRangeSelection(
+  selection: Set<string>,
+  orderedIds: string[],
+  anchorId: string | null,
+  targetId: string,
+): Set<string> {
+  const next = new Set(selection);
+  const from = anchorId ? orderedIds.indexOf(anchorId) : -1;
+  const to = orderedIds.indexOf(targetId);
+  if (from < 0 || to < 0) {
+    if (next.has(targetId)) next.delete(targetId);
+    else next.add(targetId);
+    return next;
+  }
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  for (let index = start; index <= end; index += 1) next.add(orderedIds[index]);
+  return next;
+}
+
+// selectAllIds selects every visible id.
+export function selectAllIds(visibleIds: string[]): Set<string> {
+  return new Set(visibleIds);
+}
+
+// invertSelection selects the visible ids that are not currently selected.
+// Ids selected outside the visible list are dropped.
+export function invertSelection(selection: Set<string>, visibleIds: string[]): Set<string> {
+  const next = new Set<string>();
+  for (const id of visibleIds) {
+    if (!selection.has(id)) next.add(id);
+  }
+  return next;
+}

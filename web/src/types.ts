@@ -1,4 +1,5 @@
 export type Category = { id: number; name: string; sortOrder: number };
+export type BulkResult = { updated: number; failed: { id: string; error: string }[] };
 export type Manga = {
   id: string;
   sourceId: string;

@@ -101,6 +101,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/health", s.health)
 		s.mountLibrary(api)
+		s.mountMetadata(api)
 		s.mountPrivacy(api)
 		s.mountTachibackup(api)
 		if s.settings != nil {

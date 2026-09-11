@@ -351,7 +351,10 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at,
+		m.custom_title,m.custom_artist,m.custom_author,m.custom_description,m.custom_genres,m.custom_status,m.custom_cover_url,
+		m.notes,m.memo,m.source_version,m.update_strategy,m.favorite_modified_at,m.initialized,m.excluded_scanlators,m.chapter_flags
+		FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +429,9 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 
 func (r *Repository) ListLibraryBySource(sourceID string) ([]Manga, error) {
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at,
+		m.custom_title,m.custom_artist,m.custom_author,m.custom_description,m.custom_genres,m.custom_status,m.custom_cover_url,
+		m.notes,m.memo,m.source_version,m.update_strategy,m.favorite_modified_at,m.initialized,m.excluded_scanlators,m.chapter_flags
 		FROM manga m WHERE m.in_library=1 AND m.source_id=? ORDER BY m.title`, strings.TrimSpace(sourceID))
 	if manga == nil {
 		manga = []Manga{}
@@ -691,7 +696,9 @@ func (r *Repository) GetManga(id string) (Manga, error) {
 	err := r.db.Get(&manga, `SELECT id, source_id, title,
 		alt_titles, description, authors, artists, genres, status, cover_url,
 		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, reader_mode, reader_direction, reader_fit, created_at, updated_at,
-		details_fetched_at
+		details_fetched_at,
+		custom_title, custom_artist, custom_author, custom_description, custom_genres, custom_status, custom_cover_url,
+		notes, memo, source_version, update_strategy, favorite_modified_at, initialized, excluded_scanlators, chapter_flags
 		FROM manga WHERE id = ?`, id)
 	return manga, err
 }

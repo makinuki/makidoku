@@ -177,13 +177,13 @@ func (r *Repository) GetMangaMetadata(mangaID string) (MangaMetadata, error) {
 // MangaCustomUpdate carries the per-field overrides of a title. A nil field is
 // left unchanged; an empty string clears the override.
 type MangaCustomUpdate struct {
-	Title       *string
-	Artist      *string
-	Author      *string
-	Description *string
-	Genres      *string
-	Status      *string
-	CoverURL    *string
+	Title       *string `json:"title"`
+	Artist      *string `json:"artist"`
+	Author      *string `json:"author"`
+	Description *string `json:"description"`
+	Genres      *string `json:"genres"`
+	Status      *string `json:"status"`
+	CoverURL    *string `json:"coverUrl"`
 }
 
 // UpdateMangaCustom applies a custom-info update and returns the stored title.

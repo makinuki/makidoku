@@ -275,9 +275,15 @@ export const api = {
     body.append("file", file);
     return request<TachibackupReport>("/api/backup/tachibackup/validate", { method: "POST", body });
   },
-  importTachibackup: (file: File, options: TachibackupOptions) => {
+  // input is either a File to upload or the uploadId returned by a prior
+  // validation, which avoids sending the backup twice.
+  importTachibackup: (input: File | string, options: TachibackupOptions) => {
     const body = new FormData();
-    body.append("file", file);
+    if (typeof input === "string") {
+      body.append("uploadId", input);
+    } else {
+      body.append("file", input);
+    }
     body.append("options", JSON.stringify(options));
     return request<TachibackupSummary>("/api/backup/tachibackup/import", { method: "POST", body });
   },

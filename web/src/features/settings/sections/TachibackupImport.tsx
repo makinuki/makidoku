@@ -15,6 +15,10 @@ export function TachibackupImport() {
   const [report, setReport] = useState<TachibackupReport | null>(null);
   const [mapping, setMapping] = useState<Record<number, string>>({});
   const [skipUnmatched, setSkipUnmatched] = useState(false);
+  const [skipOutOfLibrary, setSkipOutOfLibrary] = useState(false);
+  // The staging token returned by validation, so the import does not send the
+  // file a second time.
+  const [uploadId, setUploadId] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [summary, setSummary] = useState<TachibackupSummary | null>(null);
@@ -38,9 +42,11 @@ export function TachibackupImport() {
     setReport(null);
     setSummary(null);
     setFile(selected);
+    setUploadId(null);
     try {
       const result = await api.validateTachibackup(selected);
       setReport(result);
+      setUploadId(result.uploadId ?? null);
       const initial: Record<number, string> = {};
       for (const source of result.sources) {
         initial[source.backupSourceId] = source.matchedSourceId ?? "";
@@ -55,14 +61,19 @@ export function TachibackupImport() {
   };
 
   const runImport = async () => {
-    if (!file) return;
+    if (!uploadId && !file) return;
     setImporting(true);
     setError("");
     try {
-      const result = await api.importTachibackup(file, { sourceMap: mapping, skipUnmatched });
+      const result = await api.importTachibackup(uploadId ?? file!, {
+        sourceMap: mapping,
+        skipUnmatched,
+        skipOutOfLibrary,
+      });
       setSummary(result);
       setReport(null);
       setFile(null);
+      setUploadId(null);
       setStatus("Backup imported.");
       await reload();
     } catch (e) {
@@ -124,6 +135,12 @@ export function TachibackupImport() {
                         {source.name || `Source ${source.backupSourceId}`}
                       </b>
                       <small className="text-zinc-500">{source.mangaCount} titles</small>
+                      {source.suggestedName && (
+                        <small className="ml-2 text-amber-300">
+                          looks like {source.suggestedName}
+                          {source.detectedSite ? ` (${source.detectedSite})` : ""}
+                        </small>
+                      )}
                     </span>
                     <span className="flex items-center gap-2">
                       {!unmatched && source.match === "name" && (
@@ -167,6 +184,17 @@ export function TachibackupImport() {
             </label>
           )}
 
+          {report.outOfLibraryTitles > 0 && (
+            <label className="flex items-center gap-2 text-xs text-zinc-400">
+              <input
+                type="checkbox"
+                checked={skipOutOfLibrary}
+                onChange={(event) => setSkipOutOfLibrary(event.target.checked)}
+              />
+              Skip the {report.outOfLibraryTitles} titles outside the library
+            </label>
+          )}
+
           <button
             onClick={() => void runImport()}
             disabled={importing}
@@ -183,7 +211,9 @@ export function TachibackupImport() {
           Restored {summary.manga} titles, {summary.chapters} chapters and {summary.categories}{" "}
           categories. {summary.mergedManga} titles merged into existing entries,{" "}
           {summary.deferredManga} kept without a source, {summary.skippedManga} skipped.{" "}
-          {summary.tracking} tracker links restored, {summary.skippedTracking} skipped.
+          {summary.tracking} tracker links restored, {summary.skippedTracking} skipped.{" "}
+          {summary.outOfLibrary} titles outside the library, {summary.feeds} feeds,{" "}
+          {summary.savedSearches} saved searches and {summary.merges} merged sources restored.
         </p>
       )}
     </SettingsCard>

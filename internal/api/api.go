@@ -50,6 +50,9 @@ type Server struct {
 	// seriesURLLookups marks the titles whose series page URL lookup already
 	// ran, so a title the source cannot match is not searched on every read.
 	seriesURLLookups sync.Map
+	// dataDirOverride redirects locally staged artifacts away from the
+	// engine's data directory, which tests use to keep the working tree clean.
+	dataDirOverride string
 }
 
 // Lifetime returns the daemon run context when available, falling back to a

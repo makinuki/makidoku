@@ -21,9 +21,10 @@ func (s *Server) mountTachibackup(r chi.Router) {
 }
 
 // validateTachibackup decodes an upload and reports how its sources and titles
-// map onto the installed sources. It writes nothing.
+// map onto the installed sources. The upload is staged and its token returned
+// so the import step does not have to send the file a second time.
 func (s *Server) validateTachibackup(w http.ResponseWriter, r *http.Request) {
-	data, ok := readTachibackupUpload(w, r)
+	data, ok := s.readTachibackupUpload(w, r)
 	if !ok {
 		return
 	}
@@ -31,13 +32,21 @@ func (s *Server) validateTachibackup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, plan.Report)
+	uploadID, err := stageTachibackupUpload(s.dataDir(), data)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		tachibackup.Report
+		UploadID string `json:"uploadId"`
+	}{Report: plan.Report, UploadID: uploadID})
 }
 
 // importTachibackup applies an upload. The optional "options" form field is a
 // JSON object carrying the manual source mapping and the unmatched policy.
 func (s *Server) importTachibackup(w http.ResponseWriter, r *http.Request) {
-	data, ok := readTachibackupUpload(w, r)
+	data, ok := s.readTachibackupUpload(w, r)
 	if !ok {
 		return
 	}
@@ -85,13 +94,21 @@ func (s *Server) planTachibackup(w http.ResponseWriter, data []byte, options tac
 	return tachibackup.Build(document, installed, options), true
 }
 
-// readTachibackupUpload reads the "file" part of a multipart request. The
-// backup is small enough to hold in memory for the duration of one request.
-func readTachibackupUpload(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+// readTachibackupUpload reads a backup from the request body. The body carries
+// either the "file" part or an "uploadId" staged by a previous validation.
+func (s *Server) readTachibackupUpload(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxTachibackupBytes)
 	if err := r.ParseMultipartForm(maxTachibackupBytes); err != nil {
 		writeBadRequest(w, "could not read the upload: "+err.Error())
 		return nil, false
+	}
+	if token := strings.TrimSpace(r.FormValue("uploadId")); token != "" {
+		data, err := readStagedTachibackup(s.dataDir(), token)
+		if err != nil {
+			writeBadRequest(w, err.Error())
+			return nil, false
+		}
+		return data, true
 	}
 	file, _, err := r.FormFile("file")
 	if err != nil {

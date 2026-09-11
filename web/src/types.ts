@@ -271,10 +271,15 @@ export type TachibackupSourceReport = {
   matchedSourceName?: string;
   match?: string;
   deferred: boolean;
+  detectedSite?: string;
+  suggestedName?: string;
+  sampleTitles?: string[];
+  sampleURL?: string;
 };
 
 export type TachibackupTrackerReport = {
   syncId: number;
+  name?: string;
   trackerType?: string;
   supported: boolean;
   mangaCount: number;
@@ -286,11 +291,17 @@ export type TachibackupReport = {
   trackers: TachibackupTrackerReport[];
   unmatchedTitles: number;
   unsupportedTrackings: number;
+  outOfLibraryTitles: number;
+  preferences: number;
+  sourcePreferences: number;
+  extensionStores: number;
+  uploadId: string;
 };
 
 export type TachibackupOptions = {
   sourceMap?: Record<number, string>;
   skipUnmatched?: boolean;
+  skipOutOfLibrary?: boolean;
 };
 
 export type TachibackupSummary = {
@@ -299,10 +310,15 @@ export type TachibackupSummary = {
   mergedManga: number;
   deferredManga: number;
   skippedManga: number;
+  outOfLibrary: number;
   chapters: number;
   readChapters: number;
   history: number;
   readingSessions: number;
   tracking: number;
   skippedTracking: number;
+  feeds: number;
+  savedSearches: number;
+  merges: number;
+  metadata: number;
 };

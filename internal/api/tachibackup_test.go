@@ -82,9 +82,65 @@ func newBackupServer(t *testing.T) (*chi.Mux, *db.Repository) {
 	t.Cleanup(func() { _ = handle.Close() })
 	repo := db.NewRepository(handle)
 	server := NewTrackerServer(repo, nil, newFakeDownloads(), tracker.NewRegistry(repo))
+	server.dataDirOverride = t.TempDir()
 	router := chi.NewRouter()
 	server.Mount(router)
 	return router, repo
+}
+
+// A validation stages the upload and returns a token, so the import step can
+// run from the token alone instead of sending the file a second time.
+func TestTachibackupUploadStaging(t *testing.T) {
+	router, repo := newBackupServer(t)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, backupRequest(t, "/api/backup/tachibackup/validate", ""))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("validate status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	var report struct {
+		UploadID string `json:"uploadId"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.UploadID == "" {
+		t.Fatal("validate did not return an upload id")
+	}
+
+	importByID := func(uploadID string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		if err := writer.WriteField("uploadId", uploadID); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.WriteField("options", "{}"); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/backup/tachibackup/import", &body)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		out := httptest.NewRecorder()
+		router.ServeHTTP(out, request)
+		return out
+	}
+
+	out := importByID(report.UploadID)
+	if out.Code != http.StatusOK {
+		t.Fatalf("import status = %d body = %s", out.Code, out.Body.String())
+	}
+	var count int
+	if err := repo.DB().Get(&count, `SELECT COUNT(*) FROM manga`); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("manga rows = %d", count)
+	}
+	// The staged upload is consumed, so reusing the token fails.
+	if again := importByID(report.UploadID); again.Code != http.StatusBadRequest {
+		t.Fatalf("reused upload id status = %d body = %s", again.Code, again.Body.String())
+	}
 }
 
 func TestValidateTachibackupReportsSources(t *testing.T) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "./app/AppShell";
 import { BrowsePage } from "./features/browse/BrowsePage";
@@ -16,19 +16,32 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const routeLocation = useLocation();
+  // On the library itself the header action focuses the library filter box
+  // instead of opening a second search surface; elsewhere it opens the
+  // library-scoped quick switcher.
+  const openSearch = useCallback(() => {
+    if (routeLocation.pathname === "/" || routeLocation.pathname === "/library") {
+      const input = document.getElementById("library-search");
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        return;
+      }
+    }
+    setSearchOpen(true);
+  }, [routeLocation.pathname]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen(true);
+        openSearch();
       }
       if (event.key === "Escape") setSearchOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [openSearch]);
   return (
-    <AppShell onSearch={() => setSearchOpen(true)}>
+    <AppShell onSearch={openSearch}>
       <ErrorBoundary key={routeLocation.pathname}>
         <Routes>
           <Route path="/" element={<LibraryPage />} />

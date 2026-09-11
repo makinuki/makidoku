@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,9 @@ type Definition struct {
 	Default     string
 	Description string
 	Validate    func(any) error
+	// Hidden keeps view state that a screen owns out of the settings list
+	// while the value is still stored, validated and returned to clients.
+	Hidden bool
 }
 
 type Entry struct {
@@ -24,6 +28,7 @@ type Entry struct {
 	Default     string `json:"default"`
 	Type        string `json:"type"`
 	Description string `json:"description"`
+	Hidden      bool   `json:"hidden"`
 }
 
 type Service struct {
@@ -93,7 +98,7 @@ func (s *Service) List() ([]Entry, error) {
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, Entry{Key: definition.Key, Value: value, Default: definition.Default, Type: definition.Type, Description: definition.Description})
+		entries = append(entries, Entry{Key: definition.Key, Value: value, Default: definition.Default, Type: definition.Type, Description: definition.Description, Hidden: definition.Hidden})
 	}
 	return entries, nil
 }
@@ -193,6 +198,66 @@ func enum(values ...string) func(any) error {
 	}
 }
 
+func boolean(value any) error {
+	if _, ok := value.(bool); !ok {
+		return errors.New("value must be boolean")
+	}
+	return nil
+}
+
+// listOf accepts a comma-separated selection drawn from values. An empty
+// string is a valid selection and means nothing is selected.
+func listOf(values ...string) func(any) error {
+	allowed := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		allowed[value] = struct{}{}
+	}
+	return func(value any) error {
+		text, ok := value.(string)
+		if !ok {
+			return errors.New("value must be a string")
+		}
+		for _, item := range strings.Split(text, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if _, ok := allowed[item]; !ok {
+				return errors.New("value is not supported")
+			}
+		}
+		return nil
+	}
+}
+
+// identifierList accepts a comma-separated selection of record identifiers,
+// which are opaque to the settings layer and cannot be checked against a fixed
+// vocabulary.
+func identifierList() func(any) error {
+	return func(value any) error {
+		text, ok := value.(string)
+		if !ok {
+			return errors.New("value must be a string")
+		}
+		for _, item := range strings.Split(text, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			for _, char := range item {
+				valid := char == '-' || char == '_' ||
+					(char >= '0' && char <= '9') ||
+					(char >= 'a' && char <= 'z') ||
+					(char >= 'A' && char <= 'Z')
+				if !valid {
+					return errors.New("value must be a list of identifiers")
+				}
+			}
+		}
+		return nil
+	}
+}
+
 var definitionList = []Definition{
 	{Key: "appearance.date_format", Type: "string", Default: `"relative"`, Description: "Timestamp display format", Validate: enum("relative", "absolute")},
 	{Key: "library.update_interval", Type: "duration", Default: "86400000000000", Description: "Automatic library update interval in nanoseconds", Validate: number(0, 30*24*60*60*1e9)},
@@ -229,6 +294,16 @@ var definitionList = []Definition{
 	}},
 	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "Daemon log level", Validate: enum("debug", "info", "warn", "error")},
 	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Processed image cache retention in days", Validate: number(1, 3650)},
+	{Key: "library.view.sort", Type: "string", Default: `"recent"`, Description: "Library ordering", Validate: enum("recent", "title", "added", "last_read", "unread"), Hidden: true},
+	{Key: "library.view.sort_direction", Type: "string", Default: `"desc"`, Description: "Library ordering direction", Validate: enum("asc", "desc"), Hidden: true},
+	{Key: "library.view.card_size", Type: "string", Default: `"medium"`, Description: "Library card size", Validate: enum("small", "medium", "large"), Hidden: true},
+	{Key: "library.view.unread_badge", Type: "boolean", Default: "true", Description: "Show unread counts on library cards", Validate: boolean, Hidden: true},
+	{Key: "library.view.progress_bar", Type: "boolean", Default: "true", Description: "Show reading progress on library cards", Validate: boolean, Hidden: true},
+	{Key: "library.view.continue_button", Type: "boolean", Default: "true", Description: "Show the continue action on library cards", Validate: boolean, Hidden: true},
+	{Key: "library.view.category", Type: "number", Default: "0", Description: "Selected library category", Validate: number(0, 1e9), Hidden: true},
+	{Key: "library.view.filter_read_state", Type: "string", Default: `""`, Description: "Library read state filter", Validate: listOf("unread", "in_progress", "completed"), Hidden: true},
+	{Key: "library.view.filter_status", Type: "string", Default: `""`, Description: "Library publication status filter", Validate: listOf("ongoing", "completed", "hiatus", "cancelled", "unknown"), Hidden: true},
+	{Key: "library.view.filter_sources", Type: "string", Default: `""`, Description: "Library source filter", Validate: identifierList(), Hidden: true},
 }
 
 var definitions = func() map[string]Definition {

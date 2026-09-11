@@ -52,7 +52,9 @@ export function SettingsPage() {
       setCategories(groups);
       setTrackers(services);
       setSyncJobs(jobs.slice(0, 5));
-      setRuntimeSettings(persisted);
+      // View state owned by a screen is stored by the daemon but is not a
+      // user-editable value here.
+      setRuntimeSettings(persisted.filter((setting) => !setting.hidden));
       setReadingSeconds(stats.readingSeconds || 0);
       setTitleCount(stats.titleCount || 0);
       setChapterCount(stats.chapterCount || 0);

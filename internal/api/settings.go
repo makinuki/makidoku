@@ -17,6 +17,7 @@ type settingResponse struct {
 	Default     any    `json:"default"`
 	Type        string `json:"type"`
 	Description string `json:"description"`
+	Hidden      bool   `json:"hidden"`
 }
 
 func typedSetting(entry settings.Entry) (settingResponse, error) {
@@ -27,7 +28,7 @@ func typedSetting(entry settings.Entry) (settingResponse, error) {
 	if err := json.Unmarshal([]byte(entry.Default), &defaultValue); err != nil {
 		return settingResponse{}, err
 	}
-	return settingResponse{Key: entry.Key, Value: value, Default: defaultValue, Type: entry.Type, Description: entry.Description}, nil
+	return settingResponse{Key: entry.Key, Value: value, Default: defaultValue, Type: entry.Type, Description: entry.Description, Hidden: entry.Hidden}, nil
 }
 
 var errSettingMissing = errors.New("setting was not found after update")

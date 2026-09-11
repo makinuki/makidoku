@@ -2611,10 +2611,81 @@ describe("details page action feedback", () => {
   });
 });
 
+describe("library layout", () => {
+  it("filters the grid and stores the layout in the settings service", async () => {
+    window.history.pushState({}, "", "/");
+    const writes: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/health") return Response.json({ ok: true });
+        if (path.startsWith("/api/library")) {
+          return Response.json([
+            {
+              id: "alpha",
+              title: "Alpha",
+              coverUrl: "",
+              updatedAt: 3,
+              status: "ongoing",
+              sourceId: "source-one",
+              sourceName: "Source One",
+              categories: [],
+              unreadChapters: 4,
+            },
+            {
+              id: "beta",
+              title: "Beta",
+              coverUrl: "",
+              updatedAt: 1,
+              status: "completed",
+              sourceId: "source-one",
+              sourceName: "Source One",
+              categories: [],
+              unreadChapters: 0,
+            },
+          ]);
+        }
+        if (path.startsWith("/api/settings/") && init?.method === "PUT") {
+          writes.push({ url: path, body: String(init.body) });
+          return Response.json({});
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search your library"), {
+      target: { value: "alp" },
+    });
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+
+    expect(screen.getByLabelText("4 unread chapters")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Display" }));
+    fireEvent.click(screen.getByRole("switch", { name: /Unread badge/ }));
+    expect(screen.queryByLabelText("4 unread chapters")).not.toBeInTheDocument();
+    await waitFor(() => {
+      const write = writes.find(
+        (call) => decodeURIComponent(call.url) === "/api/settings/library.view.unread_badge",
+      );
+      expect(write).toBeTruthy();
+      expect(JSON.parse(write!.body)).toEqual({ value: false });
+    });
+  });
+});
+
 describe("search robustness", () => {
   it("debounces library search and drops stale responses", async () => {
     vi.useFakeTimers();
-    window.history.pushState({}, "", "/");
+    window.history.pushState({}, "", "/browse");
     const libraryCalls: string[] = [];
     let resolveInitial!: (value: Response) => void;
     vi.stubGlobal(
@@ -2624,7 +2695,7 @@ describe("search robustness", () => {
         if (path.startsWith("/api/library")) {
           libraryCalls.push(path);
           if (libraryCalls.length === 1) {
-            // The initial load stalls; a later query must still win.
+            // The opening empty query stalls; a later query must still win.
             return new Promise<Response>((resolve) => {
               resolveInitial = resolve;
             });
@@ -2642,7 +2713,6 @@ describe("search robustness", () => {
             ]),
           );
         }
-        if (path === "/api/categories") return Promise.resolve(Response.json([]));
         if (path === "/api/health") return Promise.resolve(Response.json({ ok: true }));
         return Promise.resolve(Response.json([]));
       }),
@@ -2653,6 +2723,10 @@ describe("search robustness", () => {
       </BrowserRouter>,
     );
 
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search library" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
@@ -2693,7 +2767,7 @@ describe("search robustness", () => {
   });
 
   it("reports library errors in global search", async () => {
-    window.history.pushState({}, "", "/");
+    window.history.pushState({}, "", "/browse");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -2710,7 +2784,7 @@ describe("search robustness", () => {
         <App />
       </BrowserRouter>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Search titles" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Search library" }));
     const input = await screen.findAllByPlaceholderText("Search your library");
     fireEvent.change(input[input.length - 1], { target: { value: "anything" } });
     expect((await screen.findAllByText("database busy")).length).toBeGreaterThanOrEqual(1);

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/makinuki/makidoku/internal/db"
@@ -31,5 +32,53 @@ func TestServiceUsesDefaultsAndValidatesWrites(t *testing.T) {
 	}
 	if err := service.Set("unknown.key", `true`); err == nil {
 		t.Fatal("accepted unknown setting")
+	}
+}
+
+// Library view state is stored and validated like any other setting, but the
+// library screen owns it, so it stays out of the settings list.
+func TestLibraryViewSettingsAreHiddenAndValidated(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "library-view.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	service := New(db.NewRepository(handle))
+
+	if err := service.Set("library.view.filter_status", `"ongoing,completed"`); err != nil {
+		t.Fatalf("store status filter: %v", err)
+	}
+	if err := service.Set("library.view.filter_status", `"ongoing,bogus"`); err == nil {
+		t.Fatal("accepted an unsupported status filter")
+	}
+	if err := service.Set("library.view.filter_sources", `"source-a,source_b"`); err != nil {
+		t.Fatalf("store source filter: %v", err)
+	}
+	if err := service.Set("library.view.filter_sources", `"source a"`); err == nil {
+		t.Fatal("accepted an invalid source filter")
+	}
+	if err := service.Set("library.view.card_size", `"huge"`); err == nil {
+		t.Fatal("accepted an unsupported card size")
+	}
+
+	entries, err := service.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden := 0
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Key, "library.view.") {
+			if entry.Hidden {
+				t.Fatalf("setting %s is hidden", entry.Key)
+			}
+			continue
+		}
+		hidden++
+		if !entry.Hidden {
+			t.Fatalf("view setting %s is not hidden", entry.Key)
+		}
+	}
+	if hidden != 10 {
+		t.Fatalf("hidden view settings = %d, want 10", hidden)
 	}
 }

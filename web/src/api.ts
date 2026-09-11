@@ -233,4 +233,7 @@ export type RuntimeSetting = {
   default: string | number | boolean;
   type: string;
   description: string;
+  // Hidden view state is stored by the daemon but owned by a screen, so the
+  // settings page leaves it out.
+  hidden?: boolean;
 };

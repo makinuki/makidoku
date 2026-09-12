@@ -102,6 +102,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   milliseconds, and the refresh path wrote it as written while every other
   stored timestamp is in seconds. The value is folded at the boundary and a
   migration normalizes the rows written before it.
+- Keep the locator a backup recorded beside the locator a source is read with.
+  A refresh can rewrite the latter after a source rotates its identifiers, and
+  a later import of the same backup still merges onto the same title and
+  chapter instead of creating a second link and a second row.
 
 ## [0.1.0] - 2026-08-26
 

@@ -233,7 +233,7 @@ func importManga(tx *sqlx.Tx, plan *Plan, manga *Manga, target importTarget, cat
 	chapterFlags := int64Value(int64(manga.ChapterFlags))
 
 	var mangaID string
-	err := tx.Get(&mangaID, `SELECT manga_id FROM manga_sources WHERE source_id=? AND source_manga_id=?`, sourceID, seriesID)
+	err := tx.Get(&mangaID, `SELECT manga_id FROM manga_sources WHERE source_id=? AND (source_manga_id=? OR imported_locator=?)`, sourceID, seriesID, seriesID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if mangaID, err = identity.New(); err != nil {
@@ -283,11 +283,28 @@ func importManga(tx *sqlx.Tx, plan *Plan, manga *Manga, target importTarget, cat
 	if primaryCount > 0 {
 		primary = 0
 	}
-	if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,is_primary,first_seen_at,last_seen_at)
-		VALUES(?,?,?,?,?,?,?)
-		ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`,
-		mangaID, sourceID, seriesID, optional(pageURL), primary, now, now); err != nil {
-		return fmt.Errorf("link manga source: %w", err)
+	// The recorded locator is kept beside the locator the source is read with.
+	// A refresh may rewrite the latter after a source rotates its identifiers,
+	// and a later import of the same backup then still matches the recorded
+	// form instead of creating a second link and a second title. The rewrite
+	// itself is left alone: the import never undoes a healed locator.
+	result, err := tx.Exec(`UPDATE manga_sources SET last_seen_at=?, url=COALESCE(NULLIF(?,''),url), imported_locator=COALESCE(imported_locator,?)
+		WHERE manga_id=? AND source_id=? AND (source_manga_id=? OR imported_locator=?)`,
+		now, optional(pageURL), seriesID, mangaID, sourceID, seriesID, seriesID)
+	if err != nil {
+		return fmt.Errorf("update manga source: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,imported_locator,is_primary,first_seen_at,last_seen_at)
+			VALUES(?,?,?,?,?,?,?,?)
+			ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at, imported_locator=COALESCE(manga_sources.imported_locator,excluded.imported_locator)`,
+			mangaID, sourceID, seriesID, optional(pageURL), seriesID, primary, now, now); err != nil {
+			return fmt.Errorf("link manga source: %w", err)
+		}
 	}
 	// The backup records category order on each title, not the category id.
 	// A title with no categories field carries no assignment.
@@ -331,7 +348,7 @@ func importChapters(tx *sqlx.Tx, manga *Manga, mangaID string, target importTarg
 			continue
 		}
 		var chapterID string
-		err := tx.Get(&chapterID, `SELECT chapter_id FROM chapter_sources WHERE source_id=? AND source_chapter_id=?`, sourceID, key)
+		err := tx.Get(&chapterID, `SELECT chapter_id FROM chapter_sources WHERE source_id=? AND (source_chapter_id=? OR imported_locator=?)`, sourceID, key, key)
 		if errors.Is(err, sql.ErrNoRows) {
 			if chapterID, err = identity.New(); err != nil {
 				return nil, err
@@ -388,6 +405,12 @@ func importChapters(tx *sqlx.Tx, manga *Manga, mangaID string, target importTarg
 				uploadedAt, uploadedAt, uploadedAt, uploadedAt, chapterID); err != nil {
 				return nil, fmt.Errorf("merge chapter: %w", err)
 			}
+		}
+		// The recorded locator is kept even when the row already existed under
+		// the locator a refresh rewrote it to, so the next import of the same
+		// backup still matches this chapter.
+		if _, err := tx.Exec(`UPDATE chapter_sources SET imported_locator=COALESCE(imported_locator,?) WHERE chapter_id=? AND source_id=?`, key, chapterID, sourceID); err != nil {
+			return nil, fmt.Errorf("record chapter locator: %w", err)
 		}
 		chapterIDs[key] = chapterID
 
@@ -704,10 +727,10 @@ func importMerges(tx *sqlx.Tx, plan *Plan, manga *Manga, mangaID string, now int
 		if sourceMangaID == "" {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,is_primary,first_seen_at,last_seen_at)
-			VALUES(?,?,?,?,0,?,?)
-			ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at, url=COALESCE(NULLIF(excluded.url,''),url)`,
-			mangaID, sourceID, sourceMangaID, optional(reference.MergeURL), now, now); err != nil {
+		if _, err := tx.Exec(`INSERT INTO manga_sources(manga_id,source_id,source_manga_id,url,imported_locator,is_primary,first_seen_at,last_seen_at)
+			VALUES(?,?,?,?,?,0,?,?)
+			ON CONFLICT(source_id,source_manga_id) DO UPDATE SET last_seen_at=excluded.last_seen_at, url=COALESCE(NULLIF(excluded.url,''),url), imported_locator=COALESCE(manga_sources.imported_locator,excluded.imported_locator)`,
+			mangaID, sourceID, sourceMangaID, optional(reference.MergeURL), sourceMangaID, now, now); err != nil {
 			return fmt.Errorf("link merged source: %w", err)
 		}
 		var existing string

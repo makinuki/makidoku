@@ -431,3 +431,55 @@ func TestImportMergesOntoExistingTitle(t *testing.T) {
 		t.Fatalf("merged manga = %+v", stored)
 	}
 }
+
+// A refresh may rewrite the locator a link is read with after a source rotates
+// its identifiers. Re-importing the same backup still merges onto the same
+// title and chapter, because the recorded locator is kept beside the current
+// one, and the import leaves the rewrite in place.
+func TestImportMatchesAfterALocatorRewrite(t *testing.T) {
+	repo := openTestDB(t)
+	backup := decodeFixture(t, fixture("MangaDex", 42, "https://mangadex.org/manga/sample-uuid", "https://mangadex.org/chapter/aaa", "https://uploads.mangadex.org/covers/x.jpg"))
+	plan := Build(backup, installedRefs(t, repo), Options{})
+	if _, err := Import(repo.DB(), plan); err != nil {
+		t.Fatal(err)
+	}
+	// The summary the host writes after it resolves both links through the
+	// plugin: the stored locators now carry the source own identifiers.
+	if _, err := repo.DB().Exec(`UPDATE manga_sources SET source_manga_id='sample-uuid'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB().Exec(`UPDATE chapter_sources SET source_chapter_id='chapter-aaa'`); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Import(repo.DB(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Manga != 1 || second.Chapters != 0 || second.MergedManga != 1 {
+		t.Fatalf("re-import after a rewrite = %+v", second)
+	}
+	var manga, chapters int
+	if err := repo.DB().Get(&manga, `SELECT COUNT(*) FROM manga`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB().Get(&chapters, `SELECT COUNT(*) FROM chapters`); err != nil {
+		t.Fatal(err)
+	}
+	if manga != 1 || chapters != 1 {
+		t.Fatalf("re-import after a rewrite created rows: manga=%d chapters=%d", manga, chapters)
+	}
+	var link string
+	if err := repo.DB().Get(&link, `SELECT source_manga_id FROM manga_sources`); err != nil {
+		t.Fatal(err)
+	}
+	if link != "sample-uuid" {
+		t.Fatalf("import undid the healed series locator: %q", link)
+	}
+	var recorded string
+	if err := repo.DB().Get(&recorded, `SELECT imported_locator FROM chapter_sources`); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != "https://mangadex.org/chapter/aaa" {
+		t.Fatalf("recorded chapter locator = %q", recorded)
+	}
+}

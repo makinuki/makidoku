@@ -118,6 +118,8 @@ export type Aggregate = {
   readingSeconds?: number;
   sourceName?: string;
   sourceUrl?: string;
+  // Present when a details refresh failed but the stored record was served.
+  refreshError?: string;
 };
 export type Recommendation = {
   remoteId: string;

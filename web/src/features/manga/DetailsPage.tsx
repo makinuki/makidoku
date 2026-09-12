@@ -358,6 +358,11 @@ export function DetailsPage() {
             Automatically download new chapters
           </button>
           {refreshError && <p className="mt-3 text-xs text-red-300">{refreshError}</p>}
+          {data.refreshError && (
+            <p role="status" className="mt-3 text-xs text-amber-300">
+              Showing saved details. The source could not be refreshed: {data.refreshError}
+            </p>
+          )}
           {actionError && <p className="mt-3 text-xs text-red-300">{actionError}</p>}
         </div>
       </section>

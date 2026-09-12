@@ -662,9 +662,19 @@ func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
 			writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
 			return
 		}
-		if aggregate, err = s.fetchAndStoreDetails(r, source); err != nil {
-			writeError(w, err)
-			return
+		refreshed, fetchErr := s.fetchAndStoreDetails(r, source)
+		if fetchErr != nil {
+			// A stored title keeps serving what it holds: a source that is
+			// unreachable, or that no longer recognises its locator, must not
+			// turn a library entry into an error page.
+			if len(aggregate.Chapters) == 0 {
+				writeError(w, fetchErr)
+				return
+			}
+			slog.Warn("details refresh failed, serving stored details", "manga", mangaID, "err", fetchErr)
+			aggregate.RefreshError = fetchErr.Error()
+		} else {
+			aggregate = refreshed
 		}
 	}
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)

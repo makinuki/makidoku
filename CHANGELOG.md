@@ -94,6 +94,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   name.identifier, then a title search. The first candidate the source answers
   is persisted, so a title imported from another application stops failing to
   open and its source link stops falling back to the site root.
+- Serve a title's stored details when an on-demand refresh fails, and report
+  the failure on the aggregate as `refreshError`. The details view shows a
+  non-blocking notice, so a source that is unreachable or still rejects its
+  locator does not turn an imported title into an error page.
 
 ## [0.1.0] - 2026-08-26
 

@@ -208,6 +208,9 @@ type MangaAggregate struct {
 	ReadingSeconds int64            `json:"readingSeconds"`
 	SourceName     string           `json:"sourceName,omitempty"`
 	SourceURL      string           `json:"sourceUrl,omitempty"`
+	// RefreshError carries a failed on-demand details refresh to the client
+	// while the stored aggregate is still served.
+	RefreshError string `json:"refreshError,omitempty"`
 }
 
 // MangaSource is an internal adapter record. It is never returned directly to

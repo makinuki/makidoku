@@ -83,6 +83,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   and language, then by number with title, then by title alone, and pairs only
   one-to-one matches so reading state, bookmarks, and downloads stay on one
   row.
+- Pair a stored chapter by chapter number and release group when a backup
+  records no language. The previous rung required the number, scanlator, and
+  language together, which can never match an imported row, so a source that
+  re-issued a chapter under a new locator gained a second row on every open.
+  Two release groups publishing the same number stay separate.
 
 ## [0.1.0] - 2026-08-26
 

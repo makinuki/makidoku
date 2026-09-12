@@ -104,14 +104,17 @@ func withDerivedChapterNumbers(mangaTitle string, chapters []engine.ChapterItem)
 //  2. the stored locator is the page URL the source publishes;
 //  3. the number with the scanlator and the language it appeared under,
 //     either of which may be absent;
-//  4. the number with the title it appeared under;
-//  5. the title alone, which is all an unnumbered extra or prologue carries.
+//  4. the number with the scanlator it appeared under, both present. This
+//     is the rung that pairs two release groups publishing the same
+//     chapter title, which the title rung cannot separate;
+//  5. the number with the title it appeared under;
+//  6. the title alone, which is all an unnumbered extra or prologue carries.
 //
 // Only one-to-one matches are paired. A key that fits more than one stored
 // chapter or more than one incoming chapter is skipped, because a chapter left
-// unlinked is better than reading state attached to the wrong one. No pass
-// requires a number to be present, and the title passes compare titles so an
-// unnumbered extra or prologue still matches the row it was recorded on.
+// unlinked is better than reading state attached to the wrong one. Every pass
+// but the title pass keys on the number, and the two title passes pair an
+// unnumbered extra or prologue on the title it was recorded under.
 func adoptedChapterIDs(before []db.Chapter, incoming []engine.ChapterItem) map[string]string {
 	passes := []struct {
 		stored func(db.Chapter) (string, bool)
@@ -133,6 +136,15 @@ func adoptedChapterIDs(before []db.Chapter, incoming []engine.ChapterItem) map[s
 			},
 			item: func(item engine.ChapterItem) (string, bool) {
 				return numberAttributesIdentity(item.Number, item.Scanlator, item.Language)
+			},
+			adopt: true,
+		},
+		{
+			stored: func(chapter db.Chapter) (string, bool) {
+				return numberScanlatorIdentity(chapter.ChapterNumber, textValue(chapter.Scanlator))
+			},
+			item: func(item engine.ChapterItem) (string, bool) {
+				return numberScanlatorIdentity(item.Number, item.Scanlator)
 			},
 			adopt: true,
 		},
@@ -232,6 +244,19 @@ func numberAttributesIdentity(number *float64, attributes ...string) (string, bo
 		key += "\x00" + normalizeText(attribute)
 	}
 	return key, true
+}
+
+// numberScanlatorIdentity keys a chapter by its number and the release group
+// that published it. Both have to be present, so a chapter without a
+// scanlator is never matched on its number alone. The language is absent on
+// purpose: a backup records none for its chapters, so a key carrying it can
+// never match an imported row.
+func numberScanlatorIdentity(number *float64, scanlator string) (string, bool) {
+	scanlator = normalizeText(scanlator)
+	if number == nil || scanlator == "" {
+		return "", false
+	}
+	return strconv.FormatFloat(*number, 'f', -1, 64) + "\x00" + scanlator, true
 }
 
 // numberTitleIdentity keys a chapter by its number and its title, both of

@@ -166,3 +166,43 @@ func TestAdoptedChapterIDsKeepsPinnedID(t *testing.T) {
 		t.Fatalf("exact id match produced %+v, want no re-point", adopted)
 	}
 }
+
+// A backup records no chapter language, so a stored row can only be paired
+// with a language-carrying source chapter on the number and the release group.
+// Two groups publishing the same number and title must still stay apart.
+func TestAdoptedChapterIDsPairsByNumberAndScanlator(t *testing.T) {
+	number := func(value float64) *float64 { return &value }
+	scanlator := func(value string) *string { return &value }
+	title := "Chapter 393"
+	before := []db.Chapter{
+		{ID: "ch-qi", SourceChapterID: `{"id":"40301","source":"user"}`, ChapterNumber: number(393), Title: &title, Scanlator: scanlator("QI Scans")},
+		{ID: "ch-hive", SourceChapterID: `{"id":"40302","source":"user"}`, ChapterNumber: number(393), Title: &title, Scanlator: scanlator("HiveToons")},
+	}
+	incoming := []engine.ChapterItem{
+		{ID: "user:40301", Number: number(393), Title: title, Scanlator: "QI Scans", Language: "en"},
+		{ID: "user:40302", Number: number(393), Title: title, Scanlator: "HiveToons", Language: "en"},
+	}
+	adopted := adoptedChapterIDs(before, incoming)
+	if adopted["user:40301"] != "ch-qi" || adopted["user:40302"] != "ch-hive" {
+		t.Fatalf("number and scanlator did not pair the rows: %+v", adopted)
+	}
+}
+
+// A number on its own is never an identity. Rows that share it but were
+// published by different groups are distinct chapters and must not merge.
+func TestAdoptedChapterIDsKeepsScanlatorsApart(t *testing.T) {
+	number := func(value float64) *float64 { return &value }
+	scanlator := func(value string) *string { return &value }
+	before := []db.Chapter{
+		{ID: "ch-blank", SourceChapterID: "old-blank", ChapterNumber: number(1), Scanlator: scanlator("\u200b")},
+		{ID: "ch-flame", SourceChapterID: "old-flame", ChapterNumber: number(1), Scanlator: scanlator("Flame Comics")},
+	}
+	incoming := []engine.ChapterItem{
+		{ID: "new-blank", Number: number(1), Scanlator: "\u200b", Language: "en"},
+		{ID: "new-flame", Number: number(1), Scanlator: "Flame Comics", Language: "en"},
+	}
+	adopted := adoptedChapterIDs(before, incoming)
+	if adopted["new-blank"] != "ch-blank" || adopted["new-flame"] != "ch-flame" || len(adopted) != 2 {
+		t.Fatalf("distinct release groups were not kept apart: %+v", adopted)
+	}
+}

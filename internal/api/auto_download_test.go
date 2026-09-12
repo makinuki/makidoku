@@ -206,3 +206,45 @@ func TestAdoptedChapterIDsKeepsScanlatorsApart(t *testing.T) {
 		t.Fatalf("distinct release groups were not kept apart: %+v", adopted)
 	}
 }
+
+// A backup records the site path, so the stored locator can end in the
+// identifier the source publishes even though neither the locator nor the page
+// URL is that identifier.
+func TestAdoptedChapterIDsUsesTrailingIdentifier(t *testing.T) {
+	number := func(value float64) *float64 { return &value }
+	id := "006f8bc3-0062-4c74-8d7b-f8d836603c13"
+	before := []db.Chapter{{ID: "ch-8", SourceChapterID: "/chapter/" + id, ChapterNumber: number(8)}}
+	incoming := []engine.ChapterItem{{
+		ID:       id,
+		URL:      "https://mangadex.org/chapter/" + id,
+		Number:   number(8),
+		Language: "en",
+	}}
+	adopted := adoptedChapterIDs(before, incoming)
+	if adopted[id] != "ch-8" {
+		t.Fatalf("trailing identifier did not pair the rows: %+v", adopted)
+	}
+}
+
+// The trailing token is the last path segment, and a bare number is the
+// chapter number rather than an identifier, so it is never a token.
+func TestIdentifierToken(t *testing.T) {
+	cases := map[string]string{
+		"/chapter/006f8bc3-0062-4c74-8d7b-f8d836603c13": "006f8bc3-0062-4c74-8d7b-f8d836603c13",
+		"/chapters/01J8Z9V4N6H7Q3K2M5P0R1S8TX":          "01J8Z9V4N6H7Q3K2M5P0R1S8TX",
+		"/series/example/chapter/1":                     "",
+		"/read/gist/abc/212/0":                          "",
+		"plain-id":                                      "plain-id",
+		"12":                                            "",
+		"":                                              "",
+	}
+	for input, want := range cases {
+		got, ok := identifierToken(input)
+		if want == "" && ok {
+			t.Fatalf("identifierToken(%q) = %q, want no token", input, got)
+		}
+		if want != "" && (!ok || got != want) {
+			t.Fatalf("identifierToken(%q) = %q (%v), want %q", input, got, ok, want)
+		}
+	}
+}

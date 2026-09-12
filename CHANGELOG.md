@@ -106,6 +106,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   A refresh can rewrite the latter after a source rotates its identifiers, and
   a later import of the same backup still merges onto the same title and
   chapter instead of creating a second link and a second row.
+- Pair a stored chapter whose locator ends in the identifier the source
+  publishes. A backup records the site path, so a stored `/chapter/<id>` names
+  the same chapter as the source id `<id>`. The ladder recognises that before
+  it falls back to the number and title matches, which keeps a chapter paired
+  even when the source publishes no title or release group for it.
 
 ## [0.1.0] - 2026-08-26
 

@@ -103,13 +103,16 @@ func withDerivedChapterNumbers(mangaTitle string, chapters []engine.ChapterItem)
 //  1. the stored locator is the chapter id the source publishes, which means
 //     the pair is already linked and nothing has to move;
 //  2. the stored locator is the page URL the source publishes;
-//  3. the number with the scanlator and the language it appeared under,
+//  3. the stored locator ends in the identifier the source publishes, which is
+//     the shape a backup writes when it records the site path (`/chapter/<id>`
+//     for an id of `<id>`);
+//  4. the number with the scanlator and the language it appeared under,
 //     either of which may be absent;
-//  4. the number with the scanlator it appeared under, both present. This
+//  5. the number with the scanlator it appeared under, both present. This
 //     is the rung that pairs two release groups publishing the same
 //     chapter title, which the title rung cannot separate;
-//  5. the number with the title it appeared under;
-//  6. the title alone, which is all an unnumbered extra or prologue carries.
+//  6. the number with the title it appeared under;
+//  7. the title alone, which is all an unnumbered extra or prologue carries.
 //
 // Only one-to-one matches are paired. A key that fits more than one stored
 // chapter or more than one incoming chapter is skipped, because a chapter left
@@ -129,6 +132,11 @@ func adoptedChapterIDs(before []db.Chapter, incoming []engine.ChapterItem) map[s
 		{
 			stored: func(chapter db.Chapter) (string, bool) { return locatorIdentity(chapter.SourceChapterID) },
 			item:   func(item engine.ChapterItem) (string, bool) { return locatorIdentity(item.URL) },
+			adopt:  true,
+		},
+		{
+			stored: func(chapter db.Chapter) (string, bool) { return identifierToken(chapter.SourceChapterID) },
+			item:   func(item engine.ChapterItem) (string, bool) { return identifierToken(item.ID) },
 			adopt:  true,
 		},
 		{
@@ -231,6 +239,24 @@ func oneToOnePairs(stored, pending map[int]bool, before []db.Chapter, incoming [
 func locatorIdentity(locator string) (string, bool) {
 	locator = strings.TrimSpace(locator)
 	return locator, locator != ""
+}
+
+// identifierToken reduces a chapter locator to the opaque identifier it ends
+// with: the last path segment, unless that segment is a bare number. A bare
+// number is the chapter number, which the number rungs already use, so pairing
+// on it would claim a chapter on evidence the ladder already has. A locator
+// that is itself a bare identifier is returned as written.
+func identifierToken(locator string) (string, bool) {
+	segment := lastPathSegment(locator)
+	if segment == "" {
+		return "", false
+	}
+	for _, character := range segment {
+		if character < '0' || character > '9' {
+			return segment, true
+		}
+	}
+	return "", false
 }
 
 // numberAttributesIdentity keys a chapter by its number together with the

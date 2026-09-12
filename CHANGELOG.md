@@ -68,6 +68,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   transfer now runs against its own budget and a small concurrency limit,
   finishes and caches even when the view changes, and every card requests its
   cover only when it nears the viewport.
+- Fix a source that stores a token or writes a log entry while a page list is
+  fetched. The host answers such a call with an empty payload instead of an
+  absent value, which a plugin build read as a missing string and reported as
+  a parsing failure, so the chapter would not open.
 
 ## [0.1.0] - 2026-08-26
 

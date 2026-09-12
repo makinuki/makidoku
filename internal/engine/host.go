@@ -51,7 +51,7 @@ func hostFunctions(sourceID string, fetcher *Fetcher, storage Storage) []extism.
 			if err := storage.Set(sourceID, entry.Key, entry.Value); err != nil {
 				panic("makinuki_storage_set: " + err.Error())
 			}
-			return 0
+			return voidOffset(p)
 		}),
 		offsetFunction("makinuki_log", func(ctx context.Context, p *extism.CurrentPlugin, input string) uint64 {
 			var entry LogEntry
@@ -69,7 +69,7 @@ func hostFunctions(sourceID string, fetcher *Fetcher, storage Storage) []extism.
 			default:
 				slog.Info("plugin log", "source", sourceID, "msg", entry.Message)
 			}
-			return 0
+			return voidOffset(p)
 		}),
 	}
 
@@ -134,6 +134,14 @@ func writeOffset(p *extism.CurrentPlugin, payload []byte) uint64 {
 		return 0
 	}
 	return offset
+}
+
+// voidOffset returns a valid memory offset for a host import the contract
+// declares void. Offset zero is reserved for an absent value, which PDKs map
+// to null, so a payload keeps plugin builds that read the offset
+// unconditionally working.
+func voidOffset(p *extism.CurrentPlugin) uint64 {
+	return writeOffset(p, []byte("null"))
 }
 
 func mustJSON(v any) []byte {

@@ -56,8 +56,8 @@ func installSource(t *testing.T, eng *Engine, id string) InstalledSource {
 	if err != nil {
 		t.Fatalf("install %s: %v", id, err)
 	}
-	if source.ID != id {
-		t.Fatalf("installed id = %s, want %s", source.ID, id)
+	if source.PluginKey != id {
+		t.Fatalf("installed plugin key = %s, want %s", source.PluginKey, id)
 	}
 	if source.ABIVersion != ABIVersion {
 		t.Fatalf("abi version = %d, want %d", source.ABIVersion, ABIVersion)
@@ -162,6 +162,43 @@ func TestSourcePipeline(t *testing.T) {
 		if page.IsScrambled && page.Metadata == nil {
 			t.Fatalf("page %d is scrambled without a tile map", i)
 		}
+	}
+}
+
+// TestSourcePipelineSurvivesVoidHostImports covers a source whose page path
+// persists a token through a void host import and then reads the return
+// offset. The host answers a void import with a payload rather than an absent
+// value, so a PDK that reads every return offset unconditionally still works.
+func TestSourcePipelineSurvivesVoidHostImports(t *testing.T) {
+	eng := liveEngine(t)
+	installSource(t, eng, "mangaball")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	const title = "Sawaranaide Kotesashi-kun"
+	results, err := eng.Search(ctx, "mangaball", SearchQuery{Query: title, Page: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results.Items) == 0 {
+		t.Fatalf("search for %q returned no items", title)
+	}
+
+	details, err := eng.Details(ctx, "mangaball", results.Items[0].ID)
+	if err != nil {
+		t.Fatalf("get details for %s: %v", results.Items[0].ID, err)
+	}
+	if len(details.Chapters) == 0 {
+		t.Fatalf("%q reported no chapters", details.Title)
+	}
+
+	pages, err := eng.Pages(ctx, "mangaball", details.Chapters[0].ID)
+	if err != nil {
+		t.Fatalf("get pages for chapter %s: %v", details.Chapters[0].ID, err)
+	}
+	if len(pages) == 0 {
+		t.Fatal("chapter reported no pages")
 	}
 }
 

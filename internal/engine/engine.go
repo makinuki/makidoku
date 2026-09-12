@@ -429,9 +429,14 @@ func (e *Engine) SubmitClearance(sourceID, cookie, userAgent string) error {
 // serves while its installation record exists: a removed source stops
 // answering even when an instance is still cached.
 func (e *Engine) plugin(ctx context.Context, sourceID string) (*loadedPlugin, error) {
-	if _, err := e.row(sourceID); err != nil {
+	row, err := e.row(sourceID)
+	if err != nil {
 		return nil, err
 	}
+	// The installation id is the canonical namespace for the instance cache,
+	// the per-source storage, and the clearance record, so a caller that names
+	// a source by its plugin key resolves to the same instance.
+	sourceID = row.ID
 	for {
 		e.mu.Lock()
 		if p, ok := e.plugins[sourceID]; ok {

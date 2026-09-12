@@ -72,6 +72,8 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   fetched. The host answers such a call with an empty payload instead of an
   absent value, which a plugin build read as a missing string and reported as
   a parsing failure, so the chapter would not open.
+- Load a source under its installation id even when the caller names it by its
+  plugin key, so per-source storage and clearance stay with one identity.
 
 ## [0.1.0] - 2026-08-26
 

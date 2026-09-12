@@ -492,7 +492,7 @@ func (s *Server) searchSeriesURL(ctx context.Context, title string, source db.Ma
 		return ""
 	}
 	for _, item := range result.Items {
-		if item.ID != source.SourceMangaID || item.URL == "" {
+		if item.URL == "" || !sourceURLMatches(source.SourceMangaID, item.ID, item.URL) {
 			continue
 		}
 		if err := s.repo.SetSourceURL(source.MangaID, source.SourceID, item.URL); err != nil {
@@ -501,6 +501,16 @@ func (s *Server) searchSeriesURL(ctx context.Context, title string, source db.Ma
 		return item.URL
 	}
 	return ""
+}
+
+// sourceURLMatches reports whether a search hit is the title a stored link
+// names. A stored locator and a published identifier can be two spellings of
+// one identity (a recorded `/manga/<id>` path against the published `<id>`), so
+// the comparison accepts the last path segment of either side as well as the
+// values themselves.
+func sourceURLMatches(storedLocator string, identifiers ...string) bool {
+	tokens := []string{strings.TrimSpace(storedLocator), lastPathSegment(storedLocator)}
+	return matchesAnyToken(tokens, identifiers...)
 }
 
 // seriesResolution is the answer of the series resolution ladder for one stored
@@ -544,6 +554,14 @@ func (s *Server) resolveSeries(ctx context.Context, source db.MangaSource) (seri
 	recorded := strings.TrimSpace(source.SourceMangaID)
 	details, err := s.engine.Details(ctx, source.SourceID, recorded)
 	if err == nil {
+		// A source that accepts the recorded locator still declares the
+		// identity it publishes. That declaration is the value later reads and
+		// any future release are addressed with, so a differing one is
+		// recorded and the legacy spelling is left behind. An empty page keeps
+		// the stored one.
+		if declared := strings.TrimSpace(details.ID); declared != "" && declared != recorded {
+			return s.acceptSeries(source, declared, "", details), nil
+		}
 		return seriesResolution{locator: recorded, details: details, persisted: true}, nil
 	}
 	for _, candidate := range seriesCandidates(recorded, source.URL) {

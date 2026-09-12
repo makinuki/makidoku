@@ -68,6 +68,27 @@ func TestMatchesAnyToken(t *testing.T) {
 	}
 }
 
+// A stored link and a published identifier can be two spellings of one
+// identity, so the page url lookup accepts the last path segment of either.
+func TestSourceURLMatches(t *testing.T) {
+	cases := []struct {
+		name        string
+		stored      string
+		identifiers []string
+		want        bool
+	}{
+		{"recorded path against the published id", "/manga/7c062006-5ea7-4fbc-a39d-23e3f66420e4", []string{"7c062006-5ea7-4fbc-a39d-23e3f66420e4", "https://mangadex.org/title/7c062006-5ea7-4fbc-a39d-23e3f66420e4"}, true},
+		{"the recorded value itself", "/series/nano-machine", []string{"/series/nano-machine"}, true},
+		{"a different title", "/series/nano-machine", []string{"/series/other", "https://asurascans.com/comics/other"}, false},
+		{"a bare stored identifier", "5k9q", []string{"5k9q"}, true},
+	}
+	for _, testCase := range cases {
+		if got := sourceURLMatches(testCase.stored, testCase.identifiers...); got != testCase.want {
+			t.Fatalf("%s: sourceURLMatches(%q, %q) = %v, want %v", testCase.name, testCase.stored, testCase.identifiers, got, testCase.want)
+		}
+	}
+}
+
 func equalStrings(left, right []string) bool {
 	if len(left) != len(right) {
 		return false

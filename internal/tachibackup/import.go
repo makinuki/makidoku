@@ -38,12 +38,10 @@ type Summary struct {
 }
 
 // importTarget is the resolved destination for one title's writes: the local
-// source, the translation rules its identifiers follow, and its front page.
-// A deferred target has no installed source, so identifiers stay verbatim.
+// source that recorded the identifiers, or a placeholder when the source is
+// not installed.
 type importTarget struct {
 	sourceID string
-	kind     keyKind
-	baseURL  string
 	deferred bool
 }
 
@@ -107,7 +105,7 @@ func ImportWithProgress(db *sqlx.DB, plan *Plan, progress ProgressFunc) (Summary
 			}
 			summary.OutOfLibrary++
 		}
-		target := importTarget{sourceID: resolved.ref.ID, kind: resolved.kind, baseURL: resolved.ref.BaseURL}
+		target := importTarget{sourceID: resolved.ref.ID}
 		if resolved.deferred {
 			target.sourceID, err = placeholderSource(tx, manga.Source, resolved.name)
 			if err != nil {
@@ -192,15 +190,11 @@ func importManga(tx *sqlx.Tx, plan *Plan, manga *Manga, target importTarget, cat
 	if title == "" {
 		title = manga.URL
 	}
-	// The recorded locator belongs to the writing application; an installed
-	// source expects its own identifier. A deferred title keeps the recorded
-	// locator because there is nothing to translate it for yet.
-	seriesID := manga.URL
-	pageURL := strings.TrimSpace(manga.URL)
-	if !target.deferred {
-		seriesID = seriesKey(target.kind, manga.URL)
-		pageURL = seriesPageURL(target.kind, manga.URL, seriesID, target.baseURL)
-	}
+	// The recorded locator is stored as written, so the source that recorded
+	// it receives a value it can read. The page is stored only when the record
+	// already carried an absolute URL.
+	seriesID := seriesLocator(manga.URL)
+	pageURL := seriesPageURL(manga.URL)
 	sourceID := target.sourceID
 	mode, direction, fit := readerOverrides(manga)
 	now := time.Now().Unix()
@@ -307,7 +301,7 @@ func importManga(tx *sqlx.Tx, plan *Plan, manga *Manga, target importTarget, cat
 		}
 	}
 
-	chapterIDs, err := importChapters(tx, manga, mangaID, target, seriesID, now, summary)
+	chapterIDs, err := importChapters(tx, manga, mangaID, target, now, summary)
 	if err != nil {
 		return err
 	}
@@ -327,19 +321,14 @@ func importManga(tx *sqlx.Tx, plan *Plan, manga *Manga, target importTarget, cat
 }
 
 // importChapters writes the chapters a title carries and returns a lookup from
-// the recorded chapter locator to the local chapter id. seriesID is the
-// translated series identifier, which a source-specific chapter key may embed.
-func importChapters(tx *sqlx.Tx, manga *Manga, mangaID string, target importTarget, seriesID string, now int64, summary *Summary) (map[string]string, error) {
+// the recorded chapter locator to the local chapter id.
+func importChapters(tx *sqlx.Tx, manga *Manga, mangaID string, target importTarget, now int64, summary *Summary) (map[string]string, error) {
 	chapterIDs := map[string]string{}
 	sourceID := target.sourceID
 	for _, chapter := range manga.Chapters {
-		url := strings.TrimSpace(chapter.URL)
-		if url == "" {
+		key := chapterLocator(chapter.URL)
+		if key == "" {
 			continue
-		}
-		key := url
-		if !target.deferred {
-			key = chapterKey(target.kind, chapter.URL, seriesID, target.baseURL)
 		}
 		var chapterID string
 		err := tx.Get(&chapterID, `SELECT chapter_id FROM chapter_sources WHERE source_id=? AND source_chapter_id=?`, sourceID, key)
@@ -400,13 +389,13 @@ func importChapters(tx *sqlx.Tx, manga *Manga, mangaID string, target importTarg
 				return nil, fmt.Errorf("merge chapter: %w", err)
 			}
 		}
-		chapterIDs[url] = chapterID
+		chapterIDs[key] = chapterID
 
 		if !chapter.Read {
 			continue
 		}
 		var readAt *int64
-		if stamp := historyStamp(manga, url); stamp > 0 {
+		if stamp := historyStamp(manga, key); stamp > 0 {
 			readAt = &stamp
 		}
 		if _, err := tx.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at)

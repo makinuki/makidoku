@@ -84,7 +84,6 @@ type Options struct {
 type resolvedSource struct {
 	name     string
 	ref      SourceRef
-	kind     keyKind
 	match    string
 	manga    int
 	deferred bool
@@ -175,7 +174,6 @@ func Build(backup *Backup, installed []SourceRef, options Options) *Plan {
 		} else {
 			resolved.deferred, resolved.match = true, "unmatched"
 		}
-		resolved.kind = keyKindFor(resolved.ref.Name, resolved.ref.PluginKey, resolved.name)
 		if resolved.deferred {
 			resolved.skip = options.SkipUnmatched
 			plan.UnmatchedTitles += resolved.manga

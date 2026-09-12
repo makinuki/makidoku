@@ -2,56 +2,59 @@ package tachibackup
 
 import "testing"
 
-// TestSourceKeyTranslation covers the locator shapes the writing application
-// records for the sources MakiDoku ships today.
-func TestSourceKeyTranslation(t *testing.T) {
-	const mangadexBase = "https://mangadex.org"
-	const asuraBase = "https://asurascans.com"
-	series := []struct {
-		name     string
-		kind     keyKind
-		raw      string
-		wantKey  string
-		wantPage string
+// TestRecordedLocatorsAreStoredVerbatim covers the locator shapes a backup
+// records. Every shape is stored as written, because only the source that
+// recorded a locator knows how to read it, and truncating one to its last path
+// segment loses the part that identifies the series.
+func TestRecordedLocatorsAreStoredVerbatim(t *testing.T) {
+	locators := []struct {
+		name string
+		raw  string
+		want string
 	}{
-		{"mangadex relative", keyMangaDex, "/manga/7c062006-5ea7-4fbc-a39d-23e3f66420e4", "7c062006-5ea7-4fbc-a39d-23e3f66420e4", mangadexBase + "/title/7c062006-5ea7-4fbc-a39d-23e3f66420e4"},
-		{"mangadex title path", keyMangaDex, "https://mangadex.org/title/abc", "abc", mangadexBase + "/title/abc"},
-		{"asura series path", keyAsuraScans, "/series/nano-machine", "nano-machine", asuraBase + "/comics/nano-machine"},
-		{"asura comics path", keyAsuraScans, "https://asurascans.com/comics/nano-machine", "nano-machine", asuraBase + "/comics/nano-machine"},
-		{"default opaque id", keyDefault, "34CF9JIVL41V46D32DDAR1NU25", "34CF9JIVL41V46D32DDAR1NU25", "34CF9JIVL41V46D32DDAR1NU25"},
-		{"default short path", keyDefault, "/5yrz", "5yrz", "https://mangapark.net/5yrz"},
-		{"default absolute", keyDefault, "https://weebcentral.com/series/01JX/Return-of-the-Hound", "Return-of-the-Hound", "https://weebcentral.com/series/01JX/Return-of-the-Hound"},
-		{"default strips fragment", keyDefault, "/title/94073-en-name#94073", "94073-en-name", "https://mangapark.net/title/94073-en-name"},
+		{"plugin native pair", "nh6Ii/jWohx", "nh6Ii/jWohx"},
+		{"root relative path", "/series/nano-machine/chapter/304", "/series/nano-machine/chapter/304"},
+		{"relative path", "title/5yrz-jungle-juice/11301306-chapter-222", "title/5yrz-jungle-juice/11301306-chapter-222"},
+		{"opaque identifier", "69a873c0e8ded0ca88fc5498", "69a873c0e8ded0ca88fc5498"},
+		{"json identifier", `{"id":"46645","source":"scraper","isVolume":false}`, `{"id":"46645","source":"scraper","isVolume":false}`},
+		{"paired identifier", "34CF9JIVL41V46D32DDAR1NU25;3ACI98IVLC1X46F3KDDA61QUI5;12", "34CF9JIVL41V46D32DDAR1NU25;3ACI98IVLC1X46F3KDDA61QUI5;12"},
+		{"fragment", "/series/confinement-king/chapter-33#13559", "/series/confinement-king/chapter-33#13559"},
+		{"query", "/Comic/Invincible/Issue-144?id=130552", "/Comic/Invincible/Issue-144?id=130552"},
+		{"surrounding space", "  /chapter/1516875  ", "/chapter/1516875"},
+		{"empty", "   ", ""},
 	}
-	base := map[keyKind]string{keyMangaDex: mangadexBase, keyAsuraScans: asuraBase, keyDefault: "https://mangapark.net"}
-	for _, test := range series {
+	for _, test := range locators {
 		t.Run(test.name, func(t *testing.T) {
-			key := seriesKey(test.kind, test.raw)
-			if key != test.wantKey {
-				t.Fatalf("seriesKey = %q, want %q", key, test.wantKey)
+			if got := seriesLocator(test.raw); got != test.want {
+				t.Fatalf("seriesLocator = %q, want %q", got, test.want)
 			}
-			if got := seriesPageURL(test.kind, test.raw, key, base[test.kind]); got != test.wantPage {
-				t.Fatalf("seriesPageURL = %q, want %q", got, test.wantPage)
+			if got := chapterLocator(test.raw); got != test.want {
+				t.Fatalf("chapterLocator = %q, want %q", got, test.want)
 			}
 		})
 	}
+}
 
-	chapters := []struct {
-		name    string
-		kind    keyKind
-		raw     string
-		series  string
-		wantKey string
+// TestSeriesPageURLCarriesOnlyAnAbsoluteURL covers the page a title opens on
+// the source site. A relative path or an opaque identifier is not a page of
+// its own, so the page is left unset and resolved from the source when the
+// title is first opened.
+func TestSeriesPageURLCarriesOnlyAnAbsoluteURL(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
 	}{
-		{"mangadex relative", keyMangaDex, "/chapter/69f53703-541c-436f-a3f7-d00482a2bc5e", "series-id", "69f53703-541c-436f-a3f7-d00482a2bc5e"},
-		{"mangadex absolute", keyMangaDex, "https://mangadex.org/chapter/aaa", "series-id", "aaa"},
-		{"asura rebuilds the page url", keyAsuraScans, "/series/nano-machine/chapter/304", "nano-machine", asuraBase + "/comics/nano-machine/chapter/304"},
-		{"default last segment", keyDefault, "title/5yrz-jungle-juice/11301306-chapter-222", "5yrz", "11301306-chapter-222"},
+		{"absolute", "https://weebcentral.com/series/01JX/Return-of-the-Hound", "https://weebcentral.com/series/01JX/Return-of-the-Hound"},
+		{"root relative path", "/series/nano-machine", ""},
+		{"relative path", "title/5yrz-jungle-juice", ""},
+		{"opaque identifier", "nh6Ii", ""},
+		{"empty", "", ""},
 	}
-	for _, test := range chapters {
+	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if got := chapterKey(test.kind, test.raw, test.series, base[test.kind]); got != test.wantKey {
-				t.Fatalf("chapterKey = %q, want %q", got, test.wantKey)
+			if got := seriesPageURL(test.raw); got != test.want {
+				t.Fatalf("seriesPageURL = %q, want %q", got, test.want)
 			}
 		})
 	}
@@ -140,23 +143,23 @@ func TestImportCategoryOrderAndOutOfLibrary(t *testing.T) {
 		t.Fatalf("category assignments = %d, want 2", assigned)
 	}
 	var key, page string
-	if err := repo.DB().Get(&key, `SELECT source_manga_id FROM manga_sources WHERE source_id='mangadex' AND url LIKE '%library-uuid'`); err != nil {
+	if err := repo.DB().Get(&key, `SELECT source_manga_id FROM manga_sources WHERE source_id='mangadex' AND source_manga_id LIKE '%library-uuid'`); err != nil {
 		t.Fatal(err)
 	}
-	if key != "library-uuid" {
+	if key != "/manga/library-uuid" {
 		t.Fatalf("series key = %q", key)
 	}
-	if err := repo.DB().Get(&page, `SELECT url FROM manga_sources WHERE source_manga_id='library-uuid'`); err != nil {
+	if err := repo.DB().Get(&page, `SELECT COALESCE(url,'') FROM manga_sources WHERE source_manga_id='/manga/library-uuid'`); err != nil {
 		t.Fatal(err)
 	}
-	if page != "https://mangadex.org/title/library-uuid" {
-		t.Fatalf("series page = %q", page)
+	if page != "" {
+		t.Fatalf("series page = %q, want empty for a relative recorded locator", page)
 	}
 	var chapterKey string
 	if err := repo.DB().Get(&chapterKey, `SELECT source_chapter_id FROM chapter_sources WHERE source_id='mangadex'`); err != nil {
 		t.Fatal(err)
 	}
-	if chapterKey != "lib-chapter" && chapterKey != "loose-chapter" {
+	if chapterKey != "/chapter/lib-chapter" && chapterKey != "/chapter/loose-chapter" {
 		t.Fatalf("chapter key = %q", chapterKey)
 	}
 

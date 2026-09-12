@@ -5,105 +5,34 @@ import (
 	"strings"
 )
 
-// keyKind selects the URL translation a matched source uses. A backup records
-// the series and chapter locators of the writing application, while an
-// installed source expects its own identifier, so the importer translates one
-// into the other.
-type keyKind int
-
-const (
-	keyDefault keyKind = iota
-	keyMangaDex
-	keyAsuraScans
-)
-
-// sourceKeyKinds maps a normalised source name or plugin key onto its
-// translation rules. Every other source uses keyDefault.
-var sourceKeyKinds = map[string]keyKind{
-	"mangadex":   keyMangaDex,
-	"asurascans": keyAsuraScans,
-	"asura":      keyAsuraScans,
-	"asuracomic": keyAsuraScans,
+// seriesLocator returns the series locator a backup recorded, unchanged. The
+// recorded value is the writing application's own identifier for the series,
+// and only the source that recorded it knows how to read it, so the importer
+// stores it as written instead of translating it.
+func seriesLocator(raw string) string {
+	return strings.TrimSpace(raw)
 }
 
-// keyKindFor resolves the translation rules for an installed source from its
-// name and plugin key. An unknown source falls back to the default rules.
-func keyKindFor(names ...string) keyKind {
-	for _, name := range names {
-		if kind, ok := sourceKeyKinds[normalizeName(name)]; ok {
-			return kind
-		}
-	}
-	return keyDefault
+// chapterLocator returns the chapter locator a backup recorded, unchanged.
+func chapterLocator(raw string) string {
+	return strings.TrimSpace(raw)
 }
 
-// seriesKey derives the identifier an installed source expects for a series
-// from the series locator a backup carries. The second result reports whether
-// a known rule matched; an unmatched shape still yields a usable key through
-// the default rule.
-func seriesKey(kind keyKind, raw string) string {
-	segments := pathSegments(raw)
-	switch kind {
-	case keyMangaDex:
-		if value := segmentAfter(segments, "manga", "title"); value != "" {
-			return value
-		}
-	case keyAsuraScans:
-		if value := segmentAfter(segments, "series", "comics"); value != "" {
-			return value
-		}
-	}
-	return lastSegment(raw, segments)
-}
-
-// chapterKey derives the identifier an installed source expects for a chapter.
-// seriesID is the translated series identifier, which the Asura template
-// embeds, and baseURL is the installed source's front page.
-func chapterKey(kind keyKind, raw, seriesID, baseURL string) string {
-	segments := pathSegments(raw)
-	switch kind {
-	case keyMangaDex:
-		if value := segmentAfter(segments, "chapter"); value != "" {
-			return value
-		}
-	case keyAsuraScans:
-		number := segmentAfter(segments, "chapter")
-		if number == "" {
-			number = lastSegment(raw, segments)
-		}
-		if base := strings.TrimRight(strings.TrimSpace(baseURL), "/"); base != "" && seriesID != "" && number != "" {
-			return base + "/comics/" + seriesID + "/chapter/" + number
-		}
-	}
-	return lastSegment(raw, segments)
-}
-
-// seriesPageURL returns the absolute series page for a title. An installed
-// source's own template wins because the recorded path shape may be stale; a
-// value that cannot be rebuilt is returned unchanged.
-func seriesPageURL(kind keyKind, raw, seriesID, baseURL string) string {
+// seriesPageURL returns the series page a backup recorded, and an empty string
+// when the recorded locator is not already an absolute URL. A relative path or
+// an opaque identifier is not a page of its own once it is separated from the
+// site it was recorded on, so the page is resolved from the source the first
+// time the title is opened.
+func seriesPageURL(raw string) string {
 	value := strings.TrimSpace(raw)
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	switch kind {
-	case keyMangaDex:
-		if base != "" && seriesID != "" {
-			return base + "/title/" + seriesID
-		}
-	case keyAsuraScans:
-		if base != "" && seriesID != "" {
-			return base + "/comics/" + seriesID
-		}
-	default:
-		if parsed, err := url.Parse(value); err == nil && parsed.IsAbs() {
-			return parsed.String()
-		}
-		// Only a value shaped like a path can be rebased; an opaque identifier
-		// has no page on its own.
-		if path := pathOnly(value); base != "" && strings.HasPrefix(path, "/") {
-			return base + path
-		}
+	if value == "" {
+		return ""
 	}
-	return value
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() {
+		return ""
+	}
+	return parsed.String()
 }
 
 // pathSegments returns the non-empty path segments of a backup locator. A
@@ -134,26 +63,4 @@ func pathOnly(raw string) string {
 		return value[:index]
 	}
 	return value
-}
-
-// segmentAfter returns the segment that follows the first segment equal to one
-// of keys, ignoring case.
-func segmentAfter(segments []string, keys ...string) string {
-	for index, segment := range segments {
-		for _, key := range keys {
-			if strings.EqualFold(segment, key) && index+1 < len(segments) {
-				return segments[index+1]
-			}
-		}
-	}
-	return ""
-}
-
-// lastSegment returns the final path segment, falling back to the raw value
-// when the locator carries no path.
-func lastSegment(raw string, segments []string) string {
-	if len(segments) > 0 {
-		return segments[len(segments)-1]
-	}
-	return strings.TrimSpace(raw)
 }

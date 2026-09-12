@@ -74,6 +74,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   a parsing failure, so the chapter would not open.
 - Load a source under its installation id even when the caller names it by its
   plugin key, so per-source storage and clearance stay with one identity.
+- Import a backup's source identifiers exactly as recorded. A series or chapter
+  locator is stored as the app that wrote the backup recorded it, so an
+  installed source reads the value it knows, and a recorded page is kept only
+  when the backup already carried an absolute URL.
 
 ## [0.1.0] - 2026-08-26
 

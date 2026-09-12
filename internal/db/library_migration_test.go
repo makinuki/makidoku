@@ -94,3 +94,43 @@ func TestLibraryRepositoryListsReadingHistory(t *testing.T) {
 
 func floatPtr(v float64) *float64 { return &v }
 func stringPtr(v string) *string  { return &v }
+
+// A refresh used to store the source upload time in milliseconds while every
+// other timestamp is in seconds. The migration folds values that can only be
+// milliseconds and leaves a seconds value alone.
+func TestChapterUploadedAtMigrationFoldsMilliseconds(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "timestamps", Title: "Timestamps", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	milliseconds := int64(1_700_000_000_000)
+	seconds := int64(1_600_000_000)
+	if _, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceID: "mangadex", SourceChapterID: "ms", ChapterNumber: &number, UploadedAt: &milliseconds}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceID: "mangadex", SourceChapterID: "s", ChapterNumber: &number, UploadedAt: &seconds}); err != nil {
+		t.Fatal(err)
+	}
+	const name = "migrations/000017_chapter_uploaded_at_seconds.up.sql"
+	if _, err := repo.db.Exec(`DELETE FROM _migrations WHERE name=?`, name); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(repo.db); err != nil {
+		t.Fatal(err)
+	}
+	var folded, untouched int64
+	if err := repo.db.Get(&folded, `SELECT c.uploaded_at FROM chapters c JOIN chapter_sources cs ON cs.chapter_id=c.id WHERE cs.source_chapter_id='ms'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Get(&untouched, `SELECT c.uploaded_at FROM chapters c JOIN chapter_sources cs ON cs.chapter_id=c.id WHERE cs.source_chapter_id='s'`); err != nil {
+		t.Fatal(err)
+	}
+	if folded != milliseconds/1000 {
+		t.Fatalf("millisecond value = %d, want %d", folded, milliseconds/1000)
+	}
+	if untouched != seconds {
+		t.Fatalf("seconds value = %d, want %d", untouched, seconds)
+	}
+}

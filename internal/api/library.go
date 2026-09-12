@@ -63,7 +63,7 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 			Volume:          item.Volume,
 			Title:           stringPointer(item.Title),
 			Language:        stringPointer(item.Language),
-			UploadedAt:      item.UploadedAt,
+			UploadedAt:      chapterUploadedAt(item.UploadedAt),
 			Scanlator:       stringPointer(item.Scanlator),
 		})
 		if err != nil {
@@ -289,6 +289,23 @@ func textValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// millisecondFloor is the smallest value that can only be a timestamp in
+// milliseconds. A timestamp in seconds stays below it for the observable
+// future, so the comparison needs no date logic.
+const millisecondFloor = int64(100_000_000_000)
+
+// chapterUploadedAt folds a source upload time onto the unit the database
+// stores. A source declares uploadedAt in milliseconds, while every stored
+// timestamp is in seconds, so a value that is unmistakably milliseconds is
+// divided down at this boundary. An absent value stays absent.
+func chapterUploadedAt(uploadedAt *int64) *int64 {
+	if uploadedAt == nil || *uploadedAt < millisecondFloor {
+		return uploadedAt
+	}
+	seconds := *uploadedAt / 1000
+	return &seconds
 }
 
 // indexSet returns the indexes of a slice as a set.
@@ -728,7 +745,7 @@ func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (d
 	}
 	adopted := adoptedChapterIDs(before, details.Chapters)
 	for _, item := range details.Chapters {
-		if _, err := s.repo.UpsertChapter(db.Chapter{ID: adopted[item.ID], MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
+		if _, err := s.repo.UpsertChapter(db.Chapter{ID: adopted[item.ID], MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: chapterUploadedAt(item.UploadedAt), Scanlator: stringPointer(item.Scanlator)}); err != nil {
 			return db.MangaAggregate{}, err
 		}
 	}

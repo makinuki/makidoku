@@ -1,0 +1,2 @@
+-- The fold discards the original sub-second precision, so it is not reversed.
+-- A row keeps the seconds value the up migration wrote.

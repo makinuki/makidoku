@@ -98,6 +98,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   the failure on the aggregate as `refreshError`. The details view shows a
   non-blocking notice, so a source that is unreachable or still rejects its
   locator does not turn an imported title into an error page.
+- Store a chapter upload time in seconds. A source declares it in
+  milliseconds, and the refresh path wrote it as written while every other
+  stored timestamp is in seconds. The value is folded at the boundary and a
+  migration normalizes the rows written before it.
 
 ## [0.1.0] - 2026-08-26
 

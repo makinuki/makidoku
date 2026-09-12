@@ -46,7 +46,7 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 	// after rotating a URL suffix, must update the existing local chapter
 	// instead of forking a duplicate or reporting a new release.
 	chapters := withDerivedChapterNumbers(details.Title, details.Chapters)
-	adopted := replacementChapterIDs(before, chapters)
+	adopted := adoptedChapterIDs(before, chapters)
 	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return nil, err
@@ -93,62 +93,185 @@ func withDerivedChapterNumbers(mangaTitle string, chapters []engine.ChapterItem)
 	return out
 }
 
-// replacementChapterIDs maps incoming source chapter IDs to an existing local
-// chapter that the source appears to have re-issued under a new identifier:
-// the local chapter is no longer offered by the source, and an incoming
-// chapter carries the same number and language. Matching by number keeps the
-// canonical ID, reading state, and download artifacts attached to one record
-// instead of creating a replacement duplicate. Each local chapter is claimed
-// at most once, so two simultaneous releases of the same number stay distinct.
-func replacementChapterIDs(before []db.Chapter, incoming []engine.ChapterItem) map[string]string {
-	offered := make(map[string]struct{}, len(incoming))
-	for _, item := range incoming {
-		offered[item.ID] = struct{}{}
+// adoptedChapterIDs maps an incoming source chapter to a stored chapter the
+// source has re-issued under a different locator, so a refresh rewrites the
+// stored locator instead of inserting a second row and leaving the reading
+// state, bookmark, and downloads behind on the first. Candidates are paired in
+// order of decreasing confidence:
+//
+//  1. the stored locator is the chapter id the source publishes, which means
+//     the pair is already linked and nothing has to move;
+//  2. the stored locator is the page URL the source publishes;
+//  3. the number with the scanlator and the language it appeared under,
+//     either of which may be absent;
+//  4. the number with the title it appeared under;
+//  5. the title alone, which is all an unnumbered extra or prologue carries.
+//
+// Only one-to-one matches are paired. A key that fits more than one stored
+// chapter or more than one incoming chapter is skipped, because a chapter left
+// unlinked is better than reading state attached to the wrong one. No pass
+// requires a number to be present, and the title passes compare titles so an
+// unnumbered extra or prologue still matches the row it was recorded on.
+func adoptedChapterIDs(before []db.Chapter, incoming []engine.ChapterItem) map[string]string {
+	passes := []struct {
+		stored func(db.Chapter) (string, bool)
+		item   func(engine.ChapterItem) (string, bool)
+		adopt  bool
+	}{
+		{
+			stored: func(chapter db.Chapter) (string, bool) { return locatorIdentity(chapter.SourceChapterID) },
+			item:   func(item engine.ChapterItem) (string, bool) { return locatorIdentity(item.ID) },
+		},
+		{
+			stored: func(chapter db.Chapter) (string, bool) { return locatorIdentity(chapter.SourceChapterID) },
+			item:   func(item engine.ChapterItem) (string, bool) { return locatorIdentity(item.URL) },
+			adopt:  true,
+		},
+		{
+			stored: func(chapter db.Chapter) (string, bool) {
+				return numberAttributesIdentity(chapter.ChapterNumber, textValue(chapter.Scanlator), textValue(chapter.Language))
+			},
+			item: func(item engine.ChapterItem) (string, bool) {
+				return numberAttributesIdentity(item.Number, item.Scanlator, item.Language)
+			},
+			adopt: true,
+		},
+		{
+			stored: func(chapter db.Chapter) (string, bool) {
+				return numberTitleIdentity(chapter.ChapterNumber, textValue(chapter.Title))
+			},
+			item: func(item engine.ChapterItem) (string, bool) {
+				return numberTitleIdentity(item.Number, item.Title)
+			},
+			adopt: true,
+		},
+		{
+			stored: func(chapter db.Chapter) (string, bool) { return titleIdentity(textValue(chapter.Title)) },
+			item:   func(item engine.ChapterItem) (string, bool) { return titleIdentity(item.Title) },
+			adopt:  true,
+		},
 	}
-	orphaned := make(map[string]db.Chapter, len(before))
-	bySourceID := make(map[string]struct{}, len(before))
-	for _, chapter := range before {
-		bySourceID[chapter.SourceChapterID] = struct{}{}
-		if _, ok := offered[chapter.SourceChapterID]; ok {
-			continue
+
+	stored := indexSet(len(before))
+	pending := indexSet(len(incoming))
+	adopted := map[string]string{}
+	for _, pass := range passes {
+		for _, pair := range oneToOnePairs(stored, pending, before, incoming, pass.stored, pass.item) {
+			if pass.adopt {
+				adopted[incoming[pair[1]].ID] = before[pair[0]].ID
+			}
+			delete(stored, pair[0])
+			delete(pending, pair[1])
 		}
-		language := ""
-		if chapter.Language != nil {
-			language = *chapter.Language
-		}
-		key, ok := chapterIdentity(chapter.ChapterNumber, language)
-		if !ok {
-			continue
-		}
-		orphaned[key] = chapter
 	}
-	replacements := make(map[string]string)
-	for _, item := range incoming {
-		if _, ok := bySourceID[item.ID]; ok {
-			continue
-		}
-		key, ok := chapterIdentity(item.Number, item.Language)
-		if !ok {
-			continue
-		}
-		chapter, ok := orphaned[key]
-		if !ok {
-			continue
-		}
-		replacements[item.ID] = chapter.ID
-		delete(orphaned, key)
-	}
-	return replacements
+	return adopted
 }
 
-// chapterIdentity keys a chapter by number and language. Unnumbered entries
-// are not keyed: specials carry no comparable ordering, so treating them as
-// interchangeable would merge unrelated records.
-func chapterIdentity(number *float64, language string) (string, bool) {
+// oneToOnePairs returns the stored and incoming chapters that share a key
+// under one pass of the ladder, and only where the key fits exactly one
+// chapter on each side.
+func oneToOnePairs(stored, pending map[int]bool, before []db.Chapter, incoming []engine.ChapterItem,
+	storedKey func(db.Chapter) (string, bool), itemKey func(engine.ChapterItem) (string, bool)) [][2]int {
+
+	storedByKey := map[string]int{}
+	storedShared := map[string]bool{}
+	for index := range stored {
+		key, ok := storedKey(before[index])
+		if !ok {
+			continue
+		}
+		if _, seen := storedByKey[key]; seen {
+			storedShared[key] = true
+			continue
+		}
+		storedByKey[key] = index
+	}
+	itemByKey := map[string]int{}
+	itemShared := map[string]bool{}
+	for index := range pending {
+		key, ok := itemKey(incoming[index])
+		if !ok {
+			continue
+		}
+		if _, seen := itemByKey[key]; seen {
+			itemShared[key] = true
+			continue
+		}
+		itemByKey[key] = index
+	}
+	pairs := make([][2]int, 0, len(storedByKey))
+	for key, storedIndex := range storedByKey {
+		if storedShared[key] || itemShared[key] {
+			continue
+		}
+		itemIndex, ok := itemByKey[key]
+		if !ok {
+			continue
+		}
+		pairs = append(pairs, [2]int{storedIndex, itemIndex})
+	}
+	return pairs
+}
+
+// locatorIdentity keys a locator exactly. A locator is an opaque string that
+// the source that recorded it reads, so it is compared as written.
+func locatorIdentity(locator string) (string, bool) {
+	locator = strings.TrimSpace(locator)
+	return locator, locator != ""
+}
+
+// numberAttributesIdentity keys a chapter by its number together with the
+// attributes it was published under. An attribute may be absent, so a chapter
+// recorded without a scanlator still matches one published without one.
+func numberAttributesIdentity(number *float64, attributes ...string) (string, bool) {
 	if number == nil {
 		return "", false
 	}
-	return strconv.FormatFloat(*number, 'f', -1, 64) + "\x00" + strings.ToLower(strings.TrimSpace(language)), true
+	key := strconv.FormatFloat(*number, 'f', -1, 64)
+	for _, attribute := range attributes {
+		key += "\x00" + normalizeText(attribute)
+	}
+	return key, true
+}
+
+// numberTitleIdentity keys a chapter by its number and its title, both of
+// which have to be present: a number alone is not an identity.
+func numberTitleIdentity(number *float64, title string) (string, bool) {
+	title = normalizeText(title)
+	if number == nil || title == "" {
+		return "", false
+	}
+	return strconv.FormatFloat(*number, 'f', -1, 64) + "\x00" + title, true
+}
+
+// titleIdentity keys a chapter by its title alone. An empty title is not a key,
+// because it would make every untitled chapter interchangeable.
+func titleIdentity(title string) (string, bool) {
+	title = normalizeText(title)
+	return title, title != ""
+}
+
+// normalizeText folds case and whitespace so two publications of one chapter
+// compare equal across cosmetic differences.
+func normalizeText(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(value)), " ")
+}
+
+// textValue reads a nullable stored string.
+func textValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+// indexSet returns the indexes of a slice as a set.
+func indexSet(size int) map[int]bool {
+	set := make(map[int]bool, size)
+	for index := 0; index < size; index++ {
+		set[index] = true
+	}
+	return set
 }
 
 // mountLibrary registers the local library endpoints. The library grows with
@@ -384,7 +507,7 @@ func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (d
 	if err != nil {
 		return db.MangaAggregate{}, err
 	}
-	adopted := replacementChapterIDs(before, details.Chapters)
+	adopted := adoptedChapterIDs(before, details.Chapters)
 	for _, item := range details.Chapters {
 		if _, err := s.repo.UpsertChapter(db.Chapter{ID: adopted[item.ID], MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: item.UploadedAt, Scanlator: stringPointer(item.Scanlator)}); err != nil {
 			return db.MangaAggregate{}, err

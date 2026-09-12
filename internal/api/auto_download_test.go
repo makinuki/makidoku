@@ -63,9 +63,9 @@ func TestEnqueueNewChaptersHonorsTitleFlag(t *testing.T) {
 
 // A source that re-issues a chapter under a new identifier must update the
 // existing local chapter rather than fork a duplicate or report a new
-// release. Only chapters the source no longer offers are candidates, and each
-// is claimed once so simultaneous releases of one number stay distinct.
-func TestReplacementChapterIDs(t *testing.T) {
+// release. Matching runs a ladder of decreasing confidence and pairs only
+// one-to-one candidates.
+func TestAdoptedChapterIDs(t *testing.T) {
 	number := func(value float64) *float64 { return &value }
 	language := func(value string) *string { return &value }
 	before := []db.Chapter{
@@ -82,7 +82,7 @@ func TestReplacementChapterIDs(t *testing.T) {
 		{ID: "new-4", Number: number(4), Language: "en"},
 		{ID: "new-5", Number: number(5), Language: "en"},
 	}
-	adopted := replacementChapterIDs(before, incoming)
+	adopted := adoptedChapterIDs(before, incoming)
 	if adopted["new-1"] != "ch-1" {
 		t.Fatalf("re-issued chapter was not adopted: %+v", adopted)
 	}
@@ -103,8 +103,45 @@ func TestReplacementChapterIDs(t *testing.T) {
 	}
 }
 
-// Only one incoming chapter may claim a single orphaned record.
-func TestReplacementChapterIDsClaimsEachRecordOnce(t *testing.T) {
+// A stored locator that equals the page URL the source now publishes names the
+// same chapter, so the row is adopted and its locator rewritten.
+func TestAdoptedChapterIDsUsesPublishedPageURL(t *testing.T) {
+	before := []db.Chapter{{ID: "ch-9", SourceChapterID: "1?style=pages"}}
+	incoming := []engine.ChapterItem{{ID: "svc-9", URL: "1?style=pages", Title: "Chapter 9"}}
+	adopted := adoptedChapterIDs(before, incoming)
+	if adopted["svc-9"] != "ch-9" {
+		t.Fatalf("page URL did not adopt the stored row: %+v", adopted)
+	}
+}
+
+// An unnumbered extra or prologue carries only a title. The title alone is
+// enough to keep the reading state on the row the source re-issued.
+func TestAdoptedChapterIDsAdoptsUnnumberedTitle(t *testing.T) {
+	title := "Prologue"
+	before := []db.Chapter{{ID: "ch-p", SourceChapterID: "old-prologue", Title: &title}}
+	incoming := []engine.ChapterItem{{ID: "new-prologue", Title: "Prologue"}}
+	adopted := adoptedChapterIDs(before, incoming)
+	if adopted["new-prologue"] != "ch-p" {
+		t.Fatalf("unnumbered title was not adopted: %+v", adopted)
+	}
+}
+
+// Titles compare across case and whitespace, so a cosmetic re-issue still
+// lands on the stored row.
+func TestAdoptedChapterIDsNormalizesTitle(t *testing.T) {
+	title := "  Bonus  Story "
+	before := []db.Chapter{{ID: "ch-b", SourceChapterID: "old-bonus", Title: &title}}
+	incoming := []engine.ChapterItem{{ID: "new-bonus", Title: "bonus story"}}
+	adopted := adoptedChapterIDs(before, incoming)
+	if adopted["new-bonus"] != "ch-b" {
+		t.Fatalf("normalized title was not adopted: %+v", adopted)
+	}
+}
+
+// Only one incoming chapter may claim a single orphaned record. An ambiguous
+// key is skipped, because reading state on the wrong chapter is worse than a
+// chapter left unlinked.
+func TestAdoptedChapterIDsSkipsAmbiguousKey(t *testing.T) {
 	number := func(value float64) *float64 { return &value }
 	language := func(value string) *string { return &value }
 	before := []db.Chapter{{ID: "ch-1", SourceChapterID: "old-1", ChapterNumber: number(3), Language: language("en")}}
@@ -112,8 +149,20 @@ func TestReplacementChapterIDsClaimsEachRecordOnce(t *testing.T) {
 		{ID: "new-a", Number: number(3), Language: "en"},
 		{ID: "new-b", Number: number(3), Language: "en"},
 	}
-	adopted := replacementChapterIDs(before, incoming)
-	if len(adopted) != 1 {
-		t.Fatalf("adopted = %+v, want exactly one claim", adopted)
+	adopted := adoptedChapterIDs(before, incoming)
+	if len(adopted) != 0 {
+		t.Fatalf("ambiguous key produced %+v, want no claim", adopted)
+	}
+}
+
+// A pinned chapter id that the source still publishes claims its own row and
+// is not re-pointed at another candidate.
+func TestAdoptedChapterIDsKeepsPinnedID(t *testing.T) {
+	number := func(value float64) *float64 { return &value }
+	before := []db.Chapter{{ID: "ch-1", SourceChapterID: "stable-id", ChapterNumber: number(7)}}
+	incoming := []engine.ChapterItem{{ID: "stable-id", Number: number(7)}}
+	adopted := adoptedChapterIDs(before, incoming)
+	if len(adopted) != 0 {
+		t.Fatalf("exact id match produced %+v, want no re-point", adopted)
 	}
 }

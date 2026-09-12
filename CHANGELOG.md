@@ -78,6 +78,11 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   locator is stored as the app that wrote the backup recorded it, so an
   installed source reads the value it knows, and a recorded page is kept only
   when the backup already carried an absolute URL.
+- Adopt a stored chapter when a source re-issues it under a new locator. A
+  refresh matches by published id or page URL, then by number with scanlator
+  and language, then by number with title, then by title alone, and pairs only
+  one-to-one matches so reading state, bookmarks, and downloads stay on one
+  row.
 
 ## [0.1.0] - 2026-08-26
 

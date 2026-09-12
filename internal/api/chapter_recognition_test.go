@@ -10,7 +10,7 @@ import (
 // A source that re-issues an unnumbered chapter must still adopt the existing
 // local record: the number is derived from the chapter title before matching,
 // so the canonical id, reading state, and downloads stay on one row.
-func TestReplacementChapterIDsDerivesUnnumberedTitles(t *testing.T) {
+func TestAdoptedChapterIDsDerivesUnnumberedTitles(t *testing.T) {
 	number := func(value float64) *float64 { return &value }
 	language := func(value string) *string { return &value }
 	before := []db.Chapter{
@@ -22,7 +22,7 @@ func TestReplacementChapterIDsDerivesUnnumberedTitles(t *testing.T) {
 	if incoming[0].Number == nil || *incoming[0].Number != 12 {
 		t.Fatalf("derived number = %v, want 12", incoming[0].Number)
 	}
-	adopted := replacementChapterIDs(before, incoming)
+	adopted := adoptedChapterIDs(before, incoming)
 	if adopted["new-12"] != "ch-12" {
 		t.Fatalf("unnumbered re-issue was not adopted: %+v", adopted)
 	}

@@ -64,6 +64,17 @@ func (r *Repository) SetSourceURL(mangaID, sourceID, url string) error {
 	return err
 }
 
+// SetSourceLocator rewrites the identifier a source link is read with, and the
+// page that resolved it. Both belong to the link, because one title can be
+// linked to several sources. An empty page keeps the stored one, so a rung
+// that resolved without a page cannot blank a page recorded earlier.
+func (r *Repository) SetSourceLocator(mangaID, sourceID, sourceMangaID, url string) error {
+	_, err := r.db.Exec(`UPDATE manga_sources SET source_manga_id=?, url=COALESCE(NULLIF(?,''),url)
+		WHERE manga_id=? AND source_id=?`,
+		strings.TrimSpace(sourceMangaID), strings.TrimSpace(url), mangaID, sourceID)
+	return err
+}
+
 // MigrateMangaSource atomically retires every chapter of a manga that does
 // not belong to the kept source and moves the discovered replacement onto
 // the canonical manga. Running both steps in one transaction means a failed

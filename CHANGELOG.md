@@ -88,6 +88,12 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   language together, which can never match an imported row, so a source that
   re-issued a chapter under a new locator gained a second row on every open.
   Two release groups publishing the same number stay separate.
+- Resolve a stored series link through a ladder before giving up: the recorded
+  locator, the recorded page, the last path segment of the locator, the
+  trailing token of that segment for a source that names its series
+  name.identifier, then a title search. The first candidate the source answers
+  is persisted, so a title imported from another application stops failing to
+  open and its source link stops falling back to the site root.
 
 ## [0.1.0] - 2026-08-26
 

@@ -38,16 +38,17 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 	for _, chapter := range before {
 		known[chapter.ID] = struct{}{}
 	}
-	details, err := s.engine.Details(ctx, source.SourceID, source.SourceMangaID)
+	resolution, err := s.resolveSeries(ctx, source)
 	if err != nil {
 		return nil, err
 	}
+	details := resolution.details
 	// A source that re-issues a chapter under a new identifier, for example
 	// after rotating a URL suffix, must update the existing local chapter
 	// instead of forking a duplicate or reporting a new release.
 	chapters := withDerivedChapterNumbers(details.Title, details.Chapters)
 	adopted := adoptedChapterIDs(before, chapters)
-	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: resolution.linkLocator(source.SourceMangaID), Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +460,188 @@ func (s *Server) searchSeriesURL(ctx context.Context, title string, source db.Ma
 	return ""
 }
 
+// seriesResolution is the answer of the series resolution ladder for one stored
+// link: the locator the source accepted, the page a resolved search hit
+// declared, and the details it returned.
+type seriesResolution struct {
+	locator   string
+	page      string
+	details   engine.MangaDetails
+	persisted bool
+}
+
+// linkLocator is the locator to record against the link. When the accepted
+// locator could not be written back the recorded one stays, so a link is never
+// pointed at a value its source row does not hold.
+func (resolution seriesResolution) linkLocator(recorded string) string {
+	if resolution.persisted {
+		return resolution.locator
+	}
+	return recorded
+}
+
+// resolveSeries returns the locator a source accepts for one stored link,
+// walking a ladder from the most to the least trustworthy value:
+//
+//  1. the locator stored for the link;
+//  2. the page recorded for it, when the backup carried an absolute URL;
+//  3. the last path segment of the stored locator, which is the identifier the
+//     plugin publishes for the legacy shapes a backup writes (`/manga/<uuid>`,
+//     `/series/<slug>`);
+//  4. the trailing dot-delimited token of that segment, the shape a source
+//     that publishes `<name>.<id>` paths uses for its own id (`/manga/<slug>.<code>`
+//     resolves to `<code>`);
+//  5. a title search, matched on those same tokens or on an exact title.
+//
+// Each rung is tried against the source and the first that answers is used. An
+// answer is persisted, so later reads are exact and the source link stops
+// falling back to the site root. A recorded locator that already works returns
+// without any extra call.
+func (s *Server) resolveSeries(ctx context.Context, source db.MangaSource) (seriesResolution, error) {
+	recorded := strings.TrimSpace(source.SourceMangaID)
+	details, err := s.engine.Details(ctx, source.SourceID, recorded)
+	if err == nil {
+		return seriesResolution{locator: recorded, details: details, persisted: true}, nil
+	}
+	for _, candidate := range seriesCandidates(recorded, source.URL) {
+		candidateDetails, candidateErr := s.engine.Details(ctx, source.SourceID, candidate)
+		if candidateErr != nil {
+			slog.Debug("series locator rejected", "manga", source.MangaID, "candidate", candidate, "err", candidateErr)
+			continue
+		}
+		return s.acceptSeries(source, candidate, "", candidateDetails), nil
+	}
+	if locator, page, ok := s.searchSeries(ctx, source); ok {
+		if searchDetails, searchErr := s.engine.Details(ctx, source.SourceID, locator); searchErr == nil {
+			return s.acceptSeries(source, locator, page, searchDetails), nil
+		}
+	}
+	return seriesResolution{}, err
+}
+
+// acceptSeries records the locator and page a rung resolved. A write that fails
+// leaves the link as it was, so the caller keeps the recorded locator while the
+// accepted one still serves the read in flight.
+func (s *Server) acceptSeries(source db.MangaSource, locator, page string, details engine.MangaDetails) seriesResolution {
+	resolution := seriesResolution{locator: locator, page: page, details: details}
+	if err := s.repo.SetSourceLocator(source.MangaID, source.SourceID, locator, page); err != nil {
+		slog.Warn("series locator not recorded", "manga", source.MangaID, "locator", locator, "err", err)
+		return resolution
+	}
+	resolution.persisted = true
+	return resolution
+}
+
+// seriesCandidates lists the locators to try after the recorded one has been
+// rejected, most trustworthy first. Taking the last path segment needs no
+// knowledge of any site: it is the identifier the plugin itself publishes for
+// every legacy shape a backup writes. Its trailing dot token is the same kind
+// of shape rule for a source that names its series `<name>.<id>`.
+func seriesCandidates(recorded, page string) []string {
+	recorded = strings.TrimSpace(recorded)
+	segment := lastPathSegment(recorded)
+	seen := map[string]bool{recorded: true}
+	candidates := []string{}
+	for _, value := range []string{page, segment, trailingToken(segment)} {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		candidates = append(candidates, value)
+	}
+	return candidates
+}
+
+// lastPathSegment returns the final path segment of a locator, ignoring any
+// query and fragment. A value that carries no path is returned as written, so a
+// bare identifier is its own segment.
+func lastPathSegment(locator string) string {
+	value := strings.TrimSpace(locator)
+	if value == "" {
+		return ""
+	}
+	if index := strings.IndexAny(value, "?#"); index >= 0 {
+		value = value[:index]
+	}
+	value = strings.TrimRight(value, "/")
+	if index := strings.LastIndex(value, "/"); index >= 0 {
+		return value[index+1:]
+	}
+	return value
+}
+
+// trailingToken returns the token after the last dot of an identifier, the
+// shape a source that publishes `<name>.<id>` paths uses for its own id. A
+// value without a dot, or with nothing after it, yields nothing, so the token
+// never duplicates the identifier and never becomes an empty candidate.
+func trailingToken(identifier string) string {
+	value := strings.TrimSpace(identifier)
+	index := strings.LastIndex(value, ".")
+	if index < 0 || index+1 >= len(value) {
+		return ""
+	}
+	return value[index+1:]
+}
+
+// searchSeries resolves a stored link through a title search. A hit is accepted
+// when its id, or the last segment of its url, is one of the tokens the
+// recorded locator offers as the source own id: the last path segment and its
+// trailing dot token, because a backup records the site path while the plugin
+// publishes its own identifier. Failing that, a single hit whose title matches
+// the stored title is accepted. Ambiguity is refused: a title left unlinked is
+// better than a title linked to the wrong series.
+func (s *Server) searchSeries(ctx context.Context, source db.MangaSource) (string, string, bool) {
+	manga, err := s.repo.GetManga(source.MangaID)
+	if err != nil || strings.TrimSpace(manga.Title) == "" {
+		return "", "", false
+	}
+	result, err := s.engine.Search(ctx, source.SourceID, engine.SearchQuery{Query: manga.Title, Page: 1})
+	if err != nil {
+		slog.Debug("series search failed", "manga", source.MangaID, "err", err)
+		return "", "", false
+	}
+	segment := lastPathSegment(source.SourceMangaID)
+	tokens := []string{}
+	for _, token := range []string{segment, trailingToken(segment)} {
+		if token != "" {
+			tokens = append(tokens, token)
+		}
+	}
+	matched := []engine.MangaItem{}
+	for _, item := range result.Items {
+		if item.ID == "" {
+			continue
+		}
+		switch {
+		case matchesAnyToken(tokens, item.ID, lastPathSegment(item.URL)):
+			matched = append(matched, item)
+		case normalizeText(item.Title) == normalizeText(manga.Title):
+			matched = append(matched, item)
+		}
+	}
+	if len(matched) != 1 {
+		return "", "", false
+	}
+	return matched[0].ID, matched[0].URL, true
+}
+
+// matchesAnyToken reports whether an identifier equals one of the tokens a
+// recorded locator offered as the source own id.
+func matchesAnyToken(tokens []string, identifiers ...string) bool {
+	for _, identifier := range identifiers {
+		if identifier == "" {
+			continue
+		}
+		for _, token := range tokens {
+			if identifier == token {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // getManga is local-first: stored details serve the read directly so the
 // library works without connectivity. Only records that never completed a
 // details fetch resolve the plugin once to materialize chapters.
@@ -520,11 +703,12 @@ func (s *Server) refreshManga(w http.ResponseWriter, r *http.Request) {
 // fetchAndStoreDetails pulls full details through the plugin, persists manga
 // and chapters, and stamps the freshness marker.
 func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (db.MangaAggregate, error) {
-	details, err := s.engine.Details(r.Context(), source.SourceID, source.SourceMangaID)
+	resolution, err := s.resolveSeries(r.Context(), source)
 	if err != nil {
 		return db.MangaAggregate{}, err
 	}
-	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: source.SourceMangaID, Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	details := resolution.details
+	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: resolution.linkLocator(source.SourceMangaID), Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return db.MangaAggregate{}, err
 	}

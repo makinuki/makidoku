@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate, Navigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -955,6 +955,7 @@ export function ReaderPage() {
           onFail={reportFailed}
           onRecover={reportRecovered}
           onToggleMenu={() => setMenu((value) => !value)}
+          onNavigateTurn={() => setMenu(false)}
         />
       )}
       {drawerOpen && (
@@ -970,6 +971,7 @@ export function ReaderPage() {
           next={flow.next}
           autoAdvance={autoAdvance}
           queueNote={queueNote}
+          trackerCount={aggregate.trackers.length}
           onNext={() => goChapter(flow.next!.id)}
           onDownload={() => queueChapter(flow.next!.id)}
           onStay={() => setDismissedNextUp(true)}
@@ -1095,6 +1097,7 @@ function NextUpCard({
   next,
   autoAdvance,
   queueNote,
+  trackerCount,
   onNext,
   onDownload,
   onStay,
@@ -1103,6 +1106,7 @@ function NextUpCard({
   next: Chapter;
   autoAdvance: boolean;
   queueNote: string;
+  trackerCount: number;
   onNext: () => void;
   onDownload: () => void;
   onStay: () => void;
@@ -1115,6 +1119,12 @@ function NextUpCard({
       {autoAdvance && (
         <p className="mt-1 text-xs text-[var(--reader-dim)]">
           Auto-advancing shortly. Stay to keep reading.
+        </p>
+      )}
+      {trackerCount > 0 && (
+        <p className="mt-1 text-xs text-[var(--reader-dim)]">
+          Chapter progress syncs to {trackerCount} bound{" "}
+          {trackerCount === 1 ? "tracker" : "trackers"}.
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
@@ -1338,6 +1348,7 @@ function Paged({
   navigation,
   imgFilter,
   onToggleMenu,
+  onNavigateTurn,
 }: {
   pages: Page[];
   index: number;
@@ -1351,6 +1362,7 @@ function Paged({
   navigation: ReaderNavigation;
   imgFilter: string;
   onToggleMenu: () => void;
+  onNavigateTurn: () => void;
 }) {
   const count = double ? 2 : 1;
   const mode: Mode = double ? "double" : "single";
@@ -1396,10 +1408,12 @@ function Paged({
     const dy = touch.clientY - start.y;
     if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       swiped.current = true;
-      // A leftward swipe advances in LTR and retreats in RTL.
+      // A leftward swipe advances in LTR and retreats in RTL. Swipes are the
+      // touch-immersive path, so the chrome gets out of the way.
       const forward = direction === "ltr" ? dx < 0 : dx > 0;
       if (forward) goNext();
       else goPrevious();
+      onNavigateTurn();
     }
   };
   // A swipe is followed by a synthetic click; without suppression the swipe
@@ -1455,6 +1469,7 @@ function Paged({
           onPrevious={direction === "rtl" ? goNext : goPrevious}
           onNext={direction === "rtl" ? goPrevious : goNext}
           onToggleMenu={onToggleMenu}
+          onNavigateTurn={onNavigateTurn}
           onZoomToggle={() => {
             void zoomRef.current?.zoomIn();
           }}
@@ -1514,6 +1529,7 @@ function ZoneLayer({
   onPrevious,
   onNext,
   onToggleMenu,
+  onNavigateTurn,
   onZoomToggle,
   onGuardClick,
 }: {
@@ -1522,6 +1538,7 @@ function ZoneLayer({
   onPrevious: () => void;
   onNext: () => void;
   onToggleMenu: () => void;
+  onNavigateTurn: () => void;
   onZoomToggle: () => void;
   onGuardClick: (event: React.SyntheticEvent) => void;
 }) {
@@ -1566,6 +1583,7 @@ function ZoneLayer({
         onClick={(event) => {
           onGuardClick(event);
           onPrevious();
+          onNavigateTurn();
         }}
         className={`reader-zone group absolute inset-y-0 left-0 ${side} ${navigation === "l" ? "top-12" : ""}`}
       >
@@ -1578,6 +1596,7 @@ function ZoneLayer({
         onClick={(event) => {
           onGuardClick(event);
           onNext();
+          onNavigateTurn();
         }}
         className={`reader-zone group absolute inset-y-0 right-0 ${side}`}
       >
@@ -1723,7 +1742,9 @@ function Webtoon({
 // caller: paged and webtoon modes fit images to the screen differently. The
 // current spread decodes async with high fetch priority; surrounding images
 // stay lazy so page turns usually hit the cache instead of the network.
-function PageImage({
+// PageImage is memoized: paged spreads re-render on every index change, and
+// only the images whose props changed may re-render with it.
+const PageImage = memo(function PageImage({
   page,
   alt,
   className,
@@ -1784,7 +1805,7 @@ function PageImage({
       fetchPriority={priority ? "high" : "auto"}
     />
   );
-}
+});
 function chapterLabel(data: Aggregate, chapterID: string) {
   const item = data.chapters.find((chapter) => chapter.id === chapterID);
   return item?.chapterNumber == null ? item?.title || "Special" : `Chapter ${item.chapterNumber}`;

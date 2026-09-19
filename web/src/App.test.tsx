@@ -3777,4 +3777,45 @@ describe("reader chapter flow", () => {
       expect(writes.some((call) => call.body.includes('"fit":"screen"'))).toBe(true);
     });
   });
+
+  it("hides the menu on zone taps and notes bound trackers at chapter end", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Response.json({
+            ...aggregate(chapters),
+            trackers: [
+              {
+                id: 1,
+                mangaId,
+                trackerType: "anilist",
+                remoteId: "45821",
+                remoteTitle: "Yosuga no Sora",
+                lastSyncedChapter: 0,
+              },
+            ],
+          });
+        }
+        if (path.includes("/pages")) {
+          return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+        }
+        if (path.startsWith("/api/progress")) return Response.json({});
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tap zone: next page" }));
+    expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+    expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+    expect(screen.getByText("Chapter progress syncs to 1 bound tracker.")).toBeInTheDocument();
+  });
 });

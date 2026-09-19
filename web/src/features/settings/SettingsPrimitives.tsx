@@ -52,9 +52,11 @@ export function SettingsCard({
   );
 }
 
-export function SettingRows({ section }: { section: SettingsSectionId }) {
+export function SettingRows({ section, keys }: { section: SettingsSectionId; keys?: string[] }) {
   const { settings } = useSettings();
-  const rows = settingsForSection(settings, section);
+  const rows = settingsForSection(settings, section).filter(
+    (setting) => !keys || keys.includes(setting.key),
+  );
   if (!rows.length) {
     return <p className="text-sm text-zinc-500">No values are available for this section.</p>;
   }

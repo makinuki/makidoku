@@ -1310,17 +1310,19 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    const position = () => screen.getByText("1 / 2");
+    const position = () => screen.getByRole("button", { name: /currently page 1 of 2/ });
     expect(position()).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /currently page 2 of 2/ })).toBeInTheDocument();
 
     const slider = screen.getByRole("slider");
     fireEvent.keyDown(slider, { key: "ArrowRight" });
     fireEvent.keyDown(slider, { key: "ArrowLeft" });
     fireEvent.keyDown(slider, { key: "w" });
-    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    fireEvent.keyDown(slider, { key: "g" });
+    expect(screen.getByRole("button", { name: /currently page 2 of 2/ })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Go to page" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Webtoon" })).not.toHaveClass("bg-amber-400");
   });
 
@@ -3478,6 +3480,170 @@ describe("search robustness", () => {
     expect(screen.getByRole("link", { name: "See all recommendations" })).toHaveAttribute(
       "href",
       `/manga/${mangaId}/recommendations`,
+    );
+  });
+});
+
+describe("reader chapter flow", () => {
+  const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
+  const chapterOne = "0198c0de-7a22-7000-8000-00000000cafe";
+  const chapterTwo = "0198c0de-7a22-7000-8000-00000000cb01";
+  const page = (chapter: string, n: number) => ({
+    id: `0198c0de-7a33-7000-8000-00000000000${n}`,
+    chapterId: chapter,
+    index: n - 1,
+    isScrambled: false,
+  });
+  const aggregate = (chapters: unknown[]) => ({
+    manga: {
+      id: mangaId,
+      sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+      title: "Yosuga no Sora",
+      status: "completed",
+      coverUrl: "/api/manga/" + mangaId + "/cover",
+      inLibrary: true,
+      downloadFormat: "cbz",
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    categories: [],
+    chapters,
+    trackers: [],
+  });
+  const chapters = [
+    { id: chapterOne, mangaId, chapterNumber: 1, downloaded: false },
+    { id: chapterTwo, mangaId, chapterNumber: 2, downloaded: false },
+  ];
+  const stubReader = () =>
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/incognito") return Response.json({ enabled: false });
+      if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+        return Response.json(aggregate(chapters));
+      }
+      if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+        return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+      }
+      if (path.includes(`/api/chapters/${chapterTwo}/pages`)) {
+        return Response.json([page(chapterTwo, 1), page(chapterTwo, 2)]);
+      }
+      if (path.startsWith("/api/progress")) return Response.json({});
+      if (path.startsWith("/api/manga/") && path.endsWith("/reader")) {
+        return Response.json({});
+      }
+      return Response.json([]);
+    });
+
+  it("lists chapters in the drawer and jumps between them", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Chapters" }));
+    expect(await screen.findByRole("button", { name: /Chapter 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Chapter 2/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Chapter 2/ }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/reader/${mangaId}/${chapterTwo}`));
+    expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
+  });
+
+  it("shows the next-up card at the end of a chapter", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    expect(screen.queryByText(/Up next/)).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next chapter" }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/reader/${mangaId}/${chapterTwo}`));
+  });
+
+  it("jumps with the go-to dialog and reports progress percent", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /currently page 1 of 2/ })).toHaveTextContent("50%");
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.change(await screen.findByLabelText("Page number"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /currently page 2 of 2/ })).toHaveTextContent("100%");
+  });
+
+  it("seeks to the history deep-link page instead of saved progress", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}?page=2`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Response.json({
+            ...aggregate(chapters),
+            progress: {
+              mangaId,
+              lastReadChapterId: chapterOne,
+              lastReadPage: 1,
+              totalPages: 2,
+              isCompleted: false,
+              lastReadAt: 1,
+            },
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+          return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+        }
+        if (path.startsWith("/api/progress")) return Response.json({});
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    expect(screen.queryByAltText("Page 1")).not.toBeInTheDocument();
+  });
+
+  it("never posts progress while incognito is on", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/incognito") return Response.json({ enabled: true });
+      if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+        return Response.json(aggregate(chapters));
+      }
+      if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+        return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+      }
+      if (path.startsWith("/api/progress")) return Response.json({});
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Incognito")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    view.unmount();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/progress"))).toBe(
+      false,
     );
   });
 });

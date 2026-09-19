@@ -57,7 +57,7 @@ export function HistoryPage() {
                     key={item.id}
                     to={
                       item.chapter
-                        ? `/reader/${encodeURIComponent(item.manga.id)}/${encodeURIComponent(item.chapter.id)}`
+                        ? `/reader/${encodeURIComponent(item.manga.id)}/${encodeURIComponent(item.chapter.id)}${item.page != null ? `?page=${item.page}` : ""}`
                         : `/manga/${encodeURIComponent(item.manga.id)}`
                     }
                     className="flex items-center gap-4 p-4 hover:bg-zinc-900"

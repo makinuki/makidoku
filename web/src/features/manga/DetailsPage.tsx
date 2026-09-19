@@ -37,6 +37,7 @@ import { TrackerLogo, trackerLabel } from "../../components/TrackerLogo";
 import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 import { CustomInfoModal } from "./CustomInfoModal";
 import { SourcesMetadataModal } from "./SourcesMetadataModal";
+import { resumeChapterId } from "../reader/engine/chapters";
 
 export function DetailsPage() {
   const { mangaId = "" } = useParams();
@@ -267,12 +268,22 @@ export function DetailsPage() {
             ))}
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
-            <Link
-              to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(resumeChapterId(data, chapters))}`}
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
-            >
-              <Play size={15} /> {data.progress ? "Continue" : "Read"}
-            </Link>
+            {resumeChapterId(data, chapters) ? (
+              <Link
+                to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(resumeChapterId(data, chapters))}`}
+                className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950"
+              >
+                <Play size={15} /> {data.progress ? "Continue" : "Read"}
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                title="No chapters yet"
+                className="inline-flex cursor-not-allowed items-center gap-2 rounded-lg bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-500"
+              >
+                <Play size={15} /> Read
+              </span>
+            )}
             <button
               onClick={() => void toggleLibrary()}
               disabled={libraryBusy}
@@ -685,16 +696,9 @@ function groupByVolume(
   });
 }
 
-// resumeChapterId picks where the Read/Continue action opens: the saved
-// chapter when its progress still points at this title, otherwise the first
-// listed chapter.
-function resumeChapterId(data: Aggregate, chapters: Chapter[]): string {
-  const saved = data.progress?.lastReadChapterId;
-  if (saved && chapters.some((chapter) => chapter.id === saved)) {
-    return saved;
-  }
-  return chapters[0]?.id || "";
-}
+// The reader engine owns the resume entry point so details, history, and
+// the reader resolve the same chapter: saved progress, else first unread in
+// reading order.
 
 const LANGUAGE_NAMES: Record<string, string> = {
   ar: "Arabic",

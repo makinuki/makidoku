@@ -1,19 +1,23 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate, Navigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowLeft,
+  Check,
   ChevronLeft,
   ChevronRight,
   EyeOff,
+  List,
   Maximize,
   Menu,
   Minimize,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { api } from "../../api";
-import type { Aggregate, Page } from "../../types";
+import type { Aggregate, Chapter, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
+import { chapterLabelFor, prevNextChapter } from "./engine/chapters";
 import {
   alignToSpread,
   defaultReaderGlobals,
@@ -64,6 +68,16 @@ export function ReaderPage() {
   const [overrides, setOverrides] = useState<ReaderOverrides>(emptyReaderOverrides);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [incognito, setIncognito] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [goToOpen, setGoToOpen] = useState(false);
+  const [dismissedNextUp, setDismissedNextUp] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useState(() => {
+    try {
+      return window.localStorage.getItem("reader.auto_advance") === "1";
+    } catch {
+      return false;
+    }
+  });
   const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
   const readerRef = useRef<HTMLDivElement>(null);
@@ -93,6 +107,35 @@ export function ReaderPage() {
     const sync = () => setIsFullscreen(document.fullscreenElement != null);
     document.addEventListener("fullscreenchange", sync);
     return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  const incognitoRef = useRef(false);
+  useEffect(() => {
+    incognitoRef.current = incognito;
+  }, [incognito]);
+
+  // Chapter flow in reading order (oldest-first), derived from the loaded
+  // aggregate. Neighbors drive the drawer highlight, prev/next jumps, the
+  // end-of-chapter card, and next-chapter prefetch.
+  const flow = useMemo(
+    () => prevNextChapter(chapterId, aggregate?.chapters ?? []),
+    [chapterId, aggregate],
+  );
+  const goChapter = useCallback(
+    (id: string) => {
+      setDrawerOpen(false);
+      setGoToOpen(false);
+      setDismissedNextUp(false);
+      navigate(`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(id)}`);
+    },
+    [mangaId, navigate],
+  );
+  const setAutoAdvanceStored = useCallback((value: boolean) => {
+    setAutoAdvance(value);
+    try {
+      window.localStorage.setItem("reader.auto_advance", value ? "1" : "0");
+    } catch {
+      // Private browsing may refuse storage; the session value still applies.
+    }
   }, []);
 
   // The effective reader settings are the per-title override on top of the
@@ -159,6 +202,13 @@ export function ReaderPage() {
     setLoading(true);
     setError("");
     setPages([]);
+    setDismissedNextUp(false);
+    // The deep-link page is read once per chapter load: search params are
+    // stable for the session, and later navigations re-run this effect.
+    const deepLink = (() => {
+      const raw = Number(searchParams.get("page"));
+      return Number.isInteger(raw) && raw >= 1 ? raw : null;
+    })();
     (async () => {
       try {
         const data = await api.manga(mangaId);
@@ -184,7 +234,9 @@ export function ReaderPage() {
           loaded.length,
           effective.mode,
         );
-        setIndex(saved);
+        setIndex(
+          deepLink != null ? alignToSpread(deepLink - 1, loaded.length, effective.mode) : saved,
+        );
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : "Unable to open chapter");
       } finally {
@@ -195,7 +247,48 @@ export function ReaderPage() {
       active = false;
     };
   }, [mangaId, chapterId, attempt]);
+  type PendingProgress = {
+    mangaId: string;
+    chapterId: string;
+    page: number;
+    total: number;
+    complete: boolean;
+    sessionSeconds: number;
+  };
   const saver = useRef<(() => void) | null>(null);
+  const retryQueue = useRef<PendingProgress[]>([]);
+  const postProgress = useCallback((entry: PendingProgress) => {
+    // Incognito never leaves the device: the daemon also null-writes, but
+    // the frontend must not emit the request in the first place.
+    if (incognitoRef.current) return Promise.resolve();
+    return api
+      .progress(
+        entry.mangaId,
+        entry.chapterId,
+        entry.page,
+        entry.total,
+        entry.complete,
+        entry.sessionSeconds,
+      )
+      .catch((e) => {
+        // Offline or transient failure queues for the next tick instead of
+        // dropping the position; the queue is bounded and oldest-first.
+        retryQueue.current = [...retryQueue.current, entry].slice(-5);
+        console.error("saving reading progress failed", e);
+      });
+  }, []);
+  const flushProgress = useCallback(() => {
+    const queued = retryQueue.current;
+    retryQueue.current = [];
+    return (async () => {
+      for (const entry of queued) await postProgress(entry);
+      if (saver.current) {
+        const save = saver.current;
+        saver.current = null;
+        save();
+      }
+    })();
+  }, [postProgress]);
   useEffect(() => {
     if (!pages.length || !aggregate) return;
     const visibleEnd = Math.min(pages.length, index + spreadStep(mode));
@@ -203,31 +296,39 @@ export function ReaderPage() {
       saver.current = null;
       const elapsed = Math.floor((Date.now() - sessionStartedAt.current) / 1000);
       sessionStartedAt.current = Date.now();
-      api
-        .progress(
-          mangaId,
-          chapterId,
-          visibleEnd,
-          pages.length,
-          visibleEnd >= pages.length,
-          Math.min(300, Math.max(0, elapsed)),
-        )
-        .catch((e) => console.error("saving reading progress failed", e));
+      void postProgress({
+        mangaId,
+        chapterId,
+        page: visibleEnd,
+        total: pages.length,
+        complete: visibleEnd >= pages.length,
+        sessionSeconds: Math.min(300, Math.max(0, elapsed)),
+      });
     };
     saver.current = save;
     const timer = window.setTimeout(save, 500);
     return () => window.clearTimeout(timer);
-  }, [index, mode, pages.length, aggregate, mangaId, chapterId]);
+  }, [index, mode, pages.length, aggregate, mangaId, chapterId, postProgress]);
   useEffect(() => {
-    // A pending write is flushed when leaving the reader or switching
-    // chapters so the debounce window cannot lose the final position.
+    // A pending write is flushed when leaving the reader, switching
+    // chapters, hiding the tab, or closing the page so the debounce window
+    // cannot lose the final position.
+    const flush = () => {
+      void flushProgress();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", flush);
+    window.addEventListener("online", flush);
     return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", flush);
+      window.removeEventListener("online", flush);
       if (saver.current) {
         saver.current();
         saver.current = null;
       }
     };
-  }, [mangaId, chapterId]);
+  }, [mangaId, chapterId, flushProgress]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // Shortcuts must not fire while a form control has focus: typing into
@@ -246,6 +347,25 @@ export function ReaderPage() {
       }
       if (event.key.toLowerCase() === "m") setMenu((value) => !value);
       if (event.key.toLowerCase() === "f") toggleFullscreen();
+      if (event.key === "Escape") {
+        // Close the topmost layer first: go-to, then settings, then drawer.
+        if (goToOpen) setGoToOpen(false);
+        else if (settingsOpen) setSettingsOpen(false);
+        else if (drawerOpen) setDrawerOpen(false);
+        return;
+      }
+      if (event.key.toLowerCase() === "g") {
+        setGoToOpen((value) => !value);
+        return;
+      }
+      if (event.key.toLowerCase() === "n" && flow.next) {
+        goChapter(flow.next.id);
+        return;
+      }
+      if (event.key.toLowerCase() === "p" && flow.prev) {
+        goChapter(flow.prev.id);
+        return;
+      }
       if (event.key.toLowerCase() === "w") {
         // The header quick-switcher and the `w` key share one path: both
         // persist the per-title override, so a late settings fetch can never
@@ -264,7 +384,39 @@ export function ReaderPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [direction, mangaId, mode, pages.length, saveReaderOverride, toggleFullscreen]);
+  }, [
+    direction,
+    drawerOpen,
+    flow.next,
+    flow.prev,
+    goChapter,
+    goToOpen,
+    mangaId,
+    mode,
+    pages.length,
+    saveReaderOverride,
+    settingsOpen,
+    toggleFullscreen,
+  ]);
+  // The last spread is fully visible: paged modes show 1-2 pages, webtoon
+  // tracks the first visible page, so its end is the final page on screen.
+  const atEnd =
+    pages.length > 0 &&
+    (mode === "webtoon" ? index >= pages.length - 1 : index + spreadStep(mode) >= pages.length);
+  const visibleCount = Math.min(pages.length, index + (mode === "webtoon" ? 1 : spreadStep(mode)));
+  const percent = pages.length ? Math.round((visibleCount / pages.length) * 100) : 0;
+  useEffect(() => {
+    // Warm the HTTP cache for the next chapter while the reader finishes
+    // this one so the jump rarely shows a loading screen.
+    if (atEnd && flow.next) void api.pages(flow.next.id).catch(() => {});
+  }, [atEnd, flow.next]);
+  // Auto-advance counts down on the end card, then jumps. Any navigation
+  // away or an explicit stay cancels it via the effect cleanup.
+  useEffect(() => {
+    if (!atEnd || !flow.next || dismissedNextUp || !autoAdvance) return;
+    const timer = window.setTimeout(() => goChapter(flow.next!.id), 5000);
+    return () => window.clearTimeout(timer);
+  }, [atEnd, flow.next, dismissedNextUp, autoAdvance, goChapter]);
   if (canonicalize) {
     return (
       <Navigate
@@ -365,6 +517,14 @@ export function ReaderPage() {
         </div>
         <div className="flex gap-1" role="group" aria-label="Reader mode">
           <button
+            aria-label="Chapters"
+            title="Chapters"
+            onClick={() => setDrawerOpen((value) => !value)}
+            className={`rounded-lg p-2 ${drawerOpen ? "bg-zinc-800 text-amber-400" : "text-zinc-400 hover:bg-zinc-800"}`}
+          >
+            <List size={16} />
+          </button>
+          <button
             aria-pressed={mode === "single"}
             onClick={() => saveReaderOverride({ mode: "single" })}
             className={`rounded-lg px-2 py-1 text-xs ${mode === "single" ? "bg-amber-400 text-zinc-950" : "text-zinc-400"}`}
@@ -456,6 +616,15 @@ export function ReaderPage() {
           <p className="text-[11px] leading-snug text-zinc-500">
             Overrides apply to this title only. Choose Default to follow the global reader setting.
           </p>
+          <label className="flex items-center gap-2 text-xs text-zinc-300">
+            <input
+              type="checkbox"
+              checked={autoAdvance}
+              onChange={(event) => setAutoAdvanceStored(event.target.checked)}
+              className="accent-amber-400"
+            />
+            Auto-advance to the next chapter
+          </label>
         </div>
       )}
       {mode === "webtoon" ? (
@@ -470,12 +639,45 @@ export function ReaderPage() {
           fit={fit}
         />
       )}
+      {drawerOpen && (
+        <ChapterDrawer
+          ordered={flow.ordered}
+          currentId={chapterId}
+          onSelect={goChapter}
+          onClose={() => setDrawerOpen(false)}
+        />
+      )}
+      {atEnd && flow.next && !dismissedNextUp && (
+        <NextUpCard
+          next={flow.next}
+          autoAdvance={autoAdvance}
+          onNext={() => goChapter(flow.next!.id)}
+          onStay={() => setDismissedNextUp(true)}
+          onDetails={exitReader}
+        />
+      )}
+      {goToOpen && (
+        <GoToDialog
+          pageCount={pages.length}
+          current={Math.min(index + 1, pages.length)}
+          onJump={(page) => {
+            setIndex(alignToSpread(page - 1, pages.length, mode));
+            setGoToOpen(false);
+          }}
+          onClose={() => setGoToOpen(false)}
+        />
+      )}
       <div
         className={`flex items-center gap-3 border-t border-zinc-800 bg-zinc-950 px-4 py-2 ${menu ? "" : "hidden"}`}
       >
-        <span className="text-xs text-zinc-500" aria-hidden="true">
-          {Math.min(index + 1, pages.length)} / {pages.length}
-        </span>
+        <button
+          onClick={() => setGoToOpen(true)}
+          title="Go to page (G)"
+          aria-label={`Go to page, currently page ${Math.min(index + 1, pages.length)} of ${pages.length}, ${percent} percent read`}
+          className="shrink-0 text-xs text-zinc-500 hover:text-zinc-200"
+        >
+          {Math.min(index + 1, pages.length)} / {pages.length} · {percent}%
+        </button>
         <input
           type="range"
           aria-label="Page"
@@ -507,6 +709,153 @@ export function ReaderPage() {
           <Menu size={17} />
         </button>
       )}
+    </div>
+  );
+}
+
+function ChapterDrawer({
+  ordered,
+  currentId,
+  onSelect,
+  onClose,
+}: {
+  ordered: Chapter[];
+  currentId: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute inset-y-0 left-0 z-40 flex w-72 max-w-[80vw] flex-col border-r border-zinc-800 bg-zinc-950 shadow-2xl">
+      <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
+        <b className="text-sm">Chapters · {ordered.length}</b>
+        <button
+          aria-label="Close chapters"
+          onClick={onClose}
+          className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <ol className="min-h-0 flex-1 overflow-y-auto">
+        {ordered.map((chapter) => (
+          <li key={chapter.id}>
+            <button
+              onClick={() => onSelect(chapter.id)}
+              aria-current={chapter.id === currentId ? "true" : undefined}
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-zinc-900 ${
+                chapter.id === currentId ? "bg-zinc-900 text-amber-300" : "text-zinc-200"
+              } ${chapter.read ? "opacity-60" : ""}`}
+            >
+              {chapter.read && <Check size={14} className="shrink-0 text-emerald-400" />}
+              <span className="min-w-0 flex-1 truncate">{chapterLabelFor(chapter)}</span>
+              {chapter.downloaded && (
+                <span className="shrink-0 text-[11px] text-zinc-500">saved</span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <p className="border-t border-zinc-800 px-3 py-2 text-[11px] text-zinc-500">
+        N / P jumps to the next / previous chapter.
+      </p>
+    </div>
+  );
+}
+
+function NextUpCard({
+  next,
+  autoAdvance,
+  onNext,
+  onStay,
+  onDetails,
+}: {
+  next: Chapter;
+  autoAdvance: boolean;
+  onNext: () => void;
+  onStay: () => void;
+  onDetails: () => void;
+}) {
+  return (
+    <div className="absolute inset-x-0 bottom-16 z-40 mx-auto w-80 max-w-[90vw] rounded-xl border border-zinc-700 bg-zinc-950 p-4 shadow-2xl">
+      <p className="text-xs uppercase tracking-wide text-zinc-500">Chapter finished</p>
+      <b className="mt-1 block truncate text-sm">Up next: {chapterLabelFor(next)}</b>
+      {autoAdvance && (
+        <p className="mt-1 text-xs text-zinc-400">Auto-advancing shortly. Stay to keep reading.</p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          onClick={onNext}
+          className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+        >
+          Next chapter
+        </button>
+        <button onClick={onStay} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm">
+          Keep reading
+        </button>
+        <button
+          onClick={onDetails}
+          className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-400"
+        >
+          Details
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GoToDialog({
+  pageCount,
+  current,
+  onJump,
+  onClose,
+}: {
+  pageCount: number;
+  current: number;
+  onJump: (page: number) => void;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(String(current));
+  return (
+    <div
+      className="absolute inset-0 z-40 grid place-items-center bg-black/70 p-5"
+      onMouseDown={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Go to page"
+        className="w-64 rounded-xl border border-zinc-700 bg-zinc-950 p-4 shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <b className="text-sm">Go to page</b>
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const page = Math.min(Math.max(1, Number(value) || 1), Math.max(1, pageCount));
+            onJump(page);
+          }}
+        >
+          <input
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+            aria-label="Page number"
+            inputMode="numeric"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-lg bg-amber-400 px-3 py-1.5 text-sm font-semibold text-zinc-950"
+          >
+            Go
+          </button>
+        </form>
+        <p className="mt-2 text-xs text-zinc-500">
+          Page {current} of {pageCount}
+        </p>
+      </div>
     </div>
   );
 }
@@ -584,44 +933,44 @@ function Webtoon({
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const initialIndex = useRef(index);
-  const interacted = useRef(false);
+  const indexRef = useRef(index);
+  indexRef.current = index;
   const virtualizer = useVirtualizer({
     count: pages.length,
     getScrollElement: () => parent.current,
     estimateSize: () => 720,
     overscan: 2,
   });
-  // Entering webtoon mode aligns the scroll position with the restored page
-  // before the reader interacts. The visible page is adopted only afterwards:
-  // a programmatic alignment must never overwrite the reading position with
-  // page one.
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+  // Entering webtoon mode aligns the scroll position with the restored page.
+  // Scroll events during the alignment window are ignored so the
+  // programmatic scroll can never clobber the restored position with page
+  // one; afterwards every scroll source (wheel, touch, keyboard, scrollbar)
+  // adopts the first visible virtual item.
+  const mountedAt = useRef(Date.now());
   useLayoutEffect(() => {
     virtualizer.scrollToIndex(initialIndex.current);
     // Alignment runs once per mount; later index changes come from scrolling.
   }, []);
   useEffect(() => {
-    if (!interacted.current) return;
-    const first = virtualizer.getVirtualItems()[0];
-    if (first && first.index !== index) setIndex(first.index);
-  }, [virtualizer, index, setIndex]);
-  useEffect(() => {
     const el = parent.current;
     if (!el) return;
-    const mark = () => {
-      interacted.current = true;
+    let frame = 0;
+    const onScroll = () => {
+      if (Date.now() - mountedAt.current < 750) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const first = virtualizerRef.current.getVirtualItems()[0];
+        if (first && first.index !== indexRef.current) setIndex(first.index);
+      });
     };
-    // Scroll events also fire for the programmatic alignment above, so the
-    // interaction latch listens to input events instead. A scrollbar drag is
-    // covered by its pointerdown.
-    el.addEventListener("wheel", mark, { passive: true });
-    el.addEventListener("touchmove", mark, { passive: true });
-    el.addEventListener("pointerdown", mark);
+    el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
-      el.removeEventListener("wheel", mark);
-      el.removeEventListener("touchmove", mark);
-      el.removeEventListener("pointerdown", mark);
+      el.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [setIndex]);
   return (
     <div ref={parent} className="min-h-0 flex-1 overflow-y-auto bg-black">
       <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>

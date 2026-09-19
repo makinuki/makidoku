@@ -1560,12 +1560,9 @@ function ZoneLayer({
   const prevZoneLabel = `Tap zone: ${prevLabel.toLowerCase()}`;
   const nextZoneLabel = `Tap zone: ${nextLabel.toLowerCase()}`;
   const side = navigation === "edge" ? "w-[15%]" : navigation === "l" ? "w-[30%]" : "w-[20%]";
-  const centerInset =
-    navigation === "edge"
-      ? "left-[15%] right-[15%]"
-      : navigation === "l"
-        ? "left-[30%] right-0 top-12"
-        : "left-[20%] right-[20%]";
+  // The L preset has no center zone: the top strip toggles the menu and the
+  // whole area right of the previous zone advances, matching ZonePreview.
+  const centerInset = navigation === "edge" ? "left-[15%] right-[15%]" : "left-[20%] right-[20%]";
   return (
     <div className="absolute inset-0 z-[5]">
       {navigation === "l" && (
@@ -1598,18 +1595,20 @@ function ZoneLayer({
           onNext();
           onNavigateTurn();
         }}
-        className={`reader-zone group absolute inset-y-0 right-0 ${side}`}
+        className={`reader-zone group absolute inset-y-0 right-0 ${navigation === "l" ? "w-[70%]" : side} ${navigation === "l" ? "top-12" : ""}`}
       >
         <span className="absolute right-1 top-1/2 -translate-y-1/2 text-white/0 group-hover:text-white/70">
           <ChevronRight size={20} />
         </span>
       </button>
-      <button
-        aria-label="Tap zone: toggle menu"
-        onClick={centerTap}
-        onDoubleClick={centerDouble}
-        className={`reader-zone absolute inset-y-0 ${centerInset}`}
-      />
+      {navigation !== "l" && (
+        <button
+          aria-label="Tap zone: toggle menu"
+          onClick={centerTap}
+          onDoubleClick={centerDouble}
+          className={`reader-zone absolute inset-y-0 ${centerInset}`}
+        />
+      )}
     </div>
   );
 }

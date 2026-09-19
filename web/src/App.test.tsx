@@ -3740,6 +3740,38 @@ describe("reader chapter flow", () => {
     expect(screen.queryByRole("button", { name: "Tap zone: toggle menu" })).not.toBeInTheDocument();
   });
 
+  it("keeps the next zone reachable in the L-shaped preset", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/settings") {
+          return Response.json([{ key: "reader.navigation", value: "l" }]);
+        }
+        if (path === "/api/incognito") return Response.json({ enabled: false });
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Response.json(aggregate(chapters));
+        }
+        if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+          return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+        }
+        if (path.startsWith("/api/progress")) return Response.json({});
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    // The L preset has no center zone; only the top strip toggles the menu.
+    expect(screen.getAllByRole("button", { name: "Tap zone: toggle menu" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Tap zone: next page" }));
+    expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+  });
+
   it("applies the paper theme and saves the screen fit override", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     const writes: Array<{ url: string; body: string }> = [];

@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 export function Modal({
   title,
   children,
@@ -12,14 +14,50 @@ export function Modal({
   onClose: () => void;
 }) {
   const panel = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
   useEffect(() => {
+    closeRef.current = onClose;
+  });
+  // Focus moves into the dialog on mount and returns to the element that
+  // opened it on unmount. This runs once: a changing onClose identity must
+  // not steal focus back to the panel in the middle of an interaction.
+  useEffect(() => {
+    const restore = document.activeElement;
     panel.current?.focus();
+    return () => {
+      if (restore instanceof HTMLElement) restore.focus();
+    };
+  }, []);
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !panel.current) return;
+      // aria-modal promises the rest of the page is inert, so Tab cycles
+      // inside the dialog instead of escaping into the content behind it.
+      const items = Array.from(panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (element) => !element.hasAttribute("disabled"),
+      );
+      if (items.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !panel.current.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !panel.current.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"

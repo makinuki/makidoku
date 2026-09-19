@@ -1428,6 +1428,60 @@ describe("MakiDoku app shell", () => {
     );
   });
 
+  // A page that recovers on its own after the user navigates away and back
+  // must clear the failed state instead of leaving a phantom retry-all pill.
+  it("clears the failed badge when a page recovers after remount", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterId}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.includes(`/api/manga/${mangaId}`)) {
+          return Response.json({
+            manga: {
+              id: mangaId,
+              sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
+              title: "Yosuga no Sora",
+              status: "completed",
+              coverUrl: "/api/manga/" + mangaId + "/cover",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            categories: [],
+            chapters: [{ id: chapterId, mangaId, chapterNumber: 1, downloaded: false }],
+            trackers: [],
+          });
+        }
+        if (path.includes(`/api/chapters/${chapterId}/pages`)) {
+          return Response.json([
+            { id: pageOne, chapterId, index: 0, isScrambled: false },
+            { id: pageTwo, chapterId, index: 1, isScrambled: false },
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    fireEvent.error(await screen.findByAltText("Page 1"));
+    expect(
+      await screen.findByRole("button", { name: "Retry 1 failed page" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    const image = await screen.findByAltText("Page 1");
+    fireEvent.load(image);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /failed page/ })).not.toBeInTheDocument(),
+    );
+  });
+
   it("shows a clear state when the reader opens without a chapter", async () => {
     window.history.pushState({}, "", "/reader");
     vi.stubGlobal(

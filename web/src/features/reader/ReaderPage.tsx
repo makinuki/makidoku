@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useParams, useSearchParams, useNavigate, Navigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -121,7 +122,11 @@ export function ReaderPage() {
     setFailedPages((current) => (current.includes(id) ? current : [...current, id]));
   }, []);
   const reportRecovered = useCallback((id: string) => {
-    setFailedPages((current) => current.filter((item) => item !== id));
+    // Bail out when the id is not tracked so successful first loads do not
+    // churn state; a page that reloads cleanly after a failure still clears.
+    setFailedPages((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : current,
+    );
   }, []);
   const retryAllFailed = useCallback(() => {
     setFailedPages([]);
@@ -222,7 +227,10 @@ export function ReaderPage() {
     // requests simply leave the reader usable without it.
     if (!keepAwake || !("wakeLock" in navigator)) return;
     let cancelled = false;
-    let lock: { release: () => void } | null = null;
+    let lock: {
+      release: () => void;
+      addEventListener?: (type: string, listener: () => void) => void;
+    } | null = null;
     const acquire = () => {
       try {
         (
@@ -230,9 +238,21 @@ export function ReaderPage() {
         ).wakeLock
           .request("screen")
           .then((sentinel) => {
-            const release = (sentinel as { release: () => void }).release.bind(sentinel);
-            if (cancelled) release();
-            else lock = { release };
+            const next = sentinel as {
+              release: () => void;
+              addEventListener?: (type: string, listener: () => void) => void;
+            };
+            if (cancelled) {
+              next.release();
+              return;
+            }
+            lock = next;
+            // The browser releases the lock when the tab hides; clearing the
+            // reference lets the visibilitychange handler re-acquire it
+            // instead of treating the stale sentinel as still held.
+            next.addEventListener?.("release", () => {
+              lock = null;
+            });
           })
           .catch(() => {});
       } catch {
@@ -588,14 +608,17 @@ export function ReaderPage() {
   useEffect(() => {
     // Prefetch the neighboring spreads in paged modes so page turns usually
     // hit the browser cache. Two spreads ahead covers double-page jumps; one
-    // behind covers going back. Failures are ignored: the image element
-    // retries through the normal path.
+    // behind covers going back. Every page of a spread is warmed, not just
+    // its first, so a double-page turn never blocks on the network. Failures
+    // are ignored: the image element retries through the normal path.
     if (mode === "webtoon" || !pages.length) return;
     const step = spreadStep(mode);
     const ids = new Set<string>();
-    for (const offset of [step, step * 2, -step]) {
-      const page = pages[index + offset];
-      if (page) ids.add(page.id);
+    for (const start of [index + step, index + step * 2, index - step]) {
+      for (let n = start; n < start + step; n++) {
+        const page = pages[n];
+        if (page) ids.add(page.id);
+      }
     }
     for (const id of ids) {
       const img = new Image();
@@ -1459,20 +1482,19 @@ function Paged({
           wrapperClass="!h-full !w-full"
           contentClass={`flex min-h-full min-w-full items-center justify-center gap-2 p-2 sm:p-6 ${direction === "rtl" ? "flex-row-reverse" : ""}`}
         >
-          <div style={{ filter: imgFilter }} className="contents">
-            {pages.slice(index, index + count).map((page, offset) => (
-              <PageImage
-                key={page.index}
-                page={page}
-                alt={`Page ${index + offset + 1}`}
-                priority={offset === 0}
-                retryEpoch={retryEpoch}
-                onFail={onFail}
-                onRecover={onRecover}
-                className={fitClass}
-              />
-            ))}
-          </div>
+          {pages.slice(index, index + count).map((page, offset) => (
+            <PageImage
+              key={page.index}
+              page={page}
+              alt={`Page ${index + offset + 1}`}
+              priority={offset === 0}
+              retryEpoch={retryEpoch}
+              onFail={onFail}
+              onRecover={onRecover}
+              className={fitClass}
+              style={{ filter: imgFilter }}
+            />
+          ))}
         </TransformComponent>
       </TransformWrapper>
       {!zoomed && navigation !== "disabled" && (
@@ -1760,6 +1782,7 @@ const PageImage = memo(function PageImage({
   page,
   alt,
   className,
+  style,
   loading,
   priority,
   retryEpoch,
@@ -1769,6 +1792,7 @@ const PageImage = memo(function PageImage({
   page: Page;
   alt: string;
   className: string;
+  style?: CSSProperties;
   loading?: "lazy" | "eager";
   priority?: boolean;
   retryEpoch: number;
@@ -1811,7 +1835,9 @@ const PageImage = memo(function PageImage({
       src={`${api.readerImage(page)}${attempt ? `?retry=${attempt}` : ""}`}
       alt={alt}
       onError={fail}
+      onLoad={() => onRecover(page.id)}
       className={className}
+      style={style}
       loading={loading ?? (priority ? "eager" : undefined)}
       decoding="async"
       fetchPriority={priority ? "high" : "auto"}

@@ -3647,6 +3647,55 @@ describe("reader chapter flow", () => {
     );
   });
 
+  it("holds progress posts until the incognito state has loaded", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+      let resolveIncognito: ((value: { enabled: boolean }) => void) | undefined;
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/incognito") {
+          return new Promise<Response>((resolve) => {
+            resolveIncognito = (value) => resolve(Response.json(value));
+          });
+        }
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Promise.resolve(Response.json(aggregate(chapters)));
+        }
+        if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+          return Promise.resolve(Response.json([page(chapterOne, 1), page(chapterOne, 2)]));
+        }
+        if (path.startsWith("/api/progress")) return Promise.resolve(Response.json({}));
+        return Promise.resolve(Response.json([]));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>,
+      );
+      // The reader settles over a few macrotask turns while the incognito
+      // read is still in flight; the 500 ms save debounce must not leak a
+      // progress write before the state is known.
+      const progressPosts = () =>
+        fetchMock.mock.calls.filter(
+          ([url, init]) =>
+            String(url).startsWith("/api/progress") &&
+            ((init as RequestInit | undefined)?.method ?? "GET") === "POST",
+        ).length;
+      for (let round = 0; round < 6; round++) {
+        await vi.advanceTimersByTimeAsync(round === 0 ? 1000 : 500);
+      }
+      expect(screen.getByAltText("Page 1")).toBeInTheDocument();
+      expect(progressPosts()).toBe(0);
+      // Once the read resolves incognito, nothing may post either.
+      resolveIncognito!({ enabled: true });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(progressPosts()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("retries all failed pages at once and surfaces download state", async () => {
     const downloaded = [
       { id: chapterOne, mangaId, chapterNumber: 1, downloaded: true },

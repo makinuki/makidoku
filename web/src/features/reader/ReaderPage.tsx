@@ -158,6 +158,10 @@ export function ReaderPage() {
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
   const incognitoRef = useRef(false);
+  // Progress writes are blocked until the incognito state has been read once;
+  // the 500 ms debounce can otherwise fire before the fetch resolves and leak
+  // a history write for a session the user believes is incognito.
+  const incognitoLoadedRef = useRef(false);
   useEffect(() => {
     incognitoRef.current = incognito;
   }, [incognito]);
@@ -263,9 +267,17 @@ export function ReaderPage() {
     let active = true;
     api
       .incognito()
-      .then((state) => active && setIncognito(state.enabled))
+      .then((state) => {
+        if (!active) return;
+        incognitoRef.current = state.enabled;
+        setIncognito(state.enabled);
+        incognitoLoadedRef.current = true;
+      })
       .catch(() => {
-        // Incognito state is optional; the badge stays hidden if the read fails.
+        // Incognito state is optional; a failed read fails closed so no
+        // progress leaves the device until a later mount can confirm it.
+        incognitoRef.current = true;
+        incognitoLoadedRef.current = true;
       });
     return () => {
       active = false;
@@ -395,8 +407,9 @@ export function ReaderPage() {
   const retryQueue = useRef<PendingProgress[]>([]);
   const postProgress = useCallback((entry: PendingProgress) => {
     // Incognito never leaves the device: the daemon also null-writes, but
-    // the frontend must not emit the request in the first place.
-    if (incognitoRef.current) return Promise.resolve();
+    // the frontend must not emit the request in the first place. Until the
+    // incognito state has been read once, unknown is treated as enabled.
+    if (!incognitoLoadedRef.current || incognitoRef.current) return Promise.resolve();
     return api
       .progress(
         entry.mangaId,

@@ -727,7 +727,7 @@ func (r *Repository) SetMangaReaderOverrides(id string, mode, direction, fit *st
 	if err := validateReaderValue(direction, "ltr", "rtl"); err != nil {
 		return Manga{}, err
 	}
-	if err := validateReaderValue(fit, "width", "height", "original"); err != nil {
+	if err := validateReaderValue(fit, "width", "height", "screen", "original"); err != nil {
 		return Manga{}, err
 	}
 	result, err := r.db.Exec(`UPDATE manga SET reader_mode=?, reader_direction=?, reader_fit=?, updated_at=? WHERE id=?`,

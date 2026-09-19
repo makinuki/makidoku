@@ -269,7 +269,13 @@ var definitionList = []Definition{
 	}},
 	{Key: "reader.default_mode", Type: "string", Default: `"single"`, Description: "Default reader mode", Validate: enum("single", "double", "webtoon")},
 	{Key: "reader.direction", Type: "string", Default: `"ltr"`, Description: "Reader page direction", Validate: enum("ltr", "rtl")},
-	{Key: "reader.fit", Type: "string", Default: `"width"`, Description: "Reader image fit", Validate: enum("width", "height", "original")},
+	{Key: "reader.fit", Type: "string", Default: `"width"`, Description: "Reader image fit", Validate: enum("width", "height", "screen", "original")},
+	{Key: "reader.navigation", Type: "string", Default: `"default"`, Description: "Paged tap and click zone preset", Validate: enum("default", "l", "edge", "disabled")},
+	{Key: "reader.webtoon_gap", Type: "number", Default: "8", Description: "Gap between webtoon pages in pixels", Validate: number(0, 48)},
+	{Key: "reader.theme", Type: "string", Default: `"dark"`, Description: "Reader color theme", Validate: enum("dark", "amoled", "paper", "light")},
+	{Key: "reader.brightness", Type: "number", Default: "100", Description: "Reader image brightness in percent", Validate: number(50, 150)},
+	{Key: "reader.grayscale", Type: "boolean", Default: "false", Description: "Show reader images in grayscale", Validate: boolean},
+	{Key: "reader.invert", Type: "boolean", Default: "false", Description: "Invert reader image colors", Validate: boolean},
 	{Key: "downloads.auto_download", Type: "boolean", Default: "false", Description: "Automatically download new chapters", Validate: func(v any) error {
 		if _, ok := v.(bool); !ok {
 			return errors.New("value must be boolean")

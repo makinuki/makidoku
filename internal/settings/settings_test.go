@@ -35,6 +35,41 @@ func TestServiceUsesDefaultsAndValidatesWrites(t *testing.T) {
 	}
 }
 
+func TestReaderDisplaySettingsValidate(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "reader-display.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	service := New(db.NewRepository(handle))
+	valid := map[string]string{
+		"reader.fit":        `"screen"`,
+		"reader.navigation": `"edge"`,
+		"reader.webtoon_gap": "16",
+		"reader.theme":      `"paper"`,
+		"reader.brightness": "120",
+		"reader.grayscale":  "true",
+		"reader.invert":     "true",
+	}
+	for key, value := range valid {
+		if err := service.Set(key, value); err != nil {
+			t.Fatalf("store %s: %v", key, err)
+		}
+	}
+	invalid := map[string]string{
+		"reader.fit":        `"cover"`,
+		"reader.navigation": `"corners"`,
+		"reader.webtoon_gap": "64",
+		"reader.theme":      `"sepia"`,
+		"reader.brightness": "40",
+	}
+	for key, value := range invalid {
+		if err := service.Set(key, value); err == nil {
+			t.Fatalf("accepted invalid %s = %s", key, value)
+		}
+	}
+}
+
 // Library view state is stored and validated like any other setting, but the
 // library screen owns it, so it stays out of the settings list.
 func TestLibraryViewSettingsAreHiddenAndValidated(t *testing.T) {

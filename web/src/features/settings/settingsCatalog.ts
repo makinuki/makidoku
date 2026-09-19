@@ -50,7 +50,7 @@ export const settingsSections: SettingsSection[] = [
   {
     id: "reader",
     title: "Reader",
-    subtitle: "Default mode, direction, and image fit",
+    subtitle: "Modes, navigation zones, display, and themes",
     icon: BookOpen,
     prefixes: ["reader"],
   },
@@ -144,7 +144,20 @@ export const settingOptions: Record<string, Array<{ value: string; label: string
   "reader.fit": [
     { value: "width", label: "Fit width" },
     { value: "height", label: "Fit height" },
+    { value: "screen", label: "Fit screen" },
     { value: "original", label: "Original size" },
+  ],
+  "reader.navigation": [
+    { value: "default", label: "Default thirds" },
+    { value: "l", label: "L-shaped" },
+    { value: "edge", label: "Edges only" },
+    { value: "disabled", label: "Disabled" },
+  ],
+  "reader.theme": [
+    { value: "dark", label: "Dark" },
+    { value: "amoled", label: "AMOLED black" },
+    { value: "paper", label: "Paper" },
+    { value: "light", label: "Light" },
   ],
   "advanced.log_level": [
     { value: "debug", label: "Debug" },

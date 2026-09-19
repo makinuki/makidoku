@@ -3693,4 +3693,88 @@ describe("reader chapter flow", () => {
     await waitFor(() => expect(queued).toMatchObject({ mangaId, chapters: [chapterTwo] }));
     expect(await screen.findByText("Chapter queued for download.")).toBeInTheDocument();
   });
+
+  it("renders tap zones by preset and opens the shortcuts help", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tap zone: previous page" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tap zone: toggle menu" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "?" });
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("hides tap zones when the navigation preset is disabled", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/settings") {
+          return Response.json([{ key: "reader.navigation", value: "disabled" }]);
+        }
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Response.json(aggregate(chapters));
+        }
+        if (path.includes("/pages")) {
+          return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tap zone: toggle menu" })).not.toBeInTheDocument();
+  });
+
+  it("applies the paper theme and saves the screen fit override", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    const writes: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/settings") {
+          return Response.json([{ key: "reader.theme", value: "paper" }]);
+        }
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Response.json(aggregate(chapters));
+        }
+        if (path.includes("/pages")) {
+          return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+        }
+        if (path.includes(`/api/manga/${mangaId}/reader`) && init?.method === "PATCH") {
+          writes.push({ url: path, body: String(init.body) });
+          return Response.json({});
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    expect(document.querySelector(".reader")).toHaveAttribute("data-theme", "paper");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Reader settings" }));
+    await user.selectOptions(screen.getByLabelText("Fit"), "screen");
+    await waitFor(() => {
+      expect(writes.some((call) => call.body.includes('"fit":"screen"'))).toBe(true);
+    });
+  });
 });

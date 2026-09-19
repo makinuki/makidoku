@@ -8,6 +8,7 @@ body {
   margin: 0;
   min-width: 320px;
   background: #09090b;
+  overscroll-behavior-y: none;
 }
 button,
 input,
@@ -21,4 +22,44 @@ a {
     background-color 150ms ease,
     color 150ms ease,
     opacity 150ms ease;
+}
+
+/* Reader themes. The reader overlay reads these variables so day and night
+   reading restyle every surface without touching the app chrome. */
+.reader {
+  --reader-canvas: #000000;
+  --reader-bar: #09090b;
+  --reader-border: #27272a;
+  --reader-text: #e4e4e7;
+  --reader-dim: #a1a1aa;
+  --reader-accent: #fbbf24;
+  touch-action: pan-x pan-y;
+}
+.reader[data-theme="amoled"] {
+  --reader-canvas: #000000;
+  --reader-bar: #000000;
+  --reader-border: #18181b;
+  --reader-text: #f4f4f5;
+  --reader-dim: #a1a1aa;
+}
+.reader[data-theme="paper"] {
+  --reader-canvas: #ece5d3;
+  --reader-bar: #f6f1e4;
+  --reader-border: #d3c9b2;
+  --reader-text: #29251b;
+  --reader-dim: #6f6653;
+  --reader-accent: #b45309;
+}
+.reader[data-theme="light"] {
+  --reader-canvas: #d4d4d8;
+  --reader-bar: #f4f4f5;
+  --reader-border: #d4d4d8;
+  --reader-text: #18181b;
+  --reader-dim: #52525b;
+  --reader-accent: #b45309;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader * {
+    transition: none !important;
+  }
 }

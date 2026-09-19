@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   alignToSpread,
+  defaultReaderDisplay,
   defaultReaderGlobals,
+  readerDisplayFromSettings,
   readerGlobalsFromSettings,
+  readerImageFilter,
   readerOverridesFromManga,
   resolveReaderSettings,
   spreadStep,
@@ -39,5 +42,38 @@ describe("reader settings resolution", () => {
     expect(alignToSpread(-4, 10, "double")).toBe(0);
     expect(alignToSpread(99, 10, "double")).toBe(8);
     expect(alignToSpread(99, 10, "single")).toBe(9);
+  });
+
+  it("reads the extended fit value and display preferences", () => {
+    const globals = readerGlobalsFromSettings([{ key: "reader.fit", value: "screen" }]);
+    expect(globals.fit).toBe("screen");
+    const display = readerDisplayFromSettings([
+      { key: "reader.navigation", value: "edge" },
+      { key: "reader.webtoon_gap", value: 24 },
+      { key: "reader.theme", value: "paper" },
+      { key: "reader.brightness", value: 120 },
+      { key: "reader.grayscale", value: true },
+      { key: "reader.invert", value: false },
+    ]);
+    expect(display).toEqual({
+      navigation: "edge",
+      gap: 24,
+      theme: "paper",
+      brightness: 120,
+      grayscale: true,
+      invert: false,
+    });
+    expect(readerImageFilter(display)).toBe("brightness(120%) grayscale(1)");
+    expect(readerImageFilter(defaultReaderDisplay)).toBe("none");
+  });
+
+  it("clamps display preferences to their valid ranges", () => {
+    const display = readerDisplayFromSettings([
+      { key: "reader.navigation", value: "corners" },
+      { key: "reader.webtoon_gap", value: 99 },
+      { key: "reader.theme", value: "sepia" },
+      { key: "reader.brightness", value: "dim" },
+    ]);
+    expect(display).toEqual({ ...defaultReaderDisplay, gap: 48 });
   });
 });

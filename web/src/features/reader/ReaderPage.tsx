@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate, Navigate } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowLeft,
@@ -8,17 +8,20 @@ import {
   EyeOff,
   Maximize,
   Menu,
+  Minimize,
   SlidersHorizontal,
 } from "lucide-react";
 import { api } from "../../api";
 import type { Aggregate, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
 import {
+  alignToSpread,
   defaultReaderGlobals,
   emptyReaderOverrides,
   readerGlobalsFromSettings,
   readerOverridesFromManga,
   resolveReaderSettings,
+  spreadStep,
   type ReaderDirection as Direction,
   type ReaderFit as Fit,
   type ReaderGlobals,
@@ -33,6 +36,7 @@ export function ReaderPage() {
 
   let mangaId = "";
   let chapterId = "";
+  let canonicalize = false;
   if (routeManga && routeChapter) {
     mangaId = decodeURIComponent(routeManga);
     chapterId = decodeURIComponent(routeChapter);
@@ -41,6 +45,9 @@ export function ReaderPage() {
     const chapterParam = searchParams.get("chapter") || "";
     mangaId = mangaParam;
     chapterId = chapterParam;
+    // Legacy query URLs redirect to the canonical path form below so only
+    // one reader URL scheme stays in use.
+    if (mangaParam && chapterParam) canonicalize = true;
   }
 
   const [aggregate, setAggregate] = useState<Aggregate>();
@@ -59,6 +66,34 @@ export function ReaderPage() {
   const [incognito, setIncognito] = useState(false);
   const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Leaving the reader always lands on a real page: the title details when a
+  // manga is open, otherwise the library. A bare history step would strand a
+  // direct open or a new tab with nowhere to go.
+  const exitReader = useCallback(() => {
+    if (mangaId) navigate(`/manga/${encodeURIComponent(mangaId)}`);
+    else navigate("/library");
+  }, [mangaId, navigate]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {
+        // Leaving fullscreen is best-effort; the chrome stays usable.
+      });
+      return;
+    }
+    void readerRef.current?.requestFullscreen().catch(() => {
+      // Fullscreen may be unavailable (iframe permissions, headless test);
+      // the reader remains fully usable inline.
+    });
+  }, []);
+  useEffect(() => {
+    const sync = () => setIsFullscreen(document.fullscreenElement != null);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
 
   // The effective reader settings are the per-title override on top of the
   // global preference; see readerSettings.ts for the resolution rules.
@@ -134,12 +169,20 @@ export function ReaderPage() {
         setAggregate(data);
         setPages(loaded);
         sessionStartedAt.current = Date.now();
+        // Resume from the resolved title settings, not the `mode` state: the
+        // global and per-title preferences may still be loading when the
+        // chapter fetch wins the race, and the stale mount-time default would
+        // misalign the opening spread in double mode.
+        const effective = resolveReaderSettings(
+          globals.current,
+          readerOverridesFromManga(data.manga),
+        );
         const saved = resumeIndex(
           data.progress?.lastReadChapterId === chapterId
             ? (data.progress?.lastReadPage ?? null)
             : null,
           loaded.length,
-          mode,
+          effective.mode,
         );
         setIndex(saved);
       } catch (e) {
@@ -155,7 +198,7 @@ export function ReaderPage() {
   const saver = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!pages.length || !aggregate) return;
-    const visibleEnd = Math.min(pages.length, index + (mode === "double" ? 2 : 1));
+    const visibleEnd = Math.min(pages.length, index + spreadStep(mode));
     const save = () => {
       saver.current = null;
       const elapsed = Math.floor((Date.now() - sessionStartedAt.current) / 1000);
@@ -189,6 +232,8 @@ export function ReaderPage() {
     const onKey = (event: KeyboardEvent) => {
       // Shortcuts must not fire while a form control has focus: typing into
       // another field or stepping the page slider must stay local to it.
+      // Buttons are left alone: arrows never activate a focused button, so
+      // chevron focus must not trap page navigation.
       const target = event.target as HTMLElement | null;
       if (
         target &&
@@ -200,21 +245,34 @@ export function ReaderPage() {
         return;
       }
       if (event.key.toLowerCase() === "m") setMenu((value) => !value);
-      if (event.key.toLowerCase() === "w")
-        setMode((value) =>
-          value === "single" ? "double" : value === "double" ? "webtoon" : "single",
-        );
-      const step = mode === "double" ? 2 : 1;
+      if (event.key.toLowerCase() === "f") toggleFullscreen();
+      if (event.key.toLowerCase() === "w") {
+        // The header quick-switcher and the `w` key share one path: both
+        // persist the per-title override, so a late settings fetch can never
+        // clobber a mode the reader just chose.
+        const next = mode === "single" ? "double" : mode === "double" ? "webtoon" : "single";
+        if (mangaId) saveReaderOverride({ mode: next });
+        else setMode(next);
+      }
+      const step = spreadStep(mode);
       const forward = direction === "ltr" ? "ArrowRight" : "ArrowLeft";
       const backward = direction === "ltr" ? "ArrowLeft" : "ArrowRight";
       if (event.key === forward || event.key.toLowerCase() === "d")
-        setIndex((value) => Math.min(Math.max(pages.length - 1, 0), value + step));
+        setIndex((value) => alignToSpread(value + step, pages.length, mode));
       if (event.key === backward || event.key.toLowerCase() === "a")
-        setIndex((value) => Math.max(0, value - step));
+        setIndex((value) => alignToSpread(value - step, pages.length, mode));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [direction, mode, pages.length]);
+  }, [direction, mangaId, mode, pages.length, saveReaderOverride, toggleFullscreen]);
+  if (canonicalize) {
+    return (
+      <Navigate
+        to={`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(chapterId)}`}
+        replace
+      />
+    );
+  }
   if (error)
     return (
       <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
@@ -222,7 +280,7 @@ export function ReaderPage() {
           <ErrorState message={error} />
           <div className="mt-4 flex gap-2">
             <button
-              onClick={() => navigate(-1)}
+              onClick={exitReader}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
             >
               <ArrowLeft size={15} /> Back
@@ -240,10 +298,18 @@ export function ReaderPage() {
   if (!mangaId || !chapterId)
     return (
       <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
-        <EmptyState
-          title="No chapter selected"
-          text="Open a chapter from a title's details page to start reading."
-        />
+        <div className="max-w-lg">
+          <EmptyState
+            title="No chapter selected"
+            text="Open a chapter from a title's details page to start reading."
+          />
+          <button
+            onClick={exitReader}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+          >
+            <ArrowLeft size={15} /> Back to library
+          </button>
+        </div>
       </div>
     );
   if (loading)
@@ -261,7 +327,7 @@ export function ReaderPage() {
             text="The plugin returned an empty page list. Try refreshing the title from its details page."
           />
           <button
-            onClick={() => navigate(-1)}
+            onClick={exitReader}
             className="mt-4 inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
           >
             <ArrowLeft size={15} /> Back
@@ -276,13 +342,14 @@ export function ReaderPage() {
       </div>
     );
   return (
-    <div className="fixed inset-0 z-30 flex flex-col bg-black">
+    <div ref={readerRef} className="fixed inset-0 z-30 flex flex-col bg-black">
       <div
         className={`flex items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-3 py-2 ${menu ? "" : "hidden"}`}
       >
         <button
-          aria-label="Back"
-          onClick={() => navigate(-1)}
+          aria-label={mangaId ? "Back to details" : "Back to library"}
+          title={mangaId ? "Back to details" : "Back to library"}
+          onClick={exitReader}
           className="rounded-lg p-2 text-zinc-300 hover:bg-zinc-800"
         >
           <ArrowLeft size={18} />
@@ -296,35 +363,36 @@ export function ReaderPage() {
             </span>
           )}
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1" role="group" aria-label="Reader mode">
           <button
-            onClick={() => setMode("single")}
+            aria-pressed={mode === "single"}
+            onClick={() => saveReaderOverride({ mode: "single" })}
             className={`rounded-lg px-2 py-1 text-xs ${mode === "single" ? "bg-amber-400 text-zinc-950" : "text-zinc-400"}`}
           >
             Single
           </button>
           <button
-            onClick={() => setMode("double")}
+            aria-pressed={mode === "double"}
+            onClick={() => saveReaderOverride({ mode: "double" })}
             className={`rounded-lg px-2 py-1 text-xs ${mode === "double" ? "bg-amber-400 text-zinc-950" : "text-zinc-400"}`}
           >
             Double
           </button>
           <button
-            onClick={() => setMode("webtoon")}
+            aria-pressed={mode === "webtoon"}
+            onClick={() => saveReaderOverride({ mode: "webtoon" })}
             className={`rounded-lg px-2 py-1 text-xs ${mode === "webtoon" ? "bg-amber-400 text-zinc-950" : "text-zinc-400"}`}
           >
             Webtoon
           </button>
           <button
-            aria-label="Fullscreen"
-            onClick={() =>
-              document.fullscreenElement
-                ? void document.exitFullscreen()
-                : void document.documentElement.requestFullscreen()
-            }
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            aria-pressed={isFullscreen}
+            title={isFullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}
+            onClick={toggleFullscreen}
             className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800"
           >
-            <Maximize size={16} />
+            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
           </button>
           <button
             aria-label="Reader settings"
@@ -405,19 +473,25 @@ export function ReaderPage() {
       <div
         className={`flex items-center gap-3 border-t border-zinc-800 bg-zinc-950 px-4 py-2 ${menu ? "" : "hidden"}`}
       >
-        <span className="text-xs text-zinc-500">
+        <span className="text-xs text-zinc-500" aria-hidden="true">
           {Math.min(index + 1, pages.length)} / {pages.length}
         </span>
         <input
           type="range"
+          aria-label="Page"
+          aria-valuemin={1}
+          aria-valuemax={pages.length}
+          aria-valuenow={Math.min(index + 1, pages.length)}
+          aria-valuetext={`Page ${Math.min(index + 1, pages.length)} of ${pages.length}`}
           min="0"
           max={Math.max(0, pages.length - 1)}
           value={index}
-          onChange={(e) => setIndex(Number(e.target.value))}
+          onChange={(e) => setIndex(alignToSpread(Number(e.target.value), pages.length, mode))}
           className="flex-1 accent-amber-400"
         />
         <button
-          aria-label="Toggle menu"
+          aria-label="Hide reader menu"
+          aria-expanded={menu}
           onClick={() => setMenu(false)}
           className="rounded-lg p-2 text-zinc-400"
         >
@@ -453,15 +527,24 @@ function Paged({
   fit: Fit;
 }) {
   const count = double ? 2 : 1;
+  const mode: Mode = double ? "double" : "single";
+  // Chevron sides stay fixed, but their actions follow the reading direction:
+  // in RTL the left control advances and the right control goes back, so the
+  // labels always describe what the button does.
+  const goPrevious = () => setIndex(alignToSpread(index - count, pages.length, mode));
+  const goNext = () => setIndex(alignToSpread(index + count, pages.length, mode));
+  const leftAction = direction === "rtl" ? goNext : goPrevious;
+  const rightAction = direction === "rtl" ? goPrevious : goNext;
   return (
     <div
-      className={`relative flex min-h-0 flex-1 items-center justify-center gap-2 overflow-hidden bg-black p-2 sm:p-6 ${direction === "rtl" ? "flex-row-reverse" : ""}`}
+      className={`relative flex min-h-0 flex-1 items-center justify-center gap-2 overflow-auto bg-black p-2 sm:p-6 ${direction === "rtl" ? "flex-row-reverse" : ""}`}
     >
       {pages.slice(index, index + count).map((page, offset) => (
         <PageImage
           key={page.index}
           page={page}
           alt={`Page ${index + offset + 1}`}
+          priority={offset === 0}
           className={
             fit === "height"
               ? "max-h-full w-auto object-contain"
@@ -474,15 +557,15 @@ function Paged({
         />
       ))}
       <button
-        aria-label="Previous page"
-        onClick={() => setIndex(Math.max(0, index - count))}
+        aria-label={direction === "rtl" ? "Next page" : "Previous page"}
+        onClick={leftAction}
         className="absolute left-2 top-1/2 rounded-full bg-black/60 p-3 text-white"
       >
         <ChevronLeft />
       </button>
       <button
-        aria-label="Next page"
-        onClick={() => setIndex(Math.min(pages.length - 1, index + count))}
+        aria-label={direction === "rtl" ? "Previous page" : "Next page"}
+        onClick={rightAction}
         className="absolute right-2 top-1/2 rounded-full bg-black/60 p-3 text-white"
       >
         <ChevronRight />
@@ -566,17 +649,21 @@ function Webtoon({
 // PageImage degrades a failed delivery into an inline retry. The retry
 // re-requests the image with a cache-busting parameter so an intermediary
 // cache cannot serve the failed response again. Layout classes come from the
-// caller: paged and webtoon modes fit images to the screen differently.
+// caller: paged and webtoon modes fit images to the screen differently. The
+// current spread decodes async with high fetch priority; surrounding images
+// stay lazy so page turns usually hit the cache instead of the network.
 function PageImage({
   page,
   alt,
   className,
   loading,
+  priority,
 }: {
   page: Page;
   alt: string;
   className: string;
   loading?: "lazy" | "eager";
+  priority?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -594,11 +681,13 @@ function PageImage({
     );
   return (
     <img
-      src={`/api/pages/${encodeURIComponent(page.id)}/image${attempt ? `?retry=${attempt}` : ""}`}
+      src={`${api.readerImage(page)}${attempt ? `?retry=${attempt}` : ""}`}
       alt={alt}
       onError={() => setFailed(true)}
       className={className}
-      loading={loading}
+      loading={loading ?? (priority ? "eager" : undefined)}
+      decoding="async"
+      fetchPriority={priority ? "high" : "auto"}
     />
   );
 }
@@ -612,6 +701,6 @@ function chapterLabel(data: Aggregate, chapterID: string) {
 // containing that page, and a missing or out-of-range value clamps to the
 // available pages.
 export function resumeIndex(lastReadPage: number | null, pageCount: number, mode: Mode): number {
-  const zeroBased = Math.min(Math.max(0, (lastReadPage ?? 1) - 1), Math.max(0, pageCount - 1));
-  return mode === "double" ? zeroBased - (zeroBased % 2) : zeroBased;
+  const zeroBased = (lastReadPage ?? 1) - 1;
+  return alignToSpread(zeroBased, pageCount, mode);
 }

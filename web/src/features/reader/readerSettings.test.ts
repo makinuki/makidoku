@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  alignToSpread,
   defaultReaderGlobals,
   readerGlobalsFromSettings,
   readerOverridesFromManga,
   resolveReaderSettings,
+  spreadStep,
 } from "./readerSettings";
 
 describe("reader settings resolution", () => {
@@ -27,5 +29,15 @@ describe("reader settings resolution", () => {
   it("keeps the built-in defaults when nothing is stored", () => {
     const overrides = readerOverridesFromManga({});
     expect(resolveReaderSettings(defaultReaderGlobals, overrides)).toEqual(defaultReaderGlobals);
+  });
+
+  it("aligns every paged entry point to the same double spread", () => {
+    expect(spreadStep("double")).toBe(2);
+    expect(spreadStep("single")).toBe(1);
+    expect(alignToSpread(3, 10, "double")).toBe(2);
+    expect(alignToSpread(3, 10, "single")).toBe(3);
+    expect(alignToSpread(-4, 10, "double")).toBe(0);
+    expect(alignToSpread(99, 10, "double")).toBe(8);
+    expect(alignToSpread(99, 10, "single")).toBe(9);
   });
 });

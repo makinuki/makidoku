@@ -58,6 +58,17 @@ export function readerOverridesFromManga(manga: {
   };
 }
 
+// A double-page spread opens on the pair containing a page. All paged
+// navigation (slider, hotkeys, chevrons) and resume share this helper so a
+// spread can never land on a mispaired odd index.
+export function alignToSpread(index: number, pageCount: number, mode: ReaderMode): number {
+  const clamped = Math.min(Math.max(0, index), Math.max(0, pageCount - 1));
+  return mode === "double" ? clamped - (clamped % 2) : clamped;
+}
+
+export function spreadStep(mode: ReaderMode): number {
+  return mode === "double" ? 2 : 1;
+}
 // A per-title override wins over the global setting; a null override falls back
 // to the global value.
 export function resolveReaderSettings(

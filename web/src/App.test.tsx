@@ -3646,4 +3646,51 @@ describe("reader chapter flow", () => {
       false,
     );
   });
+
+  it("retries all failed pages at once and surfaces download state", async () => {
+    const downloaded = [
+      { id: chapterOne, mangaId, chapterNumber: 1, downloaded: true },
+      { id: chapterTwo, mangaId, chapterNumber: 2, downloaded: false },
+    ];
+    let queued: unknown;
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/incognito") return Response.json({ enabled: false });
+      if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+        return Response.json(aggregate(downloaded));
+      }
+      if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+        return Response.json([page(chapterOne, 1), page(chapterOne, 2)]);
+      }
+      if (path.includes(`/api/chapters/${chapterTwo}/pages`)) {
+        return Response.json([page(chapterTwo, 1), page(chapterTwo, 2)]);
+      }
+      if (path === "/api/download" && init?.method === "POST") {
+        queued = JSON.parse(String(init.body));
+        return Response.json({ items: [] });
+      }
+      if (path.startsWith("/api/progress")) return Response.json({});
+      if (path.startsWith("/api/manga/") && path.endsWith("/reader")) {
+        return Response.json({});
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    fireEvent.error(await screen.findByAltText("Page 1"));
+    expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
+    expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download next" }));
+    await waitFor(() => expect(queued).toMatchObject({ mangaId, chapters: [chapterTwo] }));
+    expect(await screen.findByText("Chapter queued for download.")).toBeInTheDocument();
+  });
 });

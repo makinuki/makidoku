@@ -78,6 +78,33 @@ export function ReaderPage() {
       return false;
     }
   });
+  // Failed page deliveries, by page id. PageImage reports failures up so the
+  // reader can offer a single retry-all instead of per-image buttons only.
+  const [failedPages, setFailedPages] = useState<string[]>([]);
+  const [retryEpoch, setRetryEpoch] = useState(0);
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [queueNote, setQueueNote] = useState("");
+  useEffect(() => {
+    const sync = () => setOnline(navigator.onLine);
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
+  const reportFailed = useCallback((id: string) => {
+    setFailedPages((current) => (current.includes(id) ? current : [...current, id]));
+  }, []);
+  const reportRecovered = useCallback((id: string) => {
+    setFailedPages((current) => current.filter((item) => item !== id));
+  }, []);
+  const retryAllFailed = useCallback(() => {
+    setFailedPages([]);
+    setRetryEpoch((value) => value + 1);
+  }, []);
   const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
   const readerRef = useRef<HTMLDivElement>(null);
@@ -125,9 +152,28 @@ export function ReaderPage() {
       setDrawerOpen(false);
       setGoToOpen(false);
       setDismissedNextUp(false);
+      setFailedPages([]);
+      setQueueNote("");
       navigate(`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(id)}`);
     },
     [mangaId, navigate],
+  );
+  const currentChapter = useMemo(
+    () => aggregate?.chapters.find((item) => item.id === chapterId),
+    [aggregate, chapterId],
+  );
+  const queueChapter = useCallback(
+    (id: string) => {
+      if (!aggregate) return;
+      setQueueNote("");
+      api
+        .enqueue(mangaId, [id], "", aggregate.manga.downloadFormat)
+        .then(() => setQueueNote("Chapter queued for download."))
+        .catch((e) =>
+          setQueueNote(e instanceof Error ? e.message : "Unable to queue the download"),
+        );
+    },
+    [aggregate, mangaId],
   );
   const setAutoAdvanceStored = useCallback((value: boolean) => {
     setAutoAdvance(value);
@@ -203,6 +249,8 @@ export function ReaderPage() {
     setError("");
     setPages([]);
     setDismissedNextUp(false);
+    setFailedPages([]);
+    setQueueNote("");
     // The deep-link page is read once per chapter load: search params are
     // stable for the session, and later navigations re-run this effect.
     const deepLink = (() => {
@@ -410,6 +458,24 @@ export function ReaderPage() {
     // this one so the jump rarely shows a loading screen.
     if (atEnd && flow.next) void api.pages(flow.next.id).catch(() => {});
   }, [atEnd, flow.next]);
+  useEffect(() => {
+    // Prefetch the neighboring spreads in paged modes so page turns usually
+    // hit the browser cache. Two spreads ahead covers double-page jumps; one
+    // behind covers going back. Failures are ignored: the image element
+    // retries through the normal path.
+    if (mode === "webtoon" || !pages.length) return;
+    const step = spreadStep(mode);
+    const ids = new Set<string>();
+    for (const offset of [step, step * 2, -step]) {
+      const page = pages[index + offset];
+      if (page) ids.add(page.id);
+    }
+    for (const id of ids) {
+      const img = new Image();
+      img.decoding = "async";
+      img.src = `/api/pages/${encodeURIComponent(id)}/image`;
+    }
+  }, [index, mode, pages]);
   // Auto-advance counts down on the end card, then jumps. Any navigation
   // away or an explicit stay cancels it via the effect cleanup.
   useEffect(() => {
@@ -512,6 +578,19 @@ export function ReaderPage() {
           {incognito && (
             <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[11px] text-amber-300">
               <EyeOff size={12} /> Incognito
+            </span>
+          )}
+          {currentChapter?.downloaded && (
+            <span
+              title="This chapter is downloaded and reads offline"
+              className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] text-emerald-300"
+            >
+              <Check size={12} /> Saved
+            </span>
+          )}
+          {!online && (
+            <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-red-400/15 px-2 py-0.5 text-[11px] text-red-300">
+              Offline
             </span>
           )}
         </div>
@@ -628,7 +707,14 @@ export function ReaderPage() {
         </div>
       )}
       {mode === "webtoon" ? (
-        <Webtoon pages={pages} index={index} setIndex={setIndex} />
+        <Webtoon
+          pages={pages}
+          index={index}
+          setIndex={setIndex}
+          retryEpoch={retryEpoch}
+          onFail={reportFailed}
+          onRecover={reportRecovered}
+        />
       ) : (
         <Paged
           pages={pages}
@@ -637,6 +723,9 @@ export function ReaderPage() {
           double={mode === "double"}
           direction={direction}
           fit={fit}
+          retryEpoch={retryEpoch}
+          onFail={reportFailed}
+          onRecover={reportRecovered}
         />
       )}
       {drawerOpen && (
@@ -651,7 +740,9 @@ export function ReaderPage() {
         <NextUpCard
           next={flow.next}
           autoAdvance={autoAdvance}
+          queueNote={queueNote}
           onNext={() => goChapter(flow.next!.id)}
+          onDownload={() => queueChapter(flow.next!.id)}
           onStay={() => setDismissedNextUp(true)}
           onDetails={exitReader}
         />
@@ -707,6 +798,14 @@ export function ReaderPage() {
           className="absolute right-4 top-4 rounded-lg bg-zinc-900/80 p-2 text-zinc-300"
         >
           <Menu size={17} />
+        </button>
+      )}
+      {failedPages.length > 0 && (
+        <button
+          onClick={retryAllFailed}
+          className="absolute bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-full bg-red-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-2xl"
+        >
+          Retry {failedPages.length} failed {failedPages.length === 1 ? "page" : "pages"}
         </button>
       )}
     </div>
@@ -765,13 +864,17 @@ function ChapterDrawer({
 function NextUpCard({
   next,
   autoAdvance,
+  queueNote,
   onNext,
+  onDownload,
   onStay,
   onDetails,
 }: {
   next: Chapter;
   autoAdvance: boolean;
+  queueNote: string;
   onNext: () => void;
+  onDownload: () => void;
   onStay: () => void;
   onDetails: () => void;
 }) {
@@ -789,6 +892,18 @@ function NextUpCard({
         >
           Next chapter
         </button>
+        {next.downloaded ? (
+          <span className="inline-flex items-center gap-1 self-center text-xs text-emerald-300">
+            <Check size={13} /> Saved
+          </span>
+        ) : (
+          <button
+            onClick={onDownload}
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+          >
+            Download next
+          </button>
+        )}
         <button onClick={onStay} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm">
           Keep reading
         </button>
@@ -799,6 +914,11 @@ function NextUpCard({
           Details
         </button>
       </div>
+      {queueNote && (
+        <p role="status" className="mt-2 text-xs text-emerald-300">
+          {queueNote}
+        </p>
+      )}
     </div>
   );
 }
@@ -867,6 +987,9 @@ function Paged({
   double,
   direction,
   fit,
+  retryEpoch,
+  onFail,
+  onRecover,
 }: {
   pages: Page[];
   index: number;
@@ -874,6 +997,9 @@ function Paged({
   double: boolean;
   direction: Direction;
   fit: Fit;
+  retryEpoch: number;
+  onFail: (id: string) => void;
+  onRecover: (id: string) => void;
 }) {
   const count = double ? 2 : 1;
   const mode: Mode = double ? "double" : "single";
@@ -894,6 +1020,9 @@ function Paged({
           page={page}
           alt={`Page ${index + offset + 1}`}
           priority={offset === 0}
+          retryEpoch={retryEpoch}
+          onFail={onFail}
+          onRecover={onRecover}
           className={
             fit === "height"
               ? "max-h-full w-auto object-contain"
@@ -926,10 +1055,16 @@ function Webtoon({
   pages,
   index,
   setIndex,
+  retryEpoch,
+  onFail,
+  onRecover,
 }: {
   pages: Page[];
   index: number;
   setIndex: (value: number) => void;
+  retryEpoch: number;
+  onFail: (id: string) => void;
+  onRecover: (id: string) => void;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const initialIndex = useRef(index);
@@ -939,7 +1074,7 @@ function Webtoon({
     count: pages.length,
     getScrollElement: () => parent.current,
     estimateSize: () => 720,
-    overscan: 2,
+    overscan: 4,
   });
   const virtualizerRef = useRef(virtualizer);
   virtualizerRef.current = virtualizer;
@@ -987,6 +1122,9 @@ function Webtoon({
               alt={`Page ${item.index + 1}`}
               className="w-full rounded-sm"
               loading="lazy"
+              retryEpoch={retryEpoch}
+              onFail={onFail}
+              onRecover={onRecover}
             />
           </div>
         ))}
@@ -1007,22 +1145,45 @@ function PageImage({
   className,
   loading,
   priority,
+  retryEpoch,
+  onFail,
+  onRecover,
 }: {
   page: Page;
   alt: string;
   className: string;
   loading?: "lazy" | "eager";
   priority?: boolean;
+  retryEpoch: number;
+  onFail: (id: string) => void;
+  onRecover: (id: string) => void;
 }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // A retry-all epoch resets every failed image at once; the per-image
+  // button stays for single failures.
+  useEffect(() => {
+    if (retryEpoch > 0 && failed) {
+      setFailed(false);
+      setAttempt((value) => value + 1);
+      onRecover(page.id);
+    }
+    // Runs on epoch bumps only; page identity is stable per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryEpoch]);
+  const fail = () => {
+    setFailed(true);
+    onFail(page.id);
+  };
+  const retry = () => {
+    setFailed(false);
+    setAttempt((value) => value + 1);
+    onRecover(page.id);
+  };
   if (failed)
     return (
       <button
-        onClick={() => {
-          setFailed(false);
-          setAttempt((value) => value + 1);
-        }}
+        onClick={retry}
         className={`grid h-64 w-full place-items-center rounded-sm border border-zinc-800 bg-zinc-900 text-sm text-zinc-300 ${className}`}
       >
         Retry page
@@ -1032,7 +1193,7 @@ function PageImage({
     <img
       src={`${api.readerImage(page)}${attempt ? `?retry=${attempt}` : ""}`}
       alt={alt}
-      onError={() => setFailed(true)}
+      onError={fail}
       className={className}
       loading={loading ?? (priority ? "eager" : undefined)}
       decoding="async"

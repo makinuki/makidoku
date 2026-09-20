@@ -1506,7 +1506,10 @@ function Paged({
           onToggleMenu={onToggleMenu}
           onNavigateTurn={onNavigateTurn}
           onZoomToggle={() => {
-            void zoomRef.current?.zoomIn();
+            // The gesture toggles: a second double tap while the spread is
+            // zoomed resets it instead of zooming further.
+            if (zoomed) void zoomRef.current?.resetTransform();
+            else void zoomRef.current?.zoomIn();
           }}
           onGuardClick={suppressAfterSwipe}
         />
@@ -1555,9 +1558,17 @@ function Paged({
 }
 
 // ZoneLayer maps taps and clicks to navigation without delaying them: side
-// zones act immediately, the center zone toggles the menu on a single tap and
-// zooms on a double tap. Zones hide while zoomed so pan and pinch gestures
-// reach the image instead of navigating away.
+// zones act immediately, the center zone resolves its own tap pair so that a
+// single tap toggles the menu and a double tap zooms. Zones hide while zoomed
+// so pan and pinch gestures reach the image instead of navigating away.
+//
+// Touch input produces no dblclick, so the pair is detected from the click
+// stream instead: the first tap holds the menu toggle back for DOUBLE_TAP_MS
+// (which doubles as the double tap window, keeping the pending toggle
+// cancellable), and a second tap inside that window and the slop cancels the
+// toggle and zooms.
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_SLOP = 30;
 function ZoneLayer({
   navigation,
   direction,
@@ -1578,15 +1589,25 @@ function ZoneLayer({
   onGuardClick: (event: React.SyntheticEvent) => void;
 }) {
   const menuTimer = useRef(0);
+  const lastTap = useRef<{ at: number; x: number; y: number } | null>(null);
   useEffect(() => () => window.clearTimeout(menuTimer.current), []);
-  const centerTap = () => {
+  const centerTap = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const now = Date.now();
+    const previous = lastTap.current;
     window.clearTimeout(menuTimer.current);
-    menuTimer.current = window.setTimeout(onToggleMenu, 260);
-  };
-  const centerDouble = (event: React.SyntheticEvent) => {
-    event.preventDefault();
-    window.clearTimeout(menuTimer.current);
-    onZoomToggle();
+    if (
+      previous &&
+      now - previous.at < DOUBLE_TAP_MS &&
+      Math.abs(event.clientX - previous.x) <= DOUBLE_TAP_SLOP &&
+      Math.abs(event.clientY - previous.y) <= DOUBLE_TAP_SLOP
+    ) {
+      // Consume the pair so a third tap starts a fresh sequence.
+      lastTap.current = null;
+      onZoomToggle();
+      return;
+    }
+    lastTap.current = { at: now, x: event.clientX, y: event.clientY };
+    menuTimer.current = window.setTimeout(onToggleMenu, DOUBLE_TAP_MS);
   };
   const prevLabel = direction === "rtl" ? "Next page" : "Previous page";
   const nextLabel = direction === "rtl" ? "Previous page" : "Next page";
@@ -1640,7 +1661,6 @@ function ZoneLayer({
         <button
           aria-label="Tap zone: toggle menu"
           onClick={centerTap}
-          onDoubleClick={centerDouble}
           className={`reader-zone absolute inset-y-0 ${centerInset}`}
         />
       )}

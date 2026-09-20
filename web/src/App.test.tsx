@@ -1469,9 +1469,7 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     fireEvent.error(await screen.findByAltText("Page 1"));
-    expect(
-      await screen.findByRole("button", { name: "Retry 1 failed page" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "ArrowLeft" });
@@ -3873,6 +3871,67 @@ describe("reader chapter flow", () => {
     expect(screen.getAllByRole("button", { name: "Tap zone: toggle menu" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Tap zone: next page" }));
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+  });
+
+  it("toggles the menu on a single center zone tap", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tap zone: toggle menu" }));
+    expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+  });
+
+  it("zooms on a touch double tap in the center zone", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    // Touch input produces no dblclick, so the center zone resolves the tap
+    // pair itself: the second tap cancels the pending menu toggle and zooms.
+    // Zones unmount while zoomed, which is what makes the zoom observable.
+    const center = () => screen.getByRole("button", { name: "Tap zone: toggle menu" });
+    fireEvent.click(center(), { clientX: 200, clientY: 300 });
+    fireEvent.click(center(), { clientX: 204, clientY: 302 });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Tap zone: toggle menu" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Reset zoom" })).toBeInTheDocument();
+    // A tap pair must not also toggle the menu.
+    expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
+  });
+
+  it("keeps two distant center taps from zooming", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    // The pair needs to land on the same spot: a drifting second tap is a
+    // separate tap, so the menu still opens.
+    fireEvent.click(screen.getByRole("button", { name: "Tap zone: toggle menu" }), {
+      clientX: 200,
+      clientY: 300,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Tap zone: toggle menu" }), {
+      clientX: 320,
+      clientY: 301,
+    });
+    expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tap zone: toggle menu" })).toBeInTheDocument();
   });
 
   it("applies the paper theme and saves the screen fit override", async () => {

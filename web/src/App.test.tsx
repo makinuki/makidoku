@@ -3541,7 +3541,9 @@ describe("reader chapter flow", () => {
   const chapterOne = "0198c0de-7a22-7000-8000-00000000cafe";
   const chapterTwo = "0198c0de-7a22-7000-8000-00000000cb01";
   const page = (chapter: string, n: number) => ({
-    id: `0198c0de-7a33-7000-8000-00000000000${n}`,
+    // Scoped to the chapter so fixtures from different chapters can never
+    // collide on the same id when a test mounts both.
+    id: `${chapter}-page-${n}`,
     chapterId: chapter,
     index: n - 1,
     isScrambled: false,
@@ -3807,8 +3809,26 @@ describe("reader chapter flow", () => {
     expect(await screen.findByText("Saved")).toBeInTheDocument();
     fireEvent.error(await screen.findByAltText("Page 1"));
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
+    // The page failing again after a spread round trip, while the pill still
+    // tracks it, re-populates the pill once: repeat failure reports for a
+    // tracked id are deduplicated.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.error(await screen.findByAltText("Page 1"));
+    expect(
+      await screen.findByRole("button", { name: "Retry 1 failed page" }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
-    expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
+    const retried = await screen.findByAltText("Page 1");
+    expect(retried.getAttribute("src")).toContain("retry=1");
+    // Each retry bumps the cache-buster again.
+    fireEvent.error(retried);
+    expect(
+      await screen.findByRole("button", { name: "Retry 1 failed page" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
+    expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=2");
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Download next" }));

@@ -3673,6 +3673,56 @@ describe("reader chapter flow", () => {
     expect(screen.queryByAltText("Page 1")).not.toBeInTheDocument();
   });
 
+  it("keeps the page parameter when redirecting legacy reader URLs", async () => {
+    window.history.pushState({}, "", `/reader?manga=${mangaId}&chapter=${chapterOne}&page=2`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    // The scheme change must not swallow the deep-link page.
+    await waitFor(() => expect(window.location.search).toBe("?page=2"));
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+  });
+
+  it("moves the retry pill above the next-up card when both are visible", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.error(await screen.findByAltText("Page 1"));
+    const pill = await screen.findByRole("button", { name: /Retry 1 failed page/ });
+    expect(pill.className).toContain("bottom-16");
+    // At the chapter end the next-up card occupies the pill's slot, so the
+    // pill shifts up instead of stacking under it.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+    expect(pill.className).toContain("bottom-72");
+  });
+
+  it("applies the reader theme to the error screen", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 500 })),
+    );
+    const { container } = render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByText(/Request failed/)).toBeInTheDocument();
+    const surface = container.querySelector("div.reader[data-theme]");
+    expect(surface).not.toBeNull();
+    expect(surface!.getAttribute("data-theme")).toBe("dark");
+    expect(surface!.className).toContain("bg-[var(--reader-canvas)]");
+  });
+
   it("never posts progress while incognito is on", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3816,17 +3866,13 @@ describe("reader chapter flow", () => {
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "ArrowLeft" });
     fireEvent.error(await screen.findByAltText("Page 1"));
-    expect(
-      await screen.findByRole("button", { name: "Retry 1 failed page" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
     const retried = await screen.findByAltText("Page 1");
     expect(retried.getAttribute("src")).toContain("retry=1");
     // Each retry bumps the cache-buster again.
     fireEvent.error(retried);
-    expect(
-      await screen.findByRole("button", { name: "Retry 1 failed page" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
     expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=2");
     fireEvent.keyDown(window, { key: "ArrowRight" });

@@ -676,16 +676,25 @@ export function ReaderPage() {
     return () => window.clearTimeout(timer);
   }, [atEnd, flow.next, dismissedNextUp, autoAdvance, goChapter]);
   if (canonicalize) {
+    // Extra query parameters survive the scheme change so a legacy deep link
+    // such as ?page=5 still opens on the requested page.
+    const rest = new URLSearchParams(searchParams);
+    rest.delete("manga");
+    rest.delete("chapter");
+    const query = rest.toString();
     return (
       <Navigate
-        to={`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(chapterId)}`}
+        to={`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(chapterId)}${query ? `?${query}` : ""}`}
         replace
       />
     );
   }
   if (error)
     return (
-      <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
+      <div
+        data-theme={display.theme}
+        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)] p-5"
+      >
         <div className="max-w-lg">
           <ErrorState message={error} />
           <div className="mt-4 flex gap-2">
@@ -707,7 +716,10 @@ export function ReaderPage() {
     );
   if (!mangaId || !chapterId)
     return (
-      <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
+      <div
+        data-theme={display.theme}
+        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)] p-5"
+      >
         <div className="max-w-lg">
           <EmptyState
             title="No chapter selected"
@@ -724,13 +736,19 @@ export function ReaderPage() {
     );
   if (loading)
     return (
-      <div className="grid min-h-screen place-items-center bg-zinc-950">
+      <div
+        data-theme={display.theme}
+        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)]"
+      >
         <LoadingState label="Loading reader" />
       </div>
     );
   if (aggregate && !pages.length)
     return (
-      <div className="grid min-h-screen place-items-center bg-zinc-950 p-5">
+      <div
+        data-theme={display.theme}
+        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)] p-5"
+      >
         <div className="max-w-lg">
           <EmptyState
             title="This chapter has no pages"
@@ -747,7 +765,10 @@ export function ReaderPage() {
     );
   if (!aggregate || !pages.length)
     return (
-      <div className="grid min-h-screen place-items-center bg-zinc-950">
+      <div
+        data-theme={display.theme}
+        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)]"
+      >
         <LoadingState label="Loading reader" />
       </div>
     );
@@ -785,8 +806,11 @@ export function ReaderPage() {
             </span>
           )}
           {!online && (
-            <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-red-400/15 px-2 py-0.5 text-[11px] text-red-300">
-              Offline
+            <span
+              title="No network connection; remote sources are unreachable"
+              className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-red-400/15 px-2 py-0.5 text-[11px] text-red-300"
+            >
+              No network
             </span>
           )}
         </div>
@@ -1107,7 +1131,7 @@ export function ReaderPage() {
         <button
           aria-label="Show reader menu"
           onClick={() => setMenu(true)}
-          className="absolute right-4 top-4 rounded-lg bg-zinc-900/80 p-2 text-zinc-300"
+          className="absolute right-4 top-4 rounded-lg border border-[var(--reader-border)] bg-[var(--reader-bar)] p-2 text-[var(--reader-text)]"
         >
           <Menu size={17} />
         </button>
@@ -1115,7 +1139,9 @@ export function ReaderPage() {
       {failedPages.length > 0 && (
         <button
           onClick={retryAllFailed}
-          className="absolute bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-full bg-red-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-2xl"
+          className={`absolute left-1/2 z-40 -translate-x-1/2 rounded-full bg-red-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-2xl ${
+            atEnd && flow.next && !dismissedNextUp ? "bottom-72" : "bottom-16"
+          }`}
         >
           Retry {failedPages.length} failed {failedPages.length === 1 ? "page" : "pages"}
         </button>

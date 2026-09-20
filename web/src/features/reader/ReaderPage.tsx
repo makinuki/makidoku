@@ -1329,7 +1329,7 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
     ["G", "Go to page"],
     ["F", "Fullscreen"],
     ["M", "Show or hide the menu"],
-    ["Double-click center, Ctrl+wheel, pinch, +/−", "Zoom"],
+    ["Double-tap / double-click center, Ctrl+wheel, pinch", "Zoom"],
     ["Swipe left / right", "Turn pages on touch screens"],
     ["?", "This list"],
     ["Esc", "Close dialogs"],

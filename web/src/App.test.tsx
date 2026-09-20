@@ -3814,6 +3814,28 @@ describe("reader chapter flow", () => {
     );
   });
 
+  it("documents only the implemented zoom gestures in the shortcuts help", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "?" });
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Double-tap / double-click center, Ctrl+wheel, pinch"),
+    ).toBeInTheDocument();
+    // The keys the row used to advertise are not bound, so pressing them must
+    // leave the spread untouched.
+    fireEvent.keyDown(window, { key: "+" });
+    fireEvent.keyDown(window, { key: "-" });
+    expect(screen.getByRole("button", { name: "Tap zone: toggle menu" })).toBeInTheDocument();
+    expect(screen.getByAltText("Page 1")).toBeInTheDocument();
+  });
+
   it("hides tap zones when the navigation preset is disabled", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal(

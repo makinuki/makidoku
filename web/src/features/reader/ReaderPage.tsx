@@ -529,8 +529,6 @@ export function ReaderPage() {
       ) {
         return;
       }
-      if (event.key.toLowerCase() === "m") setMenu((value) => !value);
-      if (event.key.toLowerCase() === "f") toggleFullscreen();
       if (event.key === "Escape") {
         // Close the topmost layer first: help, go-to, settings, drawer.
         if (helpOpen) setHelpOpen(false);
@@ -539,6 +537,11 @@ export function ReaderPage() {
         else if (drawerOpen) setDrawerOpen(false);
         return;
       }
+      // An open dialog owns the keyboard: the reader behind it must not turn
+      // pages, cycle modes, or hide its own chrome while the user is choosing.
+      if (helpOpen || goToOpen || settingsOpen || drawerOpen) return;
+      if (event.key.toLowerCase() === "m") setMenu((value) => !value);
+      if (event.key.toLowerCase() === "f") toggleFullscreen();
       if (event.key === "?") {
         setHelpOpen(true);
         return;

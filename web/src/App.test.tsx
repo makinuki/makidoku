@@ -4114,4 +4114,33 @@ describe("reader chapter flow", () => {
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
   });
+
+  it("ignores reader shortcuts while a dialog is open", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "?" });
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    // The dialog owns the keyboard: page turns, mode switches, and menu toggles
+    // all stay behind it. Escape is the only key it forwards.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "w" });
+    fireEvent.keyDown(window, { key: "m" });
+    expect(screen.getByAltText("Page 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Single" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Double" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument(),
+    );
+    // The reader takes the keyboard back once the dialog is gone.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+  });
 });

@@ -79,6 +79,9 @@ export function ReaderPage() {
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
   const sessionStartedAt = useRef(Date.now());
+  // Whole seconds not yet reported; sub-second remainders carry over so a save
+  // per page turn cannot truncate the session away.
+  const pendingSeconds = useRef(0);
   const [overrides, setOverrides] = useState<ReaderOverrides>(emptyReaderOverrides);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [incognito, setIncognito] = useState(false);
@@ -387,6 +390,7 @@ export function ReaderPage() {
         setAggregate(data);
         setPages(loaded);
         sessionStartedAt.current = Date.now();
+        pendingSeconds.current = 0;
         // Resume from the resolved title settings, not the `mode` state: the
         // global and per-title preferences may still be loading when the
         // chapter fetch wins the race, and the stale mount-time default would
@@ -463,15 +467,26 @@ export function ReaderPage() {
     const visibleEnd = Math.min(pages.length, index + spreadStep(mode));
     const save = () => {
       saver.current = null;
-      const elapsed = Math.floor((Date.now() - sessionStartedAt.current) / 1000);
-      sessionStartedAt.current = Date.now();
+      const now = Date.now();
+      // Reading time accrues between writes. A save follows every page turn, so
+      // most intervals cover well under a second; flooring each one on its own
+      // would drop them all. Whole seconds are reported and the remainder stays
+      // pending. The daemon stores one reading session per write, so the value
+      // is the delta since the previous write, capped at 300 seconds.
+      pendingSeconds.current = Math.min(
+        300,
+        pendingSeconds.current + (now - sessionStartedAt.current) / 1000,
+      );
+      sessionStartedAt.current = now;
+      const seconds = Math.floor(pendingSeconds.current);
+      pendingSeconds.current -= seconds;
       void postProgress({
         mangaId,
         chapterId,
         page: visibleEnd,
         total: pages.length,
         complete: visibleEnd >= pages.length,
-        sessionSeconds: Math.min(300, Math.max(0, elapsed)),
+        sessionSeconds: seconds,
       });
     };
     saver.current = save;

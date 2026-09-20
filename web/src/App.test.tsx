@@ -3836,6 +3836,66 @@ describe("reader chapter flow", () => {
     expect(screen.getByAltText("Page 1")).toBeInTheDocument();
   });
 
+  it("accrues reading seconds across rapid page turns", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+      const posted: number[] = [];
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/incognito") return Promise.resolve(Response.json({ enabled: false }));
+        if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {
+          return Promise.resolve(Response.json(aggregate(chapters)));
+        }
+        if (path.includes(`/api/chapters/${chapterOne}/pages`)) {
+          return Promise.resolve(
+            Response.json(Array.from({ length: 12 }, (_, index) => page(chapterOne, index + 1))),
+          );
+        }
+        if (path.startsWith("/api/progress")) {
+          if (((init as RequestInit | undefined)?.method ?? "GET") === "POST") {
+            const body = JSON.parse(String(init?.body)) as { sessionSeconds: number };
+            posted.push(body.sessionSeconds);
+          }
+          return Promise.resolve(Response.json({}));
+        }
+        return Promise.resolve(Response.json([]));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>,
+      );
+      // The reader settles over a few macrotask turns while the fetches resolve;
+      // the 10 ms steps keep the 500 ms save debounce from firing early.
+      for (let round = 0; round < 8; round++) {
+        await vi.advanceTimersByTimeAsync(10);
+      }
+      expect(screen.getByAltText("Page 1")).toBeInTheDocument();
+      // Every turn lands inside the 500 ms save debounce, so each write covers
+      // less than a second of reading. Flooring the raw interval to zero each
+      // time loses the session; the seconds have to accrue instead.
+      for (let turn = 0; turn < 10; turn++) {
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        await vi.advanceTimersByTimeAsync(700);
+      }
+      expect(posted.length).toBeGreaterThanOrEqual(8);
+      const total = posted.reduce((sum, seconds) => sum + seconds, 0);
+      expect(total).toBeGreaterThanOrEqual(4);
+      // A long idle is capped at the 300 seconds the daemon accepts: the save
+      // that follows the gap reports the cap, not 400 seconds.
+      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      await vi.advanceTimersByTimeAsync(400_000);
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(posted.at(-1)).toBe(300);
+      expect(Math.max(...posted)).toBeLessThanOrEqual(300);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("hides tap zones when the navigation preset is disabled", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal(

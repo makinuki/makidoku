@@ -566,8 +566,16 @@ export function ReaderPage() {
       const step = spreadStep(mode);
       const forward = direction === "ltr" ? "ArrowRight" : "ArrowLeft";
       const backward = direction === "ltr" ? "ArrowLeft" : "ArrowRight";
-      const goForward = () => setIndex((value) => alignToSpread(value + step, pages.length, mode));
-      const goBackward = () => setIndex((value) => alignToSpread(value - step, pages.length, mode));
+      // Key navigation owns the same rule as the other page-turn controls: the
+      // chrome hides so the reader is left with the pages.
+      const goForward = () => {
+        setIndex((value) => alignToSpread(value + step, pages.length, mode));
+        setMenu(false);
+      };
+      const goBackward = () => {
+        setIndex((value) => alignToSpread(value - step, pages.length, mode));
+        setMenu(false);
+      };
       if (event.key === forward || event.key.toLowerCase() === "d") goForward();
       if (event.key === backward || event.key.toLowerCase() === "a") goBackward();
       // Paged extras. Webtoon owns its own scroll keys; Space on a focused
@@ -1419,9 +1427,16 @@ function Paged({
   const mode: Mode = double ? "double" : "single";
   // Chevron sides stay fixed, but their actions follow the reading direction:
   // in RTL the left control advances and the right control goes back, so the
-  // labels always describe what the button does.
-  const goPrevious = () => setIndex(alignToSpread(index - count, pages.length, mode));
-  const goNext = () => setIndex(alignToSpread(index + count, pages.length, mode));
+  // labels always describe what the button does. Both share the zone callbacks
+  // so every page turn hides the chrome, whichever control caused it.
+  const goPrevious = () => {
+    setIndex(alignToSpread(index - count, pages.length, mode));
+    onNavigateTurn();
+  };
+  const goNext = () => {
+    setIndex(alignToSpread(index + count, pages.length, mode));
+    onNavigateTurn();
+  };
   const leftAction = direction === "rtl" ? goNext : goPrevious;
   const rightAction = direction === "rtl" ? goPrevious : goNext;
   const [zoomed, setZoomed] = useState(false);
@@ -1464,7 +1479,6 @@ function Paged({
       const forward = direction === "ltr" ? dx < 0 : dx > 0;
       if (forward) goNext();
       else goPrevious();
-      onNavigateTurn();
     }
   };
   // A swipe is followed by a synthetic click; without suppression the swipe
@@ -1651,7 +1665,6 @@ function ZoneLayer({
         onClick={(event) => {
           onGuardClick(event);
           onPrevious();
-          onNavigateTurn();
         }}
         className={`reader-zone group absolute inset-y-0 left-0 ${side} ${navigation === "l" ? "top-12" : ""}`}
       >
@@ -1664,7 +1677,6 @@ function ZoneLayer({
         onClick={(event) => {
           onGuardClick(event);
           onNext();
-          onNavigateTurn();
         }}
         className={`reader-zone group absolute inset-y-0 right-0 ${navigation === "l" ? "w-[70%]" : side} ${navigation === "l" ? "top-12" : ""}`}
       >

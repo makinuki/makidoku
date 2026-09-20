@@ -4094,4 +4094,24 @@ describe("reader chapter flow", () => {
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     expect(screen.getByText("Chapter progress syncs to 1 bound tracker.")).toBeInTheDocument();
   });
+
+  it("hides the menu on chevron and arrow navigation", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    // The menu starts open, so the reveal control is absent until a navigation
+    // hides the chrome. Chevrons and keys must match the tap zones and swipes.
+    expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show reader menu" }));
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+  });
 });

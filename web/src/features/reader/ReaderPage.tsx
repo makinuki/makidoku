@@ -107,7 +107,11 @@ export function ReaderPage() {
   // Failed page deliveries, by page id. PageImage reports failures up so the
   // reader can offer a single retry-all instead of per-image buttons only.
   const [failedPages, setFailedPages] = useState<string[]>([]);
-  const [retryEpoch, setRetryEpoch] = useState(0);
+  // Retry counts live per page id rather than per mounted image: a failed page
+  // that sits outside the current spread unmounts and comes back later, and
+  // only a persisted counter can hand it the cache-busting URL that retry
+  // promised for it.
+  const [retryAttempts, setRetryAttempts] = useState<Record<string, number>>({});
   const [online, setOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine,
   );
@@ -131,10 +135,20 @@ export function ReaderPage() {
       current.includes(id) ? current.filter((item) => item !== id) : current,
     );
   }, []);
-  const retryAllFailed = useCallback(() => {
-    setFailedPages([]);
-    setRetryEpoch((value) => value + 1);
+  const retryPage = useCallback((id: string) => {
+    setRetryAttempts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
+    setFailedPages((current) => current.filter((item) => item !== id));
   }, []);
+  const retryAllFailed = useCallback(() => {
+    // Every failed id keeps its own count, so pages that are off screen right
+    // now reload with the bumped URL once they mount again.
+    setRetryAttempts((current) => {
+      const next = { ...current };
+      for (const id of failedPages) next[id] = (next[id] ?? 0) + 1;
+      return next;
+    });
+    setFailedPages([]);
+  }, [failedPages]);
   const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
   const readerRef = useRef<HTMLDivElement>(null);
@@ -187,6 +201,7 @@ export function ReaderPage() {
       setGoToOpen(false);
       setDismissedNextUp(false);
       setFailedPages([]);
+      setRetryAttempts({});
       setQueueNote("");
       navigate(`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(id)}`);
     },
@@ -373,6 +388,7 @@ export function ReaderPage() {
     setPages([]);
     setDismissedNextUp(false);
     setFailedPages([]);
+    setRetryAttempts({});
     setQueueNote("");
     // The deep-link page is read once per chapter load: search params are
     // stable for the session, and later navigations re-run this effect.
@@ -999,9 +1015,10 @@ export function ReaderPage() {
           setIndex={setIndex}
           gap={display.gap}
           imgFilter={imgFilter}
-          retryEpoch={retryEpoch}
+          retryAttempts={retryAttempts}
           onFail={reportFailed}
           onRecover={reportRecovered}
+          onRetry={retryPage}
         />
       ) : (
         <Paged
@@ -1013,9 +1030,10 @@ export function ReaderPage() {
           fit={fit}
           navigation={display.navigation}
           imgFilter={imgFilter}
-          retryEpoch={retryEpoch}
+          retryAttempts={retryAttempts}
           onFail={reportFailed}
           onRecover={reportRecovered}
+          onRetry={retryPage}
           onToggleMenu={() => setMenu((value) => !value)}
           onNavigateTurn={() => setMenu(false)}
         />
@@ -1404,9 +1422,10 @@ function Paged({
   double,
   direction,
   fit,
-  retryEpoch,
+  retryAttempts,
   onFail,
   onRecover,
+  onRetry,
   navigation,
   imgFilter,
   onToggleMenu,
@@ -1418,9 +1437,10 @@ function Paged({
   double: boolean;
   direction: Direction;
   fit: Fit;
-  retryEpoch: number;
+  retryAttempts: Record<string, number>;
   onFail: (id: string) => void;
   onRecover: (id: string) => void;
+  onRetry: (id: string) => void;
   navigation: ReaderNavigation;
   imgFilter: string;
   onToggleMenu: () => void;
@@ -1520,9 +1540,10 @@ function Paged({
               page={page}
               alt={`Page ${index + offset + 1}`}
               priority={offset === 0}
-              retryEpoch={retryEpoch}
+              attempt={retryAttempts[page.id] ?? 0}
               onFail={onFail}
               onRecover={onRecover}
+              onRetry={onRetry}
               className={fitClass}
               style={{ filter: imgFilter }}
             />
@@ -1703,18 +1724,20 @@ function Webtoon({
   setIndex,
   gap,
   imgFilter,
-  retryEpoch,
+  retryAttempts,
   onFail,
   onRecover,
+  onRetry,
 }: {
   pages: Page[];
   index: number;
   setIndex: (value: number) => void;
   gap: number;
   imgFilter: string;
-  retryEpoch: number;
+  retryAttempts: Record<string, number>;
   onFail: (id: string) => void;
   onRecover: (id: string) => void;
+  onRetry: (id: string) => void;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const initialIndex = useRef(index);
@@ -1808,9 +1831,10 @@ function Webtoon({
                 alt={`Page ${item.index + 1}`}
                 className="w-full rounded-sm"
                 loading="lazy"
-                retryEpoch={retryEpoch}
+                attempt={retryAttempts[pages[item.index].id] ?? 0}
                 onFail={onFail}
                 onRecover={onRecover}
+                onRetry={onRetry}
               />
             </div>
           </div>
@@ -1835,9 +1859,10 @@ const PageImage = memo(function PageImage({
   style,
   loading,
   priority,
-  retryEpoch,
+  attempt,
   onFail,
   onRecover,
+  onRetry,
 }: {
   page: Page;
   alt: string;
@@ -1845,36 +1870,23 @@ const PageImage = memo(function PageImage({
   style?: CSSProperties;
   loading?: "lazy" | "eager";
   priority?: boolean;
-  retryEpoch: number;
+  attempt: number;
   onFail: (id: string) => void;
   onRecover: (id: string) => void;
+  onRetry: (id: string) => void;
 }) {
+  // Failure is per mount: a page that comes back after a spread change loads
+  // again and clears the badge when it succeeds. The retry count is the part
+  // that has to survive the unmount, so a page retried while off screen still
+  // reloads with the cache-busting URL.
   const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  // A retry-all epoch resets every failed image at once; the per-image
-  // button stays for single failures.
   useEffect(() => {
-    if (retryEpoch > 0 && failed) {
-      setFailed(false);
-      setAttempt((value) => value + 1);
-      onRecover(page.id);
-    }
-    // Runs on epoch bumps only; page identity is stable per mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [retryEpoch]);
-  const fail = () => {
-    setFailed(true);
-    onFail(page.id);
-  };
-  const retry = () => {
-    setFailed(false);
-    setAttempt((value) => value + 1);
-    onRecover(page.id);
-  };
+    if (attempt > 0) setFailed(false);
+  }, [attempt]);
   if (failed)
     return (
       <button
-        onClick={retry}
+        onClick={() => onRetry(page.id)}
         className={`grid h-64 w-full place-items-center rounded-sm border border-zinc-800 bg-zinc-900 text-sm text-zinc-300 ${className}`}
       >
         Retry page
@@ -1884,7 +1896,10 @@ const PageImage = memo(function PageImage({
     <img
       src={`${api.readerImage(page)}${attempt ? `?retry=${attempt}` : ""}`}
       alt={alt}
-      onError={fail}
+      onError={() => {
+        setFailed(true);
+        onFail(page.id);
+      }}
       onLoad={() => onRecover(page.id)}
       className={className}
       style={style}

@@ -3748,6 +3748,27 @@ describe("reader chapter flow", () => {
       vi.useRealTimers();
     }
   });
+  it("retries a failed page that left the spread", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.error(await screen.findByAltText("Page 1"));
+    expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
+    // The failed page is off screen by the time the retry runs, so the count
+    // the reader keeps for its id is the only thing that can restore the
+    // cache-busting URL when the page mounts again.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=1");
+  });
+
   it("retries all failed pages at once and surfaces download state", async () => {
     const downloaded = [
       { id: chapterOne, mangaId, chapterNumber: 1, downloaded: true },

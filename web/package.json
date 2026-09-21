@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
+    "@makinuki/mekuri": "^0.1.1",
     "@tanstack/react-virtual": "^3.13.12",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",

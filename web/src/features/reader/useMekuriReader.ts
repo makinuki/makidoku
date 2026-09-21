@@ -30,7 +30,10 @@ export interface UseMekuriReaderArgs {
   // Host-owned suppression flag, copied into the live boolean option on every
   // render so open drawers and focused inputs own the keyboard.
   suppressKeyboard?: boolean;
-  resolveImage: (pageId: string | number, attempt: number) => string;
+  // Image pipeline hook, used only while a view resolves through the engine.
+  // Views with a custom page body own their image URLs and report load
+  // outcomes themselves, so this stays unset for them.
+  resolveImage?: (pageId: string | number, attempt: number) => string;
   onPositionSample?: (position: MekuriReadingPosition) => void;
   onBoundaryReached?: (boundary: ChapterBoundary) => void;
 }
@@ -55,12 +58,14 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
   }, [enabled]);
   const live = optionsRef;
 
+  const resolveImage = args.resolveImage;
   if (live !== null) {
     live.pages = args.pages;
     live.zoneMap = ZONE_MAP_PRESETS[toZoneMapName(args.navigation)];
     live.keyboardMap = args.keyboardMap;
     live.isKeyboardSuppressed = args.suppressKeyboard;
-    live.resolveSrc = (page, attempt) => args.resolveImage(page.id, attempt);
+    live.resolveSrc =
+      resolveImage === undefined ? undefined : (page, attempt) => resolveImage(page.id, attempt);
     live.onPositionSample = args.onPositionSample;
     live.onBoundaryReached = args.onBoundaryReached;
   }
@@ -92,6 +97,14 @@ export function useMekuriPageIndex(engine: MekuriEngine | null, fallback: number
 export function useMekuriHudVisible(engine: MekuriEngine | null, fallback: boolean): boolean {
   const snapshot = useEngineStateFragment(engine, (state) => state.isHUDVisible);
   return snapshot ?? fallback;
+}
+
+// Subscribes to the engine failure registry for the host retry pill. Returns
+// an empty list while the engine is not yet created.
+export function useMekuriFailureIds(engine: MekuriEngine | null): Array<string | number> {
+  const snapshot = useEngineStateFragment(engine, (state) => state.failures);
+  if (snapshot === null) return [];
+  return Object.keys(snapshot);
 }
 
 // Minimal selector over the engine store so callers subscribe to one field.

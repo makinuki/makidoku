@@ -15,12 +15,10 @@
   },
   "dependencies": {
     "@makinuki/mekuri": "^0.1.1",
-    "@tanstack/react-virtual": "^3.13.12",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "react-router-dom": "^7.8.2",
-    "react-zoom-pan-pinch": "^4.2.0"
+    "react-router-dom": "^7.8.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

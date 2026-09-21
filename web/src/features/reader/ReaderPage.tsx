@@ -1,17 +1,9 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useParams, useSearchParams, useNavigate, Navigate } from "react-router-dom";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import {
-  TransformWrapper,
-  TransformComponent,
-  type ReactZoomPanPinchRef,
-} from "react-zoom-pan-pinch";
 import {
   ArrowLeft,
   Check,
-  ChevronLeft,
-  ChevronRight,
   EyeOff,
   List,
   Maximize,
@@ -19,17 +11,21 @@ import {
   Minimize,
   SlidersHorizontal,
   X,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { api } from "../../api";
 import {
-  attachKeyboard,
-  type MekuriDirection,
+  IMAGE_LOAD_FAILED,
   type MekuriEngine,
-  type MekuriKeyboardEngine,
   type MekuriKeyboardMap,
+  type MekuriPage,
 } from "@makinuki/mekuri/engine";
+import {
+  MekuriPageStatus,
+  MekuriViewStyles,
+  PagedView,
+  WebtoonView,
+  type MekuriAltLabeler,
+} from "@makinuki/mekuri/views";
 import type { Aggregate, Chapter, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
 import { chapterLabelFor, prevNextChapter } from "./engine/chapters";
@@ -54,21 +50,27 @@ import {
   type ReaderTheme,
 } from "./readerSettings";
 import { toMekuriPages } from "./mekuriAdapter";
-import { useMekuriHudVisible, useMekuriPageIndex, useMekuriReader } from "./useMekuriReader";
+import {
+  useMekuriFailureIds,
+  useMekuriHudVisible,
+  useMekuriPageIndex,
+  useMekuriReader,
+} from "./useMekuriReader";
 
-// Keyboard contract: the attached engine dispatcher owns the keys its map
-// can express (arrows and D/A with RTL inversion, M for the HUD), while the
-// host listener keeps everything else. Space stays host-side because the
-// engine cannot express shift-for-back or the paged-only gate;
-// PgDn/PgUp/Home/End stay host-side because the engine map has no jump
-// actions; zoom keys stay disabled while zoom has no visible surface.
-const MEKURI_HEADLESS_KEYBOARD_MAP = {
+// Keyboard contract: the prebuilt views attach the engine dispatcher against
+// this map, while the host listener keeps everything else. Space stays
+// host-side in paged modes because the engine cannot express shift-for-back
+// or the paged-only gate; PgDn/PgUp/Home/End stay host-side because the
+// engine map has no jump actions. The webtoon view takes the default map,
+// where Space advances one page.
+const PAGED_VIEW_KEYBOARD_MAP = {
   nextPage: ["ArrowRight", "KeyD"],
   toggleHUD: ["KeyM"],
-  zoomIn: [],
-  zoomOut: [],
-  resetZoom: [],
 } satisfies Partial<MekuriKeyboardMap>;
+
+// Single localization point for page descriptions, shared by the views, the
+// page images, and the status announcement.
+const altLabeler: MekuriAltLabeler = (_page, index) => `Page ${index + 1}`;
 
 export function ReaderPage() {
   const { mangaId: routeManga, chapterId: routeChapter } = useParams();
@@ -130,13 +132,11 @@ export function ReaderPage() {
       return false;
     }
   });
-  // Failed page deliveries, by page id. PageImage reports failures up so the
-  // reader can offer a single retry-all instead of per-image buttons only.
-  const [failedPages, setFailedPages] = useState<string[]>([]);
-  // Retry counts live per page id rather than per mounted image: a failed page
-  // that sits outside the current spread unmounts and comes back later, and
-  // only a persisted counter can hand it the cache-busting URL that retry
-  // promised for it.
+  // Retry counts live per page id: a failed page that sits outside the
+  // current spread unmounts and comes back later, and only a persisted
+  // counter can hand it the cache-busting URL that retry promised for it.
+  // Delivery failures themselves live in the engine failure registry, which
+  // the retry pill below reads.
   const [retryAttempts, setRetryAttempts] = useState<Record<string, number>>({});
   const [online, setOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine,
@@ -151,36 +151,18 @@ export function ReaderPage() {
       window.removeEventListener("offline", sync);
     };
   }, []);
-  const reportFailed = useCallback((id: string) => {
-    setFailedPages((current) => (current.includes(id) ? current : [...current, id]));
-  }, []);
-  const reportRecovered = useCallback((id: string) => {
-    // Bail out when the id is not tracked so successful first loads do not
-    // churn state; a page that reloads cleanly after a failure still clears.
-    setFailedPages((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : current,
-    );
-  }, []);
-  const retryPage = useCallback((id: string) => {
-    setRetryAttempts((current) => ({
-      ...current,
-      [id]: (current[id] ?? 0) + 1,
-    }));
-    setFailedPages((current) => current.filter((item) => item !== id));
-  }, []);
-  const retryAllFailed = useCallback(() => {
+  const retryHostPage = useCallback((id: string | number) => {
     // Every failed id keeps its own count, so pages that are off screen right
-    // now reload with the bumped URL once they mount again.
-    setRetryAttempts((current) => {
-      const next = { ...current };
-      for (const id of failedPages) next[id] = (next[id] ?? 0) + 1;
-      return next;
-    });
-    setFailedPages([]);
-  }, [failedPages]);
+    // now reload with the bumped URL once they mount again. The engine retry
+    // clears the registry entry; the count bump reloads the image itself.
+    const key = String(id);
+    setRetryAttempts((current) => ({ ...current, [key]: (current[key] ?? 0) + 1 }));
+    engineRef.current?.retryPage(id);
+  }, []);
   const globals = useRef<ReaderGlobals>(defaultReaderGlobals);
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
   const readerRef = useRef<HTMLDivElement>(null);
+  const engineRef = useRef<MekuriEngine | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Leaving the reader always lands on a real page: the title details when a
@@ -229,7 +211,6 @@ export function ReaderPage() {
       setDrawerOpen(false);
       setGoToOpen(false);
       setDismissedNextUp(false);
-      setFailedPages([]);
       setRetryAttempts({});
       setQueueNote("");
       navigate(`/reader/${encodeURIComponent(mangaId)}/${encodeURIComponent(id)}`);
@@ -418,7 +399,6 @@ export function ReaderPage() {
     setError("");
     setPages([]);
     setDismissedNextUp(false);
-    setFailedPages([]);
     setRetryAttempts({});
     setQueueNote("");
     // The deep-link page is read once per chapter load: search params are
@@ -514,7 +494,6 @@ export function ReaderPage() {
   // clear on chapter switch. Mode and direction sync through
   // setMode/setDirection effects inside useMekuriReader.
   const mekuriPages = useMemo(() => toMekuriPages(pages), [pages]);
-  const engineRef = useRef<MekuriEngine | null>(null);
   // Last visible 1-based page under the engine's own spread pairing, so
   // progress, percent, and the end card agree with the spreads the engine
   // reports.
@@ -572,22 +551,16 @@ export function ReaderPage() {
     navigation: display.navigation,
     initialPageIndex: resumePage,
     enabled: pages.length > 0,
-    keyboardMap: MEKURI_HEADLESS_KEYBOARD_MAP,
-    // Open drawers and dialogs own the keyboard; the dispatcher and the host
-    // listener both stand down while any of them is open.
+    keyboardMap: PAGED_VIEW_KEYBOARD_MAP,
+    // Open drawers and dialogs own the keyboard; the view dispatchers and
+    // the host listener all stand down while any of them is open.
     suppressKeyboard: helpOpen || goToOpen || settingsOpen || drawerOpen,
-    // The views below keep their own image URLs; this resolver only feeds
-    // preloads until the views report through the engine pipeline.
-    resolveImage: (pageId, attempt) => {
-      const page = pages.find((candidate) => candidate.id === pageId);
-      if (!page) return "";
-      return `${api.readerImage(page)}${attempt > 1 ? `?retry=${attempt}` : ""}`;
-    },
     onPositionSample: (position) => saveAtPage(position.pageIndex),
   });
   engineRef.current = engine;
   const index = useMekuriPageIndex(engine, resumePage);
   const menu = useMekuriHudVisible(engine, menuFallback);
+  const failureIds = useMekuriFailureIds(engine);
   const hideChrome = useCallback(() => {
     if (engineRef.current) engineRef.current.toggleHUD(false);
     else setMenuFallback(false);
@@ -596,8 +569,12 @@ export function ReaderPage() {
     if (engineRef.current) engineRef.current.toggleHUD();
     else setMenuFallback((value) => !value);
   }, []);
+  // Slider, go-to, and jump keys land without hiding the chrome; every other
+  // discrete move hides it through the subscription below.
+  const hideOnNavRef = useRef(true);
   const goToPageIndex = useCallback(
     (page: number) => {
+      hideOnNavRef.current = false;
       if (engineRef.current) engineRef.current.goToIndex(page);
       else setResumePage(Math.min(Math.max(0, page), Math.max(0, pages.length - 1)));
     },
@@ -611,20 +588,135 @@ export function ReaderPage() {
     engineRef.current?.prev();
     hideChrome();
   }, [hideChrome]);
-  // Spread start under engine pairing for the paged slice below: the engine
-  // keeps a resumed mid-spread page until the first navigation, but the slice
-  // must already show its whole spread.
-  let pagedIndex = index;
-  const engineSnapshot = engine?.getState();
-  if (engineSnapshot && mode !== "webtoon") {
-    const spread = engineSnapshot.activeSpreads.find((candidate) => candidate.includes(index));
-    if (spread && spread[0] !== undefined) pagedIndex = spread[0];
-  }
+  useEffect(() => {
+    // Gesture taps and swipes dispatch straight into the engine, past any
+    // host callback, so the chrome-hide policy for them lives here: a
+    // discrete move outside the continuous column hides the chrome. Mode
+    // transitions own their position, and the hide runs a microtask later so
+    // it never notifies inside the engine's own notification loop.
+    if (!engine) return undefined;
+    let lastIndex = engine.getReadingPosition().pageIndex;
+    let lastMode = engine.getState().mode;
+    return engine.subscribe(() => {
+      const state = engine.getState();
+      const moved = state.pageIndex !== lastIndex;
+      const modeChanged = state.mode !== lastMode;
+      lastIndex = state.pageIndex;
+      lastMode = state.mode;
+      if (!moved || modeChanged) return;
+      if (state.mode === "continuous-vertical") return;
+      if (!hideOnNavRef.current) {
+        hideOnNavRef.current = true;
+        return;
+      }
+      const target = engine;
+      queueMicrotask(() => {
+        if (engineRef.current !== target) return;
+        target.toggleHUD(false);
+      });
+    });
+  }, [engine]);
   // The last spread is fully visible: progress counts the end of the spread
   // containing the reading position, so its end is the final page on screen.
   const visibleEnd = spreadEndForPage(index);
   const atEnd = pages.length > 0 && visibleEnd >= pages.length;
   const percent = pages.length ? Math.round((visibleEnd / pages.length) * 100) : 0;
+  // Host page lookup for the view page bodies below.
+  const pageById = useMemo(() => new Map(pages.map((page) => [page.id, page])), [pages]);
+  const imgFilter = useMemo(() => readerImageFilter(display), [display]);
+  const pagedFitClass =
+    fit === "height"
+      ? "max-h-full w-auto object-contain"
+      : fit === "screen"
+        ? "max-h-full max-w-full object-contain"
+        : fit === "original"
+          ? "max-h-none max-w-none object-contain"
+          : "h-auto max-w-full object-contain";
+  // Current spread for eager decoding: pages on screen decode first, the
+  // rest stay lazy so page turns usually hit the cache instead of the
+  // network.
+  const priorityIds = useMemo(() => {
+    if (!engine || mode === "webtoon") return null;
+    const spread = engine.getState().activeSpreads.find((candidate) => candidate.includes(index));
+    return spread ? new Set(spread) : null;
+  }, [engine, mode, index]);
+  const renderPagedPage = (page: MekuriPage, pageIndex: number) => {
+    const activeEngine = engineRef.current;
+    const hostPage = pageById.get(String(page.id));
+    if (!activeEngine || !hostPage) return null;
+    const priority = priorityIds?.has(pageIndex) ?? false;
+    return (
+      <HostPageImage
+        page={hostPage}
+        alt={altLabeler(page, pageIndex)}
+        className={pagedFitClass}
+        style={{ filter: imgFilter }}
+        priority={priority}
+        attempt={retryAttempts[String(hostPage.id)] ?? 0}
+        engine={activeEngine}
+        onRetry={retryHostPage}
+      />
+    );
+  };
+  const renderWebtoonPage = (page: MekuriPage, pageIndex: number) => {
+    const activeEngine = engineRef.current;
+    const hostPage = pageById.get(String(page.id));
+    if (!activeEngine || !hostPage) return null;
+    return (
+      <div style={{ filter: imgFilter }}>
+        <HostPageImage
+          page={hostPage}
+          alt={altLabeler(page, pageIndex)}
+          className="w-full rounded-sm"
+          loading="lazy"
+          attempt={retryAttempts[String(hostPage.id)] ?? 0}
+          engine={activeEngine}
+          onRetry={retryHostPage}
+        />
+      </div>
+    );
+  };
+  const retryAllHostFailed = useCallback(() => {
+    // Every failed id keeps its own count, so pages that are off screen right
+    // now reload with the bumped URL once they mount again. The engine call
+    // clears the registry the pill reads.
+    setRetryAttempts((current) => {
+      const next = { ...current };
+      for (const id of failureIds) next[String(id)] = (next[String(id)] ?? 0) + 1;
+      return next;
+    });
+    engineRef.current?.retryAllFailures();
+  }, [failureIds]);
+  // End-of-chapter card for the view boundary mount points. The wrapper keeps
+  // the card docked at the bottom while leaving the rest of the overlay
+  // transparent to taps.
+  const nextUpSlot =
+    atEnd && flow.next && !dismissedNextUp ? (
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "center",
+          paddingBottom: 64,
+        }}
+      >
+        <div style={{ pointerEvents: "auto" }}>
+          <NextUpCard
+            next={flow.next}
+            autoAdvance={autoAdvance}
+            queueNote={queueNote}
+            trackerCount={aggregate?.trackers.length ?? 0}
+            onNext={() => goChapter(flow.next!.id)}
+            onDownload={() => queueChapter(flow.next!.id)}
+            onStay={() => setDismissedNextUp(true)}
+            onDetails={exitReader}
+          />
+        </div>
+      </div>
+    ) : null;
   useEffect(() => {
     // Discrete engine moves sample immediately (same-page scroll samples
     // throttle to 1s inside the engine), so persistence rides
@@ -656,47 +748,17 @@ export function ReaderPage() {
     };
   }, [mangaId, chapterId, flushProgress]);
   useEffect(() => {
-    // The attached dispatcher owns the engine map (arrows, D/A with RTL
-    // inversion, M) against the live engine state. Window is the target so
-    // real bubbled keys and window-dispatched key events both arrive;
-    // suppression and editable-focus guards live inside the dispatcher.
-    // Keyboard page turns hide the host chrome, matching the chevrons, zones,
-    // and swipes; the dispatcher only moves, so the policy wraps next/prev.
-    const surface = readerRef.current;
-    if (!engine || !surface) return;
-    const keyboardEngine: MekuriKeyboardEngine = {
-      getState: (): { direction: MekuriDirection } => engine.getState(),
-      next: () => {
-        engine.next();
-        engine.toggleHUD(false);
-      },
-      prev: () => {
-        engine.prev();
-        engine.toggleHUD(false);
-      },
-      toggleHUD: (force?: boolean) => engine.toggleHUD(force),
-      zoomIn: () => engine.zoomIn(),
-      zoomOut: () => engine.zoomOut(),
-      resetZoom: () => engine.resetZoom(),
-      isKeyboardSuppressed: () => engine.isKeyboardSuppressed(),
-    };
-    const controller = attachKeyboard({
-      engine: keyboardEngine,
-      element: surface,
-      target: window,
-    });
-    return () => controller.detach();
-  }, [engine]);
-  useEffect(() => {
-    // Host-only keys: chapter flow, fullscreen, dialogs, mode cycling, and
-    // the page extras the engine map cannot express (Space with its
-    // shift-for-back rule, PgDn/PgUp, Home/End). Everything the dispatcher
-    // owns above stays out of here so no key ever turns twice.
+    // Host keys: chapter flow, fullscreen, dialogs, mode cycling, the page
+    // extras the engine map cannot express (Space with its shift-for-back
+    // rule, PgDn/PgUp, Home/End), and the chrome-hide on the arrows and D/A
+    // the view dispatchers navigate with. The hide is unconditional there,
+    // matching the turn controls; suppression and editable-focus guards apply
+    // to both halves alike.
     const onKey = (event: KeyboardEvent) => {
       // Shortcuts must not fire while a form control has focus: typing into
       // another field or stepping the page slider must stay local to it.
-      // Buttons are left alone: arrows never activate a focused button, so
-      // chevron focus must not trap page navigation.
+      // Buttons are left alone: arrows never activate a focused button, so a
+      // focused control must not trap page navigation.
       const target = event.target as HTMLElement | null;
       if (
         target &&
@@ -718,6 +780,20 @@ export function ReaderPage() {
       // An open dialog owns the keyboard: the reader behind it must not turn
       // pages, cycle modes, or hide its own chrome while the user is choosing.
       if (helpOpen || goToOpen || settingsOpen || drawerOpen) return;
+      // The view dispatchers navigate on arrows and D/A; the host hides the
+      // chrome for them, matching the turn controls. Modified keys belong to
+      // the host and the browser, mirroring the dispatcher guards.
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        const key = event.key;
+        if (
+          key === "ArrowRight" ||
+          key === "ArrowLeft" ||
+          key.toLowerCase() === "d" ||
+          key.toLowerCase() === "a"
+        ) {
+          hideChrome();
+        }
+      }
       if (event.key.toLowerCase() === "f") toggleFullscreen();
       if (event.key === "?") {
         setHelpOpen(true);
@@ -743,8 +819,9 @@ export function ReaderPage() {
         if (mangaId) saveReaderOverride({ mode: next });
         else setMode(next);
       }
-      // Paged extras. Webtoon owns its own scroll keys; Space on a focused
-      // button keeps its native activation so chevrons never double-fire.
+      // Paged extras. The webtoon column scrolls natively and the view
+      // dispatcher owns Space there; Space on a focused button keeps its
+      // native activation.
       if (mode !== "webtoon") {
         if (event.key === " " && target?.tagName !== "BUTTON") {
           event.preventDefault();
@@ -773,6 +850,7 @@ export function ReaderPage() {
     goToOpen,
     goToPageIndex,
     helpOpen,
+    hideChrome,
     mangaId,
     mode,
     pages.length,
@@ -782,7 +860,6 @@ export function ReaderPage() {
     turnNext,
     turnPrevious,
   ]);
-  const imgFilter = useMemo(() => readerImageFilter(display), [display]);
   useEffect(() => {
     // Warm the HTTP cache for the next chapter while the reader finishes
     // this one so the jump rarely shows a loading screen.
@@ -800,7 +877,7 @@ export function ReaderPage() {
         if (!page) continue;
         const img = new Image();
         img.decoding = "async";
-        img.src = `${api.readerImage(page)}${retryAttempts[page.id] ? `?retry=${retryAttempts[page.id]}` : ""}`;
+        img.src = `${api.readerImage(page)}${retryAttempts[String(page.id)] ? `?retry=${retryAttempts[String(page.id)]}` : ""}`;
       }
     };
     warm();
@@ -901,7 +978,7 @@ export function ReaderPage() {
         </div>
       </div>
     );
-  if (!aggregate || !pages.length)
+  if (!aggregate || !pages.length || !engine)
     return (
       <div
         data-theme={display.theme}
@@ -1174,34 +1251,30 @@ export function ReaderPage() {
           </section>
         </div>
       )}
+      <MekuriViewStyles />
+      <MekuriPageStatus engine={engine} pages={mekuriPages} altLabeler={altLabeler} />
       {mode === "webtoon" ? (
-        <Webtoon
-          pages={pages}
-          index={index}
-          setIndex={goToPageIndex}
+        <WebtoonView
+          engine={engine}
+          pages={mekuriPages}
+          maxWidth="48rem"
           gap={display.gap}
-          imgFilter={imgFilter}
-          retryAttempts={retryAttempts}
-          onFail={reportFailed}
-          onRecover={reportRecovered}
-          onRetry={retryPage}
+          renderPage={renderWebtoonPage}
+          altLabeler={altLabeler}
+          hud={false}
+          boundarySlot={nextUpSlot}
+          className="min-h-0 flex-1"
         />
       ) : (
-        <Paged
-          pages={pages}
-          index={pagedIndex}
-          double={mode === "double"}
-          direction={direction}
-          fit={fit}
-          navigation={display.navigation}
-          imgFilter={imgFilter}
-          retryAttempts={retryAttempts}
-          onFail={reportFailed}
-          onRecover={reportRecovered}
-          onRetry={retryPage}
-          onNext={turnNext}
-          onPrevious={turnPrevious}
-          onToggleMenu={toggleChrome}
+        <PagedView
+          engine={engine}
+          pages={mekuriPages}
+          renderPage={renderPagedPage}
+          altLabeler={altLabeler}
+          hud={false}
+          boundarySlot={nextUpSlot}
+          keyboardOptions={{ map: PAGED_VIEW_KEYBOARD_MAP }}
+          className="min-h-0 flex-1"
         />
       )}
       {drawerOpen && (
@@ -1210,18 +1283,6 @@ export function ReaderPage() {
           currentId={chapterId}
           onSelect={goChapter}
           onClose={() => setDrawerOpen(false)}
-        />
-      )}
-      {atEnd && flow.next && !dismissedNextUp && (
-        <NextUpCard
-          next={flow.next}
-          autoAdvance={autoAdvance}
-          queueNote={queueNote}
-          trackerCount={aggregate.trackers.length}
-          onNext={() => goChapter(flow.next!.id)}
-          onDownload={() => queueChapter(flow.next!.id)}
-          onStay={() => setDismissedNextUp(true)}
-          onDetails={exitReader}
         />
       )}
       {goToOpen && (
@@ -1278,14 +1339,14 @@ export function ReaderPage() {
           <Menu size={17} />
         </button>
       )}
-      {failedPages.length > 0 && (
+      {failureIds.length > 0 && (
         <button
-          onClick={retryAllFailed}
+          onClick={retryAllHostFailed}
           className={`absolute left-1/2 z-40 -translate-x-1/2 rounded-full bg-red-400 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-2xl ${
             atEnd && flow.next && !dismissedNextUp ? "bottom-72" : "bottom-16"
           }`}
         >
-          Retry {failedPages.length} failed {failedPages.length === 1 ? "page" : "pages"}
+          Retry {failureIds.length} failed {failureIds.length === 1 ? "page" : "pages"}
         </button>
       )}
     </div>
@@ -1581,443 +1642,12 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Paged({
-  pages,
-  index,
-  double,
-  direction,
-  fit,
-  retryAttempts,
-  onFail,
-  onRecover,
-  onRetry,
-  navigation,
-  imgFilter,
-  onNext,
-  onPrevious,
-  onToggleMenu,
-}: {
-  pages: Page[];
-  index: number;
-  double: boolean;
-  direction: Direction;
-  fit: Fit;
-  retryAttempts: Record<string, number>;
-  onFail: (id: string) => void;
-  onRecover: (id: string) => void;
-  onRetry: (id: string) => void;
-  navigation: ReaderNavigation;
-  imgFilter: string;
-  onNext: () => void;
-  onPrevious: () => void;
-  onToggleMenu: () => void;
-}) {
-  const count = double ? 2 : 1;
-  // Chevron sides stay fixed, but their actions follow the reading direction:
-  // in RTL the left control advances and the right control goes back, so the
-  // labels always describe what the button does. Both share the zone callbacks
-  // so every page turn hides the chrome, whichever control caused it.
-  // Navigation is engine-relative (next/prev move one spread under the
-  // engine's own pairing); the index prop only positions the slice.
-  const goPrevious = () => {
-    onPrevious();
-  };
-  const goNext = () => {
-    onNext();
-  };
-  const leftAction = direction === "rtl" ? goNext : goPrevious;
-  const rightAction = direction === "rtl" ? goPrevious : goNext;
-  const [zoomed, setZoomed] = useState(false);
-  const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const swiped = useRef(false);
-  // A new spread always opens unzoomed; leftover pan state would strand the
-  // reader on an empty viewport corner.
-  useEffect(() => {
-    swiped.current = false;
-    setZoomed(false);
-    void zoomRef.current?.resetTransform(0);
-  }, [index, double]);
-  const fitClass =
-    fit === "height"
-      ? "max-h-full w-auto object-contain"
-      : fit === "screen"
-        ? "max-h-full max-w-full object-contain"
-        : fit === "original"
-          ? "max-h-none max-w-none object-contain"
-          : double
-            ? "h-auto max-w-[calc(50%-0.5rem)] object-contain"
-            : "h-auto max-w-full object-contain";
-  const onTouchStart = (event: React.TouchEvent) => {
-    const touch = event.touches[0];
-    touchStart.current = { x: touch.clientX, y: touch.clientY };
-    swiped.current = false;
-  };
-  const onTouchEnd = (event: React.TouchEvent) => {
-    const start = touchStart.current;
-    touchStart.current = null;
-    if (!start || zoomed) return;
-    const touch = event.changedTouches[0];
-    const dx = touch.clientX - start.x;
-    const dy = touch.clientY - start.y;
-    if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      swiped.current = true;
-      // A leftward swipe advances in LTR and retreats in RTL. Swipes are the
-      // touch-immersive path, so the chrome gets out of the way.
-      const forward = direction === "ltr" ? dx < 0 : dx > 0;
-      if (forward) goNext();
-      else goPrevious();
-    }
-  };
-  // A swipe is followed by a synthetic click; without suppression the swipe
-  // would also trigger the zone underneath the finger.
-  const suppressAfterSwipe = (event: React.SyntheticEvent) => {
-    if (swiped.current) {
-      event.preventDefault();
-      event.stopPropagation();
-      swiped.current = false;
-    }
-  };
-  return (
-    <div
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-      className="relative flex min-h-0 flex-1 items-stretch justify-center overflow-auto bg-(--reader-canvas)"
-    >
-      <TransformWrapper
-        ref={zoomRef}
-        minScale={1}
-        maxScale={4}
-        limitToBounds
-        centerZoomedOut
-        wheel={{ activationKeys: ["Control"] }}
-        doubleClick={{ mode: "toggle", excluded: ["reader-zone"] }}
-        panning={{ excluded: ["reader-zone"] }}
-        onTransform={(_, state) => setZoomed(state.scale > 1.01)}
-      >
-        <TransformComponent
-          wrapperClass="!h-full !w-full"
-          contentClass={`flex min-h-full min-w-full items-center justify-center gap-2 p-2 sm:p-6 ${direction === "rtl" ? "flex-row-reverse" : ""}`}
-        >
-          {pages.slice(index, index + count).map((page, offset) => (
-            <PageImage
-              key={page.index}
-              page={page}
-              alt={`Page ${index + offset + 1}`}
-              priority={offset === 0}
-              attempt={retryAttempts[page.id] ?? 0}
-              onFail={onFail}
-              onRecover={onRecover}
-              onRetry={onRetry}
-              className={fitClass}
-              style={{ filter: imgFilter }}
-            />
-          ))}
-        </TransformComponent>
-      </TransformWrapper>
-      {!zoomed && navigation !== "disabled" && (
-        <ZoneLayer
-          navigation={navigation}
-          direction={direction}
-          onPrevious={direction === "rtl" ? goNext : goPrevious}
-          onNext={direction === "rtl" ? goPrevious : goNext}
-          onToggleMenu={onToggleMenu}
-          onZoomToggle={() => {
-            // The gesture toggles: a second double tap while the spread is
-            // zoomed resets it instead of zooming further.
-            if (zoomed) void zoomRef.current?.resetTransform();
-            else void zoomRef.current?.zoomIn();
-          }}
-          onGuardClick={suppressAfterSwipe}
-        />
-      )}
-      <button
-        aria-label={direction === "rtl" ? "Next page" : "Previous page"}
-        onClick={leftAction}
-        className="absolute left-2 top-1/2 z-10 rounded-full bg-black/60 p-3 text-white"
-      >
-        <ChevronLeft />
-      </button>
-      <button
-        aria-label={direction === "rtl" ? "Previous page" : "Next page"}
-        onClick={rightAction}
-        className="absolute right-2 top-1/2 z-10 rounded-full bg-black/60 p-3 text-white"
-      >
-        <ChevronRight />
-      </button>
-      <div className="absolute bottom-2 right-2 z-10 flex gap-1" role="group" aria-label="Zoom">
-        <button
-          aria-label="Zoom out"
-          onClick={() => void zoomRef.current?.zoomOut()}
-          className="rounded-full bg-black/60 p-2 text-white"
-        >
-          <ZoomOut size={16} />
-        </button>
-        <button
-          aria-label="Zoom in"
-          onClick={() => void zoomRef.current?.zoomIn()}
-          className="rounded-full bg-black/60 p-2 text-white"
-        >
-          <ZoomIn size={16} />
-        </button>
-        {zoomed && (
-          <button
-            aria-label="Reset zoom"
-            onClick={() => void zoomRef.current?.resetTransform()}
-            className="rounded-full bg-black/60 px-2 py-2 text-xs font-semibold text-white"
-          >
-            1×
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ZoneLayer maps taps and clicks to navigation without delaying them: side
-// zones act immediately, the center zone resolves its own tap pair so that a
-// single tap toggles the menu and a double tap zooms. Zones hide while zoomed
-// so pan and pinch gestures reach the image instead of navigating away.
-//
-// Touch input produces no dblclick, so the pair is detected from the click
-// stream instead: the first tap holds the menu toggle back for DOUBLE_TAP_MS
-// (which doubles as the double tap window, keeping the pending toggle
-// cancellable), and a second tap inside that window and the slop cancels the
-// toggle and zooms.
-const DOUBLE_TAP_MS = 300;
-const DOUBLE_TAP_SLOP = 30;
-function ZoneLayer({
-  navigation,
-  direction,
-  onPrevious,
-  onNext,
-  onToggleMenu,
-  onZoomToggle,
-  onGuardClick,
-}: {
-  navigation: ReaderNavigation;
-  direction: Direction;
-  onPrevious: () => void;
-  onNext: () => void;
-  onToggleMenu: () => void;
-  onZoomToggle: () => void;
-  onGuardClick: (event: React.SyntheticEvent) => void;
-}) {
-  const menuTimer = useRef(0);
-  const lastTap = useRef<{ at: number; x: number; y: number } | null>(null);
-  useEffect(() => () => window.clearTimeout(menuTimer.current), []);
-  const centerTap = (event: React.MouseEvent<HTMLButtonElement>) => {
-    const now = Date.now();
-    const previous = lastTap.current;
-    window.clearTimeout(menuTimer.current);
-    if (
-      previous &&
-      now - previous.at < DOUBLE_TAP_MS &&
-      Math.abs(event.clientX - previous.x) <= DOUBLE_TAP_SLOP &&
-      Math.abs(event.clientY - previous.y) <= DOUBLE_TAP_SLOP
-    ) {
-      // Consume the pair so a third tap starts a fresh sequence.
-      lastTap.current = null;
-      onZoomToggle();
-      return;
-    }
-    lastTap.current = { at: now, x: event.clientX, y: event.clientY };
-    menuTimer.current = window.setTimeout(onToggleMenu, DOUBLE_TAP_MS);
-  };
-  const prevLabel = direction === "rtl" ? "Next page" : "Previous page";
-  const nextLabel = direction === "rtl" ? "Previous page" : "Next page";
-  // Zone labels stay distinct from the chevron labels so assistive tech
-  // announces each control exactly once.
-  const prevZoneLabel = `Tap zone: ${prevLabel.toLowerCase()}`;
-  const nextZoneLabel = `Tap zone: ${nextLabel.toLowerCase()}`;
-  const side = navigation === "edge" ? "w-[15%]" : navigation === "l" ? "w-[30%]" : "w-[20%]";
-  // The L preset has no center zone: the top strip toggles the menu and the
-  // whole area right of the previous zone advances, matching ZonePreview.
-  const centerInset = navigation === "edge" ? "left-[15%] right-[15%]" : "left-[20%] right-[20%]";
-  return (
-    <div className="absolute inset-0 z-5">
-      {navigation === "l" && (
-        <button
-          aria-label="Tap zone: toggle menu"
-          onClick={(event) => {
-            onGuardClick(event);
-            onToggleMenu();
-          }}
-          className="reader-zone absolute inset-x-0 top-0 h-12"
-        />
-      )}
-      <button
-        aria-label={prevZoneLabel}
-        onClick={(event) => {
-          onGuardClick(event);
-          onPrevious();
-        }}
-        className={`reader-zone group absolute inset-y-0 left-0 ${side} ${navigation === "l" ? "top-12" : ""}`}
-      >
-        <span className="absolute left-1 top-1/2 -translate-y-1/2 text-white/0 group-hover:text-white/70">
-          <ChevronLeft size={20} />
-        </span>
-      </button>
-      <button
-        aria-label={nextZoneLabel}
-        onClick={(event) => {
-          onGuardClick(event);
-          onNext();
-        }}
-        className={`reader-zone group absolute inset-y-0 right-0 ${navigation === "l" ? "w-[70%]" : side} ${navigation === "l" ? "top-12" : ""}`}
-      >
-        <span className="absolute right-1 top-1/2 -translate-y-1/2 text-white/0 group-hover:text-white/70">
-          <ChevronRight size={20} />
-        </span>
-      </button>
-      {navigation !== "l" && (
-        <button
-          aria-label="Tap zone: toggle menu"
-          onClick={centerTap}
-          className={`reader-zone absolute inset-y-0 ${centerInset}`}
-        />
-      )}
-    </div>
-  );
-}
-function Webtoon({
-  pages,
-  index,
-  setIndex,
-  gap,
-  imgFilter,
-  retryAttempts,
-  onFail,
-  onRecover,
-  onRetry,
-}: {
-  pages: Page[];
-  index: number;
-  setIndex: (value: number) => void;
-  gap: number;
-  imgFilter: string;
-  retryAttempts: Record<string, number>;
-  onFail: (id: string) => void;
-  onRecover: (id: string) => void;
-  onRetry: (id: string) => void;
-}) {
-  const parent = useRef<HTMLDivElement>(null);
-  const initialIndex = useRef(index);
-  const indexRef = useRef(index);
-  indexRef.current = index;
-  const virtualizer = useVirtualizer({
-    count: pages.length,
-    getScrollElement: () => parent.current,
-    estimateSize: () => 720,
-    overscan: 4,
-  });
-  const virtualizerRef = useRef(virtualizer);
-  virtualizerRef.current = virtualizer;
-  // Entering webtoon mode aligns the scroll position with the restored page.
-  // Scroll events during the alignment window are ignored so the
-  // programmatic scroll can never clobber the restored position with page
-  // one; afterwards every scroll source (wheel, touch, keyboard, scrollbar)
-  // adopts the first visible virtual item.
-  const mountedAt = useRef(Date.now());
-  useLayoutEffect(() => {
-    virtualizer.scrollToIndex(initialIndex.current);
-    // Alignment runs once per mount; later index changes come from scrolling.
-  }, []);
-  useEffect(() => {
-    const el = parent.current;
-    if (!el) return;
-    let frame = 0;
-    const onScroll = () => {
-      if (Date.now() - mountedAt.current < 750) return;
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const first = virtualizerRef.current.getVirtualItems()[0];
-        if (first && first.index !== indexRef.current) setIndex(first.index);
-      });
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      cancelAnimationFrame(frame);
-    };
-  }, [setIndex]);
-  // Keyboard scrolling lives here because the scroll container does: the
-  // reader-level shortcuts skip these keys in webtoon mode.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable ||
-          (target.tagName === "BUTTON" && event.key === " "))
-      ) {
-        return;
-      }
-      const el = parent.current;
-      if (!el) return;
-      const jump = Math.max(1, Math.floor(el.clientHeight * 0.75));
-      if (event.key === " " || event.key === "PageDown" || event.key === "PageUp") {
-        event.preventDefault();
-        el.scrollBy({
-          top: event.key === "PageUp" || event.shiftKey ? -jump : jump,
-          behavior: "smooth",
-        });
-      } else if (event.key === "Home") {
-        event.preventDefault();
-        el.scrollTo({ top: 0 });
-      } else if (event.key === "End") {
-        event.preventDefault();
-        el.scrollTo({ top: el.scrollHeight });
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  return (
-    <div ref={parent} className="min-h-0 flex-1 overflow-y-auto bg-(--reader-canvas)">
-      <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((item) => (
-          <div
-            key={item.key}
-            ref={virtualizer.measureElement}
-            data-index={item.index}
-            className="absolute left-0 w-full px-2"
-            style={{
-              transform: `translateY(${item.start}px)`,
-              paddingBottom: gap,
-            }}
-          >
-            <div style={{ filter: imgFilter }}>
-              <PageImage
-                page={pages[item.index]}
-                alt={`Page ${item.index + 1}`}
-                className="w-full rounded-sm"
-                loading="lazy"
-                attempt={retryAttempts[pages[item.index].id] ?? 0}
-                onFail={onFail}
-                onRecover={onRecover}
-                onRetry={onRetry}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// PageImage degrades a failed delivery into an inline retry. The retry
-// re-requests the image with a cache-busting parameter so an intermediary
-// cache cannot serve the failed response again. Layout classes come from the
-// caller: paged and webtoon modes fit images to the screen differently. The
-// current spread decodes async with high fetch priority; surrounding images
-// stay lazy so page turns usually hit the cache instead of the network.
-// PageImage is memoized: paged spreads re-render on every index change, and
-// only the images whose props changed may re-render with it.
-const PageImage = memo(function PageImage({
+// Host page body for the prebuilt views: the daemon image with the reader fit
+// styles, image filters, and an inline retry. Load outcomes report straight
+// into the engine failure registry, which the retry pill reads; the retry
+// button itself stays per mount, so a page that remounts after a spread round
+// trip loads again instead of sticking on its earlier failure.
+const HostPageImage = memo(function HostPageImage({
   page,
   alt,
   className,
@@ -2025,8 +1655,7 @@ const PageImage = memo(function PageImage({
   loading,
   priority,
   attempt,
-  onFail,
-  onRecover,
+  engine,
   onRetry,
 }: {
   page: Page;
@@ -2036,14 +1665,9 @@ const PageImage = memo(function PageImage({
   loading?: "lazy" | "eager";
   priority?: boolean;
   attempt: number;
-  onFail: (id: string) => void;
-  onRecover: (id: string) => void;
+  engine: MekuriEngine;
   onRetry: (id: string) => void;
 }) {
-  // Failure is per mount: a page that comes back after a spread change loads
-  // again and clears the badge when it succeeds. The retry count is the part
-  // that has to survive the unmount, so a page retried while off screen still
-  // reloads with the cache-busting URL.
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (attempt > 0) setFailed(false);
@@ -2063,9 +1687,13 @@ const PageImage = memo(function PageImage({
       alt={alt}
       onError={() => {
         setFailed(true);
-        onFail(page.id);
+        engine.reportPageLoadFailed(
+          page.id,
+          IMAGE_LOAD_FAILED,
+          `Page ${page.index + 1} reported a load error`,
+        );
       }}
-      onLoad={() => onRecover(page.id)}
+      onLoad={() => engine.reportPageLoaded(page.id)}
       className={className}
       style={style}
       loading={loading ?? (priority ? "eager" : undefined)}
@@ -2074,6 +1702,7 @@ const PageImage = memo(function PageImage({
     />
   );
 });
+
 function chapterLabel(data: Aggregate, chapterID: string) {
   const item = data.chapters.find((chapter) => chapter.id === chapterID);
   return item?.chapterNumber == null ? item?.title || "Special" : `Chapter ${item.chapterNumber}`;

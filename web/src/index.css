@@ -63,3 +63,26 @@ a {
     transition: none !important;
   }
 }
+
+/* The prebuilt reader views theme through --mekuri-* tokens; map them onto
+   the reader theme so every theme recolors the views for free. */
+[data-mekuri-paged],
+[data-mekuri-view] {
+  --mekuri-bg: var(--reader-canvas);
+  --mekuri-fg: var(--reader-text);
+  --mekuri-hud-bg: var(--reader-bar);
+  --mekuri-accent: var(--reader-accent);
+}
+
+/* Reader controls meet the 44px touch target contract and keep a visible
+   keyboard focus indicator. */
+.reader button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.reader button:focus-visible,
+.reader select:focus-visible,
+.reader input:focus-visible {
+  outline: 2px solid var(--reader-accent);
+  outline-offset: 2px;
+}

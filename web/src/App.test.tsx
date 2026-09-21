@@ -2,8 +2,29 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  mockResizeObserver,
+  mockScrollGeometry,
+  mockViewportDimensions,
+  simulateTouchGesture,
+} from "@makinuki/mekuri/test-utils";
 import App from "./App";
 import { resumeIndex } from "./features/reader/ReaderPage";
+
+// Taps dispatch against the reading surface geometry, which jsdom does not
+// lay out. Tests that tap give the surface an explicit box first.
+function mockSurfaceBox(container: HTMLElement): () => void {
+  const surface = container.querySelector("[data-mekuri-viewport]");
+  expect(surface).not.toBeNull();
+  return mockViewportDimensions(surface as HTMLElement, { width: 800, height: 1200 });
+}
+
+async function tapSurface(container: HTMLElement, x: number, y: number): Promise<void> {
+  const surface = container.querySelector("[data-mekuri-viewport]") as HTMLElement;
+  await act(async () => {
+    await simulateTouchGesture(surface, { type: "tap", at: { x, y } });
+  });
+}
 
 // A socket that never opens. Components subscribing to daemon events must not
 // drag real connection attempts and reconnect timers into the test run; tests
@@ -1252,7 +1273,7 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByRole("button", { name: "Single" })).toBeInTheDocument();
     const baseline = progressPosts.length;
 
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
@@ -1316,7 +1337,7 @@ describe("MakiDoku app shell", () => {
     const position = () => screen.getByRole("button", { name: /currently page 1 of 2/ });
     expect(position()).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(screen.getByRole("button", { name: /currently page 2 of 2/ })).toBeInTheDocument();
 
     const slider = screen.getByRole("slider");
@@ -1473,9 +1494,9 @@ describe("MakiDoku app shell", () => {
     );
     fireEvent.error(await screen.findByAltText("Page 1"));
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
+    fireEvent.keyDown(document, { key: "ArrowLeft", code: "ArrowLeft" });
     const image = await screen.findByAltText("Page 1");
     fireEvent.load(image);
     await waitFor(() =>
@@ -3618,10 +3639,39 @@ describe("reader chapter flow", () => {
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     expect(screen.queryByText(/Up next/)).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next chapter" }));
     await waitFor(() => expect(window.location.pathname).toBe(`/reader/${mangaId}/${chapterTwo}`));
+  });
+
+  it("renders the webtoon column with the reader gap", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    const { container } = render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    // jsdom lays out nothing, so the virtualized column gets explicit
+    // geometry and hand-driven measurements like the view suite uses.
+    const restoreGeometry = mockScrollGeometry({ viewportHeight: 600, pageHeight: 1000 });
+    const resize = mockResizeObserver();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Webtoon" }));
+      await act(async () => {
+        resize.fireAll(() => 1000);
+      });
+      expect(container.querySelector('[data-mekuri-view="webtoon"]')).not.toBeNull();
+      expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /currently page 1 of 2/ })).toHaveTextContent(
+        "50%",
+      );
+    } finally {
+      resize.restore();
+      restoreGeometry();
+    }
   });
 
   it("jumps with the go-to dialog and reports progress percent", async () => {
@@ -3634,7 +3684,7 @@ describe("reader chapter flow", () => {
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /currently page 1 of 2/ })).toHaveTextContent("50%");
-    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(document, { key: "g" });
     fireEvent.change(await screen.findByLabelText("Page number"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
@@ -3703,7 +3753,7 @@ describe("reader chapter flow", () => {
     expect(pill.className).toContain("bottom-16");
     // At the chapter end the next-up card occupies the pill's slot, so the
     // pill shifts up instead of stacking under it.
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     expect(pill.className).toContain("bottom-72");
   });
@@ -3747,7 +3797,7 @@ describe("reader chapter flow", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByText("Incognito")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     view.unmount();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/progress"))).toBe(
       false,
@@ -3817,10 +3867,10 @@ describe("reader chapter flow", () => {
     // The failed page is off screen by the time the retry runs, so the count
     // the reader keeps for its id is the only thing that can restore the
     // cache-busting URL when the page mounts again.
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
-    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
+    fireEvent.keyDown(document, { key: "ArrowLeft", code: "ArrowLeft" });
     expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=1");
   });
 
@@ -3865,9 +3915,9 @@ describe("reader chapter flow", () => {
     // The page failing again after a spread round trip, while the pill still
     // tracks it, re-populates the pill once: repeat failure reports for a
     // tracked id are deduplicated.
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
+    fireEvent.keyDown(document, { key: "ArrowLeft", code: "ArrowLeft" });
     fireEvent.error(await screen.findByAltText("Page 1"));
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
@@ -3878,27 +3928,34 @@ describe("reader chapter flow", () => {
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
     expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=2");
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Download next" }));
     await waitFor(() => expect(queued).toMatchObject({ mangaId, chapters: [chapterTwo] }));
     expect(await screen.findByText("Chapter queued for download.")).toBeInTheDocument();
   });
 
-  it("renders tap zones by preset and opens the shortcuts help", async () => {
+  it("turns pages from tap zones and opens the shortcuts help", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Tap zone: previous page" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Tap zone: toggle menu" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "?" });
+    expect(container.querySelector("[data-mekuri-paged]")).not.toBeNull();
+    // Tap zones are hit-tested regions, not buttons: the right third advances.
+    const restore = mockSurfaceBox(container);
+    try {
+      await tapSurface(container, 700, 600);
+    } finally {
+      restore();
+    }
+    expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "?" });
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument(),
     );
@@ -3907,22 +3964,24 @@ describe("reader chapter flow", () => {
   it("documents only the implemented zoom gestures in the shortcuts help", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "?" });
+    fireEvent.keyDown(document, { key: "?" });
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     expect(
       screen.getByText("Double-tap / double-click center, Ctrl+wheel, pinch"),
     ).toBeInTheDocument();
     // The keys the row used to advertise are not bound, so pressing them must
     // leave the spread untouched.
-    fireEvent.keyDown(window, { key: "+" });
-    fireEvent.keyDown(window, { key: "-" });
-    expect(screen.getByRole("button", { name: "Tap zone: toggle menu" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "+" });
+    fireEvent.keyDown(document, { key: "-" });
+    expect(container.querySelector("[data-mekuri-paged]")?.getAttribute("data-zoomed")).toBe(
+      "false",
+    );
     expect(screen.getByAltText("Page 1")).toBeInTheDocument();
   });
 
@@ -3967,7 +4026,7 @@ describe("reader chapter flow", () => {
       // second of reading. Flooring the raw interval to zero each time loses
       // the session; the seconds have to accrue instead.
       for (let turn = 0; turn < 10; turn++) {
-        fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+        fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
         await vi.advanceTimersByTimeAsync(700);
       }
       expect(posted.length).toBeGreaterThanOrEqual(8);
@@ -3975,9 +4034,9 @@ describe("reader chapter flow", () => {
       expect(total).toBeGreaterThanOrEqual(4);
       // A long idle is capped at the 300 seconds the daemon accepts: the save
       // that follows the gap reports the cap, not 400 seconds.
-      fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
+      fireEvent.keyDown(document, { key: "ArrowLeft", code: "ArrowLeft" });
       await vi.advanceTimersByTimeAsync(400_000);
-      fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+      fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
       await vi.advanceTimersByTimeAsync(1000);
       expect(posted.at(-1)).toBe(300);
       expect(Math.max(...posted)).toBeLessThanOrEqual(300);
@@ -4004,13 +4063,22 @@ describe("reader chapter flow", () => {
         return Response.json([]);
       }),
     );
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Tap zone: toggle menu" })).not.toBeInTheDocument();
+    // The disabled preset maps every tap to nothing: a tap on the page-turn
+    // side must not navigate.
+    const restore = mockSurfaceBox(container);
+    try {
+      await tapSurface(container, 700, 600);
+    } finally {
+      restore();
+    }
+    expect(screen.getByAltText("Page 1")).toBeInTheDocument();
+    expect(screen.queryByAltText("Page 2")).not.toBeInTheDocument();
   });
 
   it("keeps the next zone reachable in the L-shaped preset", async () => {
@@ -4033,77 +4101,113 @@ describe("reader chapter flow", () => {
         return Response.json([]);
       }),
     );
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    // The L preset has no center zone; only the top strip toggles the menu.
-    expect(screen.getAllByRole("button", { name: "Tap zone: toggle menu" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Tap zone: next page" }));
+    // The L preset keeps a wide next region on the right; a tap there turns.
+    const restore = mockSurfaceBox(container);
+    try {
+      await tapSurface(container, 700, 600);
+    } finally {
+      restore();
+    }
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
   });
 
   it("toggles the menu on a single center zone tap", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Tap zone: toggle menu" }));
+    const restore = mockSurfaceBox(container);
+    try {
+      await tapSurface(container, 400, 600);
+    } finally {
+      restore();
+    }
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
   });
 
   it("zooms on a touch double tap in the center zone", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    // Touch input produces no dblclick, so the center zone resolves the tap
-    // pair itself: the second tap cancels the pending menu toggle and zooms.
-    // Zones unmount while zoomed, which is what makes the zoom observable.
-    const center = () => screen.getByRole("button", { name: "Tap zone: toggle menu" });
-    fireEvent.click(center(), { clientX: 200, clientY: 300 });
-    fireEvent.click(center(), { clientX: 204, clientY: 302 });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Tap zone: toggle menu" }),
-      ).not.toBeInTheDocument(),
-    );
-    expect(screen.getByRole("button", { name: "Reset zoom" })).toBeInTheDocument();
-    // A tap pair must not also toggle the menu.
-    expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
+    // Two taps inside the double-tap window zoom instead of dispatching the
+    // zone action twice. The first tap still toggles the chrome, which is
+    // what makes the menu reveal control the zoom probe here.
+    const surface = container.querySelector("[data-mekuri-viewport]") as HTMLElement;
+    const restore = mockSurfaceBox(container);
+    try {
+      await act(async () => {
+        await simulateTouchGesture(surface, {
+          type: "doubleTap",
+          at: { x: 400, y: 600 },
+        });
+      });
+    } finally {
+      restore();
+    }
+    const paged = container.querySelector("[data-mekuri-paged]");
+    expect(paged?.getAttribute("data-zoomed")).toBe("true");
+    expect(
+      (container.querySelector("[data-mekuri-transform]") as HTMLElement).style.transform,
+    ).not.toBe("");
+    expect(screen.getByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+    // A second pair while zoomed resets instead of zooming further.
+    const restoreReset = mockSurfaceBox(container);
+    try {
+      await act(async () => {
+        await simulateTouchGesture(surface, {
+          type: "doubleTap",
+          at: { x: 400, y: 600 },
+        });
+      });
+    } finally {
+      restoreReset();
+    }
+    expect(paged?.getAttribute("data-zoomed")).toBe("false");
   });
 
   it("keeps two distant center taps from zooming", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());
-    render(
+    const { container } = render(
       <BrowserRouter>
         <App />
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     // The pair needs to land on the same spot: a drifting second tap is a
-    // separate tap, so the menu still opens.
-    fireEvent.click(screen.getByRole("button", { name: "Tap zone: toggle menu" }), {
-      clientX: 200,
-      clientY: 300,
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Tap zone: toggle menu" }), {
-      clientX: 320,
-      clientY: 301,
-    });
-    expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Tap zone: toggle menu" })).toBeInTheDocument();
+    // separate tap, so each tap only toggles the menu.
+    const surface = container.querySelector("[data-mekuri-viewport]") as HTMLElement;
+    const restore = mockSurfaceBox(container);
+    try {
+      await act(async () => {
+        await simulateTouchGesture(surface, { type: "tap", at: { x: 400, y: 600 } });
+      });
+      expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
+      await act(async () => {
+        await simulateTouchGesture(surface, { type: "tap", at: { x: 500, y: 620 } });
+      });
+    } finally {
+      restore();
+    }
+    expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
+    expect(container.querySelector("[data-mekuri-paged]")?.getAttribute("data-zoomed")).toBe(
+      "false",
+    );
   });
 
   it("applies the paper theme and saves the screen fit override", async () => {
@@ -4144,7 +4248,7 @@ describe("reader chapter flow", () => {
     });
   });
 
-  it("hides the menu on zone taps and notes bound trackers at chapter end", async () => {
+  it("hides the menu on page turns and notes bound trackers at chapter end", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal(
       "fetch",
@@ -4179,13 +4283,13 @@ describe("reader chapter flow", () => {
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Tap zone: next page" }));
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     expect(screen.getByText("Chapter progress syncs to 1 bound tracker.")).toBeInTheDocument();
   });
 
-  it("hides the menu on chevron and arrow navigation", async () => {
+  it("hides the menu on arrow navigation", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());
     render(
@@ -4195,13 +4299,13 @@ describe("reader chapter flow", () => {
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     // The menu starts open, so the reveal control is absent until a navigation
-    // hides the chrome. Chevrons and keys must match the tap zones and swipes.
+    // hides the chrome.
     expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show reader menu" }));
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
   });
 
@@ -4214,23 +4318,23 @@ describe("reader chapter flow", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "?" });
+    fireEvent.keyDown(document, { key: "?" });
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     // The dialog owns the keyboard: page turns, mode switches, and menu toggles
     // all stay behind it. Escape is the only key it forwards.
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
-    fireEvent.keyDown(window, { key: "w" });
-    fireEvent.keyDown(window, { key: "m", code: "KeyM" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "w" });
+    fireEvent.keyDown(document, { key: "m", code: "KeyM" });
     expect(screen.getByAltText("Page 1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Single" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Double" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.queryByRole("button", { name: "Show reader menu" })).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument(),
     );
     // The reader takes the keyboard back once the dialog is gone.
-    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
   });
 });

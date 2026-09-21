@@ -162,7 +162,10 @@ export function ReaderPage() {
     );
   }, []);
   const retryPage = useCallback((id: string) => {
-    setRetryAttempts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
+    setRetryAttempts((current) => ({
+      ...current,
+      [id]: (current[id] ?? 0) + 1,
+    }));
     setFailedPages((current) => current.filter((item) => item !== id));
   }, []);
   const retryAllFailed = useCallback(() => {
@@ -278,7 +281,9 @@ export function ReaderPage() {
     const acquire = () => {
       try {
         (
-          navigator as Navigator & { wakeLock: { request: (kind: string) => Promise<unknown> } }
+          navigator as Navigator & {
+            wakeLock: { request: (kind: string) => Promise<unknown> };
+          }
         ).wakeLock
           .request("screen")
           .then((sentinel) => {
@@ -675,7 +680,11 @@ export function ReaderPage() {
       resetZoom: () => engine.resetZoom(),
       isKeyboardSuppressed: () => engine.isKeyboardSuppressed(),
     };
-    const controller = attachKeyboard({ engine: keyboardEngine, element: surface, target: window });
+    const controller = attachKeyboard({
+      engine: keyboardEngine,
+      element: surface,
+      target: window,
+    });
     return () => controller.detach();
   }, [engine]);
   useEffect(() => {
@@ -822,7 +831,7 @@ export function ReaderPage() {
     return (
       <div
         data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)] p-5"
+        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text) p-5"
       >
         <div className="max-w-lg">
           <ErrorState message={error} />
@@ -847,7 +856,7 @@ export function ReaderPage() {
     return (
       <div
         data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)] p-5"
+        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text) p-5"
       >
         <div className="max-w-lg">
           <EmptyState
@@ -867,7 +876,7 @@ export function ReaderPage() {
     return (
       <div
         data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)]"
+        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text)"
       >
         <LoadingState label="Loading reader" />
       </div>
@@ -876,7 +885,7 @@ export function ReaderPage() {
     return (
       <div
         data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)] p-5"
+        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text) p-5"
       >
         <div className="max-w-lg">
           <EmptyState
@@ -896,7 +905,7 @@ export function ReaderPage() {
     return (
       <div
         data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-[var(--reader-canvas)] text-[var(--reader-text)]"
+        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text)"
       >
         <LoadingState label="Loading reader" />
       </div>
@@ -905,22 +914,22 @@ export function ReaderPage() {
     <div
       ref={readerRef}
       data-theme={display.theme}
-      className="reader fixed inset-0 z-30 flex flex-col bg-[var(--reader-canvas)] text-[var(--reader-text)]"
+      className="reader fixed inset-0 z-30 flex flex-col bg-(--reader-canvas) text-(--reader-text)"
     >
       <div
-        className={`flex items-center gap-3 border-b border-[var(--reader-border)] bg-[var(--reader-bar)] px-3 py-2 ${menu ? "" : "hidden"}`}
+        className={`flex items-center gap-3 border-b border-(--reader-border) bg-(--reader-bar) px-3 py-2 ${menu ? "" : "hidden"}`}
       >
         <button
           aria-label={mangaId ? "Back to details" : "Back to library"}
           title={mangaId ? "Back to details" : "Back to library"}
           onClick={exitReader}
-          className="rounded-lg p-2 text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"
+          className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
         >
           <ArrowLeft size={18} />
         </button>
         <div className="min-w-0 flex-1">
           <b className="block truncate text-sm">{aggregate.manga.title}</b>
-          <small className="text-[var(--reader-dim)]">{chapterLabel(aggregate, chapterId)}</small>
+          <small className="text-(--reader-dim)">{chapterLabel(aggregate, chapterId)}</small>
           {incognito && (
             <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[11px] text-amber-300">
               <EyeOff size={12} /> Incognito
@@ -948,28 +957,28 @@ export function ReaderPage() {
             aria-label="Chapters"
             title="Chapters"
             onClick={() => setDrawerOpen((value) => !value)}
-            className={`rounded-lg p-2 ${drawerOpen ? "bg-[var(--reader-border)] text-amber-400" : "text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"}`}
+            className={`rounded-lg p-2 ${drawerOpen ? "bg-(--reader-border) text-amber-400" : "text-(--reader-dim) hover:bg-(--reader-border)"}`}
           >
             <List size={16} />
           </button>
           <button
             aria-pressed={mode === "single"}
             onClick={() => saveReaderOverride({ mode: "single" })}
-            className={`rounded-lg px-2 py-1 text-xs ${mode === "single" ? "bg-amber-400 text-zinc-950" : "text-[var(--reader-dim)]"}`}
+            className={`rounded-lg px-2 py-1 text-xs ${mode === "single" ? "bg-amber-400 text-zinc-950" : "text-(--reader-dim)"}`}
           >
             Single
           </button>
           <button
             aria-pressed={mode === "double"}
             onClick={() => saveReaderOverride({ mode: "double" })}
-            className={`rounded-lg px-2 py-1 text-xs ${mode === "double" ? "bg-amber-400 text-zinc-950" : "text-[var(--reader-dim)]"}`}
+            className={`rounded-lg px-2 py-1 text-xs ${mode === "double" ? "bg-amber-400 text-zinc-950" : "text-(--reader-dim)"}`}
           >
             Double
           </button>
           <button
             aria-pressed={mode === "webtoon"}
             onClick={() => saveReaderOverride({ mode: "webtoon" })}
-            className={`rounded-lg px-2 py-1 text-xs ${mode === "webtoon" ? "bg-amber-400 text-zinc-950" : "text-[var(--reader-dim)]"}`}
+            className={`rounded-lg px-2 py-1 text-xs ${mode === "webtoon" ? "bg-amber-400 text-zinc-950" : "text-(--reader-dim)"}`}
           >
             Webtoon
           </button>
@@ -978,14 +987,14 @@ export function ReaderPage() {
             aria-pressed={isFullscreen}
             title={isFullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}
             onClick={toggleFullscreen}
-            className="rounded-lg p-2 text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"
+            className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
           >
             {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
           </button>
           <button
             aria-label="Reader settings"
             onClick={() => setSettingsOpen((value) => !value)}
-            className={`rounded-lg p-2 ${settingsOpen ? "bg-[var(--reader-border)] text-amber-400" : "text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"}`}
+            className={`rounded-lg p-2 ${settingsOpen ? "bg-(--reader-border) text-amber-400" : "text-(--reader-dim) hover:bg-(--reader-border)"}`}
           >
             <SlidersHorizontal size={16} />
           </button>
@@ -993,27 +1002,29 @@ export function ReaderPage() {
             aria-label="Keyboard shortcuts"
             title="Keyboard shortcuts (?)"
             onClick={() => setHelpOpen(true)}
-            className="rounded-lg p-2 text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"
+            className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
           >
             ?
           </button>
         </div>
       </div>
       {settingsOpen && (
-        <div className="absolute right-3 top-14 z-40 max-h-[80vh] w-72 max-w-[90vw] space-y-4 overflow-y-auto rounded-xl border border-[var(--reader-border)] bg-[var(--reader-bar)] p-3 shadow-2xl">
+        <div className="absolute right-3 top-14 z-40 max-h-[80vh] w-72 max-w-[90vw] space-y-4 overflow-y-auto rounded-xl border border-(--reader-border) bg-(--reader-bar) p-3 shadow-2xl">
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <b className="text-sm">This title</b>
-              <span className="text-xs text-[var(--reader-dim)]">Overrides</span>
+              <span className="text-xs text-(--reader-dim)">Overrides</span>
             </div>
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Mode
               <select
                 value={overrides.mode ?? ""}
                 onChange={(event) =>
-                  saveReaderOverride({ mode: (event.target.value || null) as Mode | null })
+                  saveReaderOverride({
+                    mode: (event.target.value || null) as Mode | null,
+                  })
                 }
-                className="mt-1 w-full rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] px-2 py-1 text-sm text-[var(--reader-text)]"
+                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
               >
                 <option value="">Default ({globals.current.mode})</option>
                 <option value="single">Single</option>
@@ -1021,7 +1032,7 @@ export function ReaderPage() {
                 <option value="webtoon">Webtoon</option>
               </select>
             </label>
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Direction
               <select
                 value={overrides.direction ?? ""}
@@ -1030,21 +1041,23 @@ export function ReaderPage() {
                     direction: (event.target.value || null) as Direction | null,
                   })
                 }
-                className="mt-1 w-full rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] px-2 py-1 text-sm text-[var(--reader-text)]"
+                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
               >
                 <option value="">Default ({globals.current.direction})</option>
                 <option value="ltr">Left to right</option>
                 <option value="rtl">Right to left</option>
               </select>
             </label>
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Fit
               <select
                 value={overrides.fit ?? ""}
                 onChange={(event) =>
-                  saveReaderOverride({ fit: (event.target.value || null) as Fit | null })
+                  saveReaderOverride({
+                    fit: (event.target.value || null) as Fit | null,
+                  })
                 }
-                className="mt-1 w-full rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] px-2 py-1 text-sm text-[var(--reader-text)]"
+                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
               >
                 <option value="">Default ({globals.current.fit})</option>
                 <option value="width">Fit width</option>
@@ -1054,9 +1067,9 @@ export function ReaderPage() {
               </select>
             </label>
           </section>
-          <section className="space-y-3 border-t border-[var(--reader-border)] pt-3">
+          <section className="space-y-3 border-t border-(--reader-border) pt-3">
             <b className="text-sm">Display</b>
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Tap and click zones
               <select
                 aria-label="Tap and click zones"
@@ -1064,7 +1077,7 @@ export function ReaderPage() {
                 onChange={(event) =>
                   saveDisplaySetting("reader.navigation", event.target.value as ReaderNavigation)
                 }
-                className="mt-1 w-full rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] px-2 py-1 text-sm text-[var(--reader-text)]"
+                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
               >
                 <option value="default">Default thirds</option>
                 <option value="l">L-shaped</option>
@@ -1073,7 +1086,7 @@ export function ReaderPage() {
               </select>
             </label>
             <ZonePreview navigation={display.navigation} direction={direction} />
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Theme
               <select
                 aria-label="Reader theme"
@@ -1081,7 +1094,7 @@ export function ReaderPage() {
                 onChange={(event) =>
                   saveDisplaySetting("reader.theme", event.target.value as ReaderTheme)
                 }
-                className="mt-1 w-full rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] px-2 py-1 text-sm text-[var(--reader-text)]"
+                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
               >
                 <option value="dark">Dark</option>
                 <option value="amoled">AMOLED black</option>
@@ -1089,7 +1102,7 @@ export function ReaderPage() {
                 <option value="light">Light</option>
               </select>
             </label>
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Image brightness · {display.brightness}%
               <input
                 type="range"
@@ -1104,7 +1117,7 @@ export function ReaderPage() {
                 className="mt-1 w-full accent-amber-400"
               />
             </label>
-            <label className="block text-xs text-[var(--reader-dim)]">
+            <label className="block text-xs text-(--reader-dim)">
               Webtoon gap · {display.gap}px
               <input
                 type="range"
@@ -1119,7 +1132,7 @@ export function ReaderPage() {
                 className="mt-1 w-full accent-amber-400"
               />
             </label>
-            <label className="flex items-center gap-2 text-xs text-[var(--reader-text)]">
+            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
               <input
                 type="checkbox"
                 checked={display.grayscale}
@@ -1128,7 +1141,7 @@ export function ReaderPage() {
               />
               Grayscale images
             </label>
-            <label className="flex items-center gap-2 text-xs text-[var(--reader-text)]">
+            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
               <input
                 type="checkbox"
                 checked={display.invert}
@@ -1138,9 +1151,9 @@ export function ReaderPage() {
               Invert image colors
             </label>
           </section>
-          <section className="space-y-2 border-t border-[var(--reader-border)] pt-3">
+          <section className="space-y-2 border-t border-(--reader-border) pt-3">
             <b className="text-sm">Reading</b>
-            <label className="flex items-center gap-2 text-xs text-[var(--reader-text)]">
+            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
               <input
                 type="checkbox"
                 checked={autoAdvance}
@@ -1149,7 +1162,7 @@ export function ReaderPage() {
               />
               Auto-advance to the next chapter
             </label>
-            <label className="flex items-center gap-2 text-xs text-[var(--reader-text)]">
+            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
               <input
                 type="checkbox"
                 checked={keepAwake}
@@ -1189,7 +1202,6 @@ export function ReaderPage() {
           onNext={turnNext}
           onPrevious={turnPrevious}
           onToggleMenu={toggleChrome}
-          onNavigateTurn={hideChrome}
         />
       )}
       {drawerOpen && (
@@ -1224,13 +1236,13 @@ export function ReaderPage() {
         />
       )}
       <div
-        className={`flex items-center gap-3 border-t border-[var(--reader-border)] bg-[var(--reader-bar)] px-4 py-2 ${menu ? "" : "hidden"}`}
+        className={`flex items-center gap-3 border-t border-(--reader-border) bg-(--reader-bar) px-4 py-2 ${menu ? "" : "hidden"}`}
       >
         <button
           onClick={() => setGoToOpen(true)}
           title="Go to page (G)"
           aria-label={`Go to page, currently page ${Math.min(index + 1, pages.length)} of ${pages.length}, ${percent} percent read`}
-          className="shrink-0 text-xs text-[var(--reader-dim)] hover:text-[var(--reader-text)]"
+          className="shrink-0 text-xs text-(--reader-dim) hover:text-(--reader-text)"
         >
           {Math.min(index + 1, pages.length)} / {pages.length} · {percent}%
         </button>
@@ -1251,7 +1263,7 @@ export function ReaderPage() {
           aria-label="Hide reader menu"
           aria-expanded={menu}
           onClick={hideChrome}
-          className="rounded-lg p-2 text-[var(--reader-dim)]"
+          className="rounded-lg p-2 text-(--reader-dim)"
         >
           <Menu size={16} />
         </button>
@@ -1261,7 +1273,7 @@ export function ReaderPage() {
         <button
           aria-label="Show reader menu"
           onClick={toggleChrome}
-          className="absolute right-4 top-4 rounded-lg border border-[var(--reader-border)] bg-[var(--reader-bar)] p-2 text-[var(--reader-text)]"
+          className="absolute right-4 top-4 rounded-lg border border-(--reader-border) bg-(--reader-bar) p-2 text-(--reader-text)"
         >
           <Menu size={17} />
         </button>
@@ -1292,13 +1304,13 @@ function ChapterDrawer({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute inset-y-0 left-0 z-40 flex w-72 max-w-[80vw] flex-col border-r border-[var(--reader-border)] bg-[var(--reader-bar)] text-[var(--reader-text)] shadow-2xl">
-      <div className="flex items-center justify-between border-b border-[var(--reader-border)] px-3 py-2">
+    <div className="absolute inset-y-0 left-0 z-40 flex w-72 max-w-[80vw] flex-col border-r border-(--reader-border) bg-(--reader-bar) text-(--reader-text) shadow-2xl">
+      <div className="flex items-center justify-between border-b border-(--reader-border) px-3 py-2">
         <b className="text-sm">Chapters · {ordered.length}</b>
         <button
           aria-label="Close chapters"
           onClick={onClose}
-          className="rounded-lg p-2 text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"
+          className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
         >
           <X size={16} />
         </button>
@@ -1309,20 +1321,20 @@ function ChapterDrawer({
             <button
               onClick={() => onSelect(chapter.id)}
               aria-current={chapter.id === currentId ? "true" : undefined}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--reader-border)] ${
-                chapter.id === currentId ? "bg-[var(--reader-border)] text-amber-400" : ""
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-(--reader-border) ${
+                chapter.id === currentId ? "bg-(--reader-border) text-amber-400" : ""
               } ${chapter.read ? "opacity-60" : ""}`}
             >
               {chapter.read && <Check size={14} className="shrink-0 text-emerald-400" />}
               <span className="min-w-0 flex-1 truncate">{chapterLabelFor(chapter)}</span>
               {chapter.downloaded && (
-                <span className="shrink-0 text-[11px] text-[var(--reader-dim)]">saved</span>
+                <span className="shrink-0 text-[11px] text-(--reader-dim)">saved</span>
               )}
             </button>
           </li>
         ))}
       </ol>
-      <p className="border-t border-[var(--reader-border)] px-3 py-2 text-[11px] text-[var(--reader-dim)]">
+      <p className="border-t border-(--reader-border) px-3 py-2 text-[11px] text-(--reader-dim)">
         N / P jumps to the next / previous chapter.
       </p>
     </div>
@@ -1349,16 +1361,16 @@ function NextUpCard({
   onDetails: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 bottom-16 z-40 mx-auto w-80 max-w-[90vw] rounded-xl border border-[var(--reader-border)] bg-[var(--reader-bar)] p-4 text-[var(--reader-text)] shadow-2xl">
-      <p className="text-xs uppercase tracking-wide text-[var(--reader-dim)]">Chapter finished</p>
+    <div className="absolute inset-x-0 bottom-16 z-40 mx-auto w-80 max-w-[90vw] rounded-xl border border-(--reader-border) bg-(--reader-bar) p-4 text-(--reader-text) shadow-2xl">
+      <p className="text-xs uppercase tracking-wide text-(--reader-dim)">Chapter finished</p>
       <b className="mt-1 block truncate text-sm">Up next: {chapterLabelFor(next)}</b>
       {autoAdvance && (
-        <p className="mt-1 text-xs text-[var(--reader-dim)]">
+        <p className="mt-1 text-xs text-(--reader-dim)">
           Auto-advancing shortly. Stay to keep reading.
         </p>
       )}
       {trackerCount > 0 && (
-        <p className="mt-1 text-xs text-[var(--reader-dim)]">
+        <p className="mt-1 text-xs text-(--reader-dim)">
           Chapter progress syncs to {trackerCount} bound{" "}
           {trackerCount === 1 ? "tracker" : "trackers"}.
         </p>
@@ -1377,20 +1389,20 @@ function NextUpCard({
         ) : (
           <button
             onClick={onDownload}
-            className="rounded-lg border border-[var(--reader-border)] px-3 py-2 text-sm"
+            className="rounded-lg border border-(--reader-border) px-3 py-2 text-sm"
           >
             Download next
           </button>
         )}
         <button
           onClick={onStay}
-          className="rounded-lg border border-[var(--reader-border)] px-3 py-2 text-sm"
+          className="rounded-lg border border-(--reader-border) px-3 py-2 text-sm"
         >
           Keep reading
         </button>
         <button
           onClick={onDetails}
-          className="rounded-lg border border-[var(--reader-border)] px-3 py-2 text-sm text-[var(--reader-dim)]"
+          className="rounded-lg border border-(--reader-border) px-3 py-2 text-sm text-(--reader-dim)"
         >
           Details
         </button>
@@ -1425,7 +1437,7 @@ function GoToDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Go to page"
-        className="w-64 rounded-xl border border-[var(--reader-border)] bg-[var(--reader-bar)] p-4 text-[var(--reader-text)] shadow-2xl"
+        className="w-64 rounded-xl border border-(--reader-border) bg-(--reader-bar) p-4 text-(--reader-text) shadow-2xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <b className="text-sm">Go to page</b>
@@ -1444,7 +1456,7 @@ function GoToDialog({
             inputMode="numeric"
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] px-2 py-1.5 text-sm"
+            className="min-w-0 flex-1 rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1.5 text-sm"
           />
           <button
             type="submit"
@@ -1453,7 +1465,7 @@ function GoToDialog({
             Go
           </button>
         </form>
-        <p className="mt-2 text-xs text-[var(--reader-dim)]">
+        <p className="mt-2 text-xs text-(--reader-dim)">
           Page {current} of {pageCount}
         </p>
       </div>
@@ -1469,16 +1481,14 @@ function ZonePreview({
   direction: Direction;
 }) {
   if (navigation === "disabled") {
-    return (
-      <p className="text-[11px] text-[var(--reader-dim)]">Zones off. Use edges, keys, or swipe.</p>
-    );
+    return <p className="text-[11px] text-(--reader-dim)">Zones off. Use edges, keys, or swipe.</p>;
   }
   const prev = direction === "rtl" ? "Next" : "Prev";
   const next = direction === "rtl" ? "Prev" : "Next";
   return (
     <div
       aria-hidden="true"
-      className="relative h-16 w-full overflow-hidden rounded-lg border border-[var(--reader-border)] bg-[var(--reader-canvas)] text-[10px] text-[var(--reader-dim)]"
+      className="relative h-16 w-full overflow-hidden rounded-lg border border-(--reader-border) bg-(--reader-canvas) text-[10px] text-(--reader-dim)"
     >
       {navigation === "l" && (
         <>
@@ -1543,7 +1553,7 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
-        className="w-80 max-w-full rounded-xl border border-[var(--reader-border)] bg-[var(--reader-bar)] p-4 text-[var(--reader-text)] shadow-2xl"
+        className="w-80 max-w-full rounded-xl border border-(--reader-border) bg-(--reader-bar) p-4 text-(--reader-text) shadow-2xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -1551,7 +1561,7 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
           <button
             aria-label="Close shortcuts"
             onClick={onClose}
-            className="rounded-lg p-2 text-[var(--reader-dim)] hover:bg-[var(--reader-border)]"
+            className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
           >
             <X size={16} />
           </button>
@@ -1559,10 +1569,10 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         <dl className="mt-3 space-y-2 text-xs">
           {rows.map(([keys, action]) => (
             <div key={keys} className="flex items-center justify-between gap-3">
-              <dt className="shrink-0 rounded bg-[var(--reader-border)] px-1.5 py-0.5 font-mono text-[11px]">
+              <dt className="shrink-0 rounded bg-(--reader-border) px-1.5 py-0.5 font-mono text-[11px]">
                 {keys}
               </dt>
-              <dd className="text-right text-[var(--reader-dim)]">{action}</dd>
+              <dd className="text-right text-(--reader-dim)">{action}</dd>
             </div>
           ))}
         </dl>
@@ -1586,7 +1596,6 @@ function Paged({
   onNext,
   onPrevious,
   onToggleMenu,
-  onNavigateTurn,
 }: {
   pages: Page[];
   index: number;
@@ -1602,7 +1611,6 @@ function Paged({
   onNext: () => void;
   onPrevious: () => void;
   onToggleMenu: () => void;
-  onNavigateTurn: () => void;
 }) {
   const count = double ? 2 : 1;
   // Chevron sides stay fixed, but their actions follow the reading direction:
@@ -1674,7 +1682,7 @@ function Paged({
     <div
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
-      className="relative flex min-h-0 flex-1 items-stretch justify-center overflow-auto bg-[var(--reader-canvas)]"
+      className="relative flex min-h-0 flex-1 items-stretch justify-center overflow-auto bg-(--reader-canvas)"
     >
       <TransformWrapper
         ref={zoomRef}
@@ -1714,7 +1722,6 @@ function Paged({
           onPrevious={direction === "rtl" ? goNext : goPrevious}
           onNext={direction === "rtl" ? goPrevious : goNext}
           onToggleMenu={onToggleMenu}
-          onNavigateTurn={onNavigateTurn}
           onZoomToggle={() => {
             // The gesture toggles: a second double tap while the spread is
             // zoomed resets it instead of zooming further.
@@ -1785,7 +1792,6 @@ function ZoneLayer({
   onPrevious,
   onNext,
   onToggleMenu,
-  onNavigateTurn,
   onZoomToggle,
   onGuardClick,
 }: {
@@ -1794,7 +1800,6 @@ function ZoneLayer({
   onPrevious: () => void;
   onNext: () => void;
   onToggleMenu: () => void;
-  onNavigateTurn: () => void;
   onZoomToggle: () => void;
   onGuardClick: (event: React.SyntheticEvent) => void;
 }) {
@@ -1830,7 +1835,7 @@ function ZoneLayer({
   // whole area right of the previous zone advances, matching ZonePreview.
   const centerInset = navigation === "edge" ? "left-[15%] right-[15%]" : "left-[20%] right-[20%]";
   return (
-    <div className="absolute inset-0 z-[5]">
+    <div className="absolute inset-0 z-5">
       {navigation === "l" && (
         <button
           aria-label="Tap zone: toggle menu"
@@ -1972,7 +1977,7 @@ function Webtoon({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   return (
-    <div ref={parent} className="min-h-0 flex-1 overflow-y-auto bg-[var(--reader-canvas)]">
+    <div ref={parent} className="min-h-0 flex-1 overflow-y-auto bg-(--reader-canvas)">
       <div className="relative mx-auto max-w-3xl" style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((item) => (
           <div
@@ -1980,7 +1985,10 @@ function Webtoon({
             ref={virtualizer.measureElement}
             data-index={item.index}
             className="absolute left-0 w-full px-2"
-            style={{ transform: `translateY(${item.start}px)`, paddingBottom: gap }}
+            style={{
+              transform: `translateY(${item.start}px)`,
+              paddingBottom: gap,
+            }}
           >
             <div style={{ filter: imgFilter }}>
               <PageImage

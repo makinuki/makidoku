@@ -3723,7 +3723,7 @@ describe("reader chapter flow", () => {
     const surface = container.querySelector("div.reader[data-theme]");
     expect(surface).not.toBeNull();
     expect(surface!.getAttribute("data-theme")).toBe("dark");
-    expect(surface!.className).toContain("bg-[var(--reader-canvas)]");
+    expect(surface!.className).toContain("bg-(--reader-canvas)");
   });
 
   it("never posts progress while incognito is on", async () => {

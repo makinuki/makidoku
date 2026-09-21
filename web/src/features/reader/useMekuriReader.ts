@@ -3,7 +3,7 @@
 // direction flow through setMode/setDirection effects so engine transitions
 // (spread alignment on entering double mode) apply exactly once.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   ZONE_MAP_PRESETS,
   createMekuriEngine,
@@ -14,8 +14,9 @@ import {
   type MekuriMode,
   type MekuriPage,
   type MekuriReadingPosition,
+  type MekuriState,
 } from "@makinuki/mekuri/engine";
-import { toMekuriMode, toZoneMapName } from "./mekuriAdapter";
+import { MEKURI_SPREAD_CONFIG, toMekuriMode, toZoneMapName } from "./mekuriAdapter";
 import type { ReaderDirection, ReaderDisplay, ReaderMode } from "./readerSettings";
 
 export interface UseMekuriReaderArgs {
@@ -25,6 +26,10 @@ export interface UseMekuriReaderArgs {
   navigation: ReaderDisplay["navigation"];
   initialPageIndex: number;
   enabled: boolean;
+  keyboardMap?: MekuriEngineOptions["keyboardMap"];
+  // Host-owned suppression flag, copied into the live boolean option on every
+  // render so open drawers and focused inputs own the keyboard.
+  suppressKeyboard?: boolean;
   resolveImage: (pageId: string | number, attempt: number) => string;
   onPositionSample?: (position: MekuriReadingPosition) => void;
   onBoundaryReached?: (boundary: ChapterBoundary) => void;
@@ -42,6 +47,7 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
         pageIndex: Math.min(Math.max(0, initialPageIndex), Math.max(0, args.pages.length - 1)),
         mode: toMekuriMode(args.mode),
         direction: args.direction,
+        spreadConfig: { ...MEKURI_SPREAD_CONFIG },
       },
       zoneMap: ZONE_MAP_PRESETS[toZoneMapName(args.navigation)],
     };
@@ -52,6 +58,8 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
   if (live !== null) {
     live.pages = args.pages;
     live.zoneMap = ZONE_MAP_PRESETS[toZoneMapName(args.navigation)];
+    live.keyboardMap = args.keyboardMap;
+    live.isKeyboardSuppressed = args.suppressKeyboard;
     live.resolveSrc = (page, attempt) => args.resolveImage(page.id, attempt);
     live.onPositionSample = args.onPositionSample;
     live.onBoundaryReached = args.onBoundaryReached;
@@ -70,4 +78,33 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
   }, [engine, direction]);
 
   return engine;
+}
+
+// Subscribes to engine page position for host chrome. Returns the fallback
+// while the engine is not yet created so chrome renders during loading.
+export function useMekuriPageIndex(engine: MekuriEngine | null, fallback: number): number {
+  const snapshot = useEngineStateFragment(engine, (state) => state.pageIndex);
+  return snapshot ?? fallback;
+}
+
+// Subscribes to engine HUD visibility for host chrome. Returns the fallback
+// while the engine is not yet created so chrome renders during loading.
+export function useMekuriHudVisible(engine: MekuriEngine | null, fallback: boolean): boolean {
+  const snapshot = useEngineStateFragment(engine, (state) => state.isHUDVisible);
+  return snapshot ?? fallback;
+}
+
+// Minimal selector over the engine store so callers subscribe to one field.
+// The hook below always subscribes, even when the engine is null, so host
+// components keep a stable hook order across loading states.
+function useEngineStateFragment<T>(
+  engine: MekuriEngine | null,
+  select: (state: MekuriState) => T,
+): T | null {
+  const state = useSyncExternalStore(
+    (notify) => engine?.subscribe(notify) ?? (() => {}),
+    () => (engine === null ? null : select(engine.getState())),
+    () => (engine === null ? null : select(engine.getState())),
+  );
+  return state;
 }

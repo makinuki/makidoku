@@ -23,6 +23,13 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { api } from "../../api";
+import {
+  attachKeyboard,
+  type MekuriDirection,
+  type MekuriEngine,
+  type MekuriKeyboardEngine,
+  type MekuriKeyboardMap,
+} from "@makinuki/mekuri/engine";
 import type { Aggregate, Chapter, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
 import { chapterLabelFor, prevNextChapter } from "./engine/chapters";
@@ -46,6 +53,22 @@ import {
   type ReaderOverrides,
   type ReaderTheme,
 } from "./readerSettings";
+import { toMekuriPages } from "./mekuriAdapter";
+import { useMekuriHudVisible, useMekuriPageIndex, useMekuriReader } from "./useMekuriReader";
+
+// Keyboard contract: the attached engine dispatcher owns the keys its map
+// can express (arrows and D/A with RTL inversion, M for the HUD), while the
+// host listener keeps everything else. Space stays host-side because the
+// engine cannot express shift-for-back or the paged-only gate;
+// PgDn/PgUp/Home/End stay host-side because the engine map has no jump
+// actions; zoom keys stay disabled while zoom has no visible surface.
+const MEKURI_HEADLESS_KEYBOARD_MAP = {
+  nextPage: ["ArrowRight", "KeyD"],
+  toggleHUD: ["KeyM"],
+  zoomIn: [],
+  zoomOut: [],
+  resetZoom: [],
+} satisfies Partial<MekuriKeyboardMap>;
 
 export function ReaderPage() {
   const { mangaId: routeManga, chapterId: routeChapter } = useParams();
@@ -73,8 +96,11 @@ export function ReaderPage() {
   const [mode, setMode] = useState<Mode>("single");
   const [direction, setDirection] = useState<Direction>("ltr");
   const [fit, setFit] = useState<Fit>("width");
-  const [index, setIndex] = useState(0);
-  const [menu, setMenu] = useState(true);
+  // The headless engine owns the live reading position and chrome
+  // visibility; these states only seed it before pages load and never drive
+  // the UI once the chapter engine exists.
+  const [resumePage, setResumePage] = useState(0);
+  const [menuFallback, setMenuFallback] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -422,7 +448,7 @@ export function ReaderPage() {
           loaded.length,
           effective.mode,
         );
-        setIndex(
+        setResumePage(
           deepLink != null ? alignToSpread(deepLink - 1, loaded.length, effective.mode) : saved,
         );
       } catch (e) {
@@ -478,17 +504,40 @@ export function ReaderPage() {
       }
     })();
   }, [postProgress]);
-  useEffect(() => {
-    if (!pages.length || !aggregate) return;
-    const visibleEnd = Math.min(pages.length, index + spreadStep(mode));
-    const save = () => {
-      saver.current = null;
+  // Engine behind the existing markup. One engine per chapter: created once
+  // the pages load, replaced in place while reading, discarded when the pages
+  // clear on chapter switch. Mode and direction sync through
+  // setMode/setDirection effects inside useMekuriReader.
+  const mekuriPages = useMemo(() => toMekuriPages(pages), [pages]);
+  const engineRef = useRef<MekuriEngine | null>(null);
+  // Last visible 1-based page under the engine's own spread pairing, so
+  // progress, percent, and the end card agree with the spreads the engine
+  // reports.
+  const spreadEndForPage = useCallback(
+    (pageIndex: number): number => {
+      const snapshot = engineRef.current?.getState();
+      const spread = snapshot?.activeSpreads.find((candidate) => candidate.includes(pageIndex));
+      if (spread && spread.length > 0) {
+        return Math.min(pages.length, spread[spread.length - 1] + 1);
+      }
+      return Math.min(pages.length, pageIndex + spreadStep(mode));
+    },
+    [pages.length, mode],
+  );
+  // Last progress write, to drop saves that carry no new information: the
+  // engine samples immediately on every discrete move, so without this the
+  // exit flush would re-post the position a page turn just recorded.
+  const lastPostedRef = useRef<{ key: string; page: number } | null>(null);
+  const saveAtPage = useCallback(
+    (pageIndex: number) => {
+      if (!pages.length || !aggregate) return;
+      const visibleEnd = spreadEndForPage(pageIndex);
       const now = Date.now();
-      // Reading time accrues between writes. A save follows every page turn, so
-      // most intervals cover well under a second; flooring each one on its own
-      // would drop them all. Whole seconds are reported and the remainder stays
-      // pending. The daemon stores one reading session per write, so the value
-      // is the delta since the previous write, capped at 300 seconds.
+      // Reading time accrues between writes. Most intervals cover well under
+      // a second; flooring each one on its own would drop them all. Whole
+      // seconds are reported and the remainder stays pending. The daemon
+      // stores one reading session per write, so the value is the delta since
+      // the previous write, capped at 300 seconds.
       pendingSeconds.current = Math.min(
         300,
         pendingSeconds.current + (now - sessionStartedAt.current) / 1000,
@@ -496,6 +545,10 @@ export function ReaderPage() {
       sessionStartedAt.current = now;
       const seconds = Math.floor(pendingSeconds.current);
       pendingSeconds.current -= seconds;
+      const key = `${mangaId}/${chapterId}`;
+      const last = lastPostedRef.current;
+      if (last && last.key === key && last.page === visibleEnd && seconds === 0) return;
+      lastPostedRef.current = { key, page: visibleEnd };
       void postProgress({
         mangaId,
         chapterId,
@@ -504,11 +557,79 @@ export function ReaderPage() {
         complete: visibleEnd >= pages.length,
         sessionSeconds: seconds,
       });
+    },
+    [pages, aggregate, mangaId, chapterId, postProgress, spreadEndForPage],
+  );
+  const engine = useMekuriReader({
+    pages: mekuriPages,
+    mode,
+    direction,
+    navigation: display.navigation,
+    initialPageIndex: resumePage,
+    enabled: pages.length > 0,
+    keyboardMap: MEKURI_HEADLESS_KEYBOARD_MAP,
+    // Open drawers and dialogs own the keyboard; the dispatcher and the host
+    // listener both stand down while any of them is open.
+    suppressKeyboard: helpOpen || goToOpen || settingsOpen || drawerOpen,
+    // The views below keep their own image URLs; this resolver only feeds
+    // preloads until the views report through the engine pipeline.
+    resolveImage: (pageId, attempt) => {
+      const page = pages.find((candidate) => candidate.id === pageId);
+      if (!page) return "";
+      return `${api.readerImage(page)}${attempt > 1 ? `?retry=${attempt}` : ""}`;
+    },
+    onPositionSample: (position) => saveAtPage(position.pageIndex),
+  });
+  engineRef.current = engine;
+  const index = useMekuriPageIndex(engine, resumePage);
+  const menu = useMekuriHudVisible(engine, menuFallback);
+  const hideChrome = useCallback(() => {
+    if (engineRef.current) engineRef.current.toggleHUD(false);
+    else setMenuFallback(false);
+  }, []);
+  const toggleChrome = useCallback(() => {
+    if (engineRef.current) engineRef.current.toggleHUD();
+    else setMenuFallback((value) => !value);
+  }, []);
+  const goToPageIndex = useCallback(
+    (page: number) => {
+      if (engineRef.current) engineRef.current.goToIndex(page);
+      else setResumePage(Math.min(Math.max(0, page), Math.max(0, pages.length - 1)));
+    },
+    [pages.length],
+  );
+  const turnNext = useCallback(() => {
+    engineRef.current?.next();
+    hideChrome();
+  }, [hideChrome]);
+  const turnPrevious = useCallback(() => {
+    engineRef.current?.prev();
+    hideChrome();
+  }, [hideChrome]);
+  // Spread start under engine pairing for the paged slice below: the engine
+  // keeps a resumed mid-spread page until the first navigation, but the slice
+  // must already show its whole spread.
+  let pagedIndex = index;
+  const engineSnapshot = engine?.getState();
+  if (engineSnapshot && mode !== "webtoon") {
+    const spread = engineSnapshot.activeSpreads.find((candidate) => candidate.includes(index));
+    if (spread && spread[0] !== undefined) pagedIndex = spread[0];
+  }
+  // The last spread is fully visible: progress counts the end of the spread
+  // containing the reading position, so its end is the final page on screen.
+  const visibleEnd = spreadEndForPage(index);
+  const atEnd = pages.length > 0 && visibleEnd >= pages.length;
+  const percent = pages.length ? Math.round((visibleEnd / pages.length) * 100) : 0;
+  useEffect(() => {
+    // Discrete engine moves sample immediately (same-page scroll samples
+    // throttle to 1s inside the engine), so persistence rides
+    // onPositionSample above; the pending write below only covers
+    // unload and chapter switch.
+    saver.current = () => {
+      const position = engineRef.current?.getReadingPosition();
+      saveAtPage(position ? position.pageIndex : resumePage);
     };
-    saver.current = save;
-    const timer = window.setTimeout(save, 500);
-    return () => window.clearTimeout(timer);
-  }, [index, mode, pages.length, aggregate, mangaId, chapterId, postProgress]);
+  }, [saveAtPage, resumePage]);
   useEffect(() => {
     // A pending write is flushed when leaving the reader, switching
     // chapters, hiding the tab, or closing the page so the debounce window
@@ -530,6 +651,38 @@ export function ReaderPage() {
     };
   }, [mangaId, chapterId, flushProgress]);
   useEffect(() => {
+    // The attached dispatcher owns the engine map (arrows, D/A with RTL
+    // inversion, M) against the live engine state. Window is the target so
+    // real bubbled keys and window-dispatched key events both arrive;
+    // suppression and editable-focus guards live inside the dispatcher.
+    // Keyboard page turns hide the host chrome, matching the chevrons, zones,
+    // and swipes; the dispatcher only moves, so the policy wraps next/prev.
+    const surface = readerRef.current;
+    if (!engine || !surface) return;
+    const keyboardEngine: MekuriKeyboardEngine = {
+      getState: (): { direction: MekuriDirection } => engine.getState(),
+      next: () => {
+        engine.next();
+        engine.toggleHUD(false);
+      },
+      prev: () => {
+        engine.prev();
+        engine.toggleHUD(false);
+      },
+      toggleHUD: (force?: boolean) => engine.toggleHUD(force),
+      zoomIn: () => engine.zoomIn(),
+      zoomOut: () => engine.zoomOut(),
+      resetZoom: () => engine.resetZoom(),
+      isKeyboardSuppressed: () => engine.isKeyboardSuppressed(),
+    };
+    const controller = attachKeyboard({ engine: keyboardEngine, element: surface, target: window });
+    return () => controller.detach();
+  }, [engine]);
+  useEffect(() => {
+    // Host-only keys: chapter flow, fullscreen, dialogs, mode cycling, and
+    // the page extras the engine map cannot express (Space with its
+    // shift-for-back rule, PgDn/PgUp, Home/End). Everything the dispatcher
+    // owns above stays out of here so no key ever turns twice.
     const onKey = (event: KeyboardEvent) => {
       // Shortcuts must not fire while a form control has focus: typing into
       // another field or stepping the page slider must stay local to it.
@@ -556,7 +709,6 @@ export function ReaderPage() {
       // An open dialog owns the keyboard: the reader behind it must not turn
       // pages, cycle modes, or hide its own chrome while the user is choosing.
       if (helpOpen || goToOpen || settingsOpen || drawerOpen) return;
-      if (event.key.toLowerCase() === "m") setMenu((value) => !value);
       if (event.key.toLowerCase() === "f") toggleFullscreen();
       if (event.key === "?") {
         setHelpOpen(true);
@@ -582,50 +734,35 @@ export function ReaderPage() {
         if (mangaId) saveReaderOverride({ mode: next });
         else setMode(next);
       }
-      const step = spreadStep(mode);
-      const forward = direction === "ltr" ? "ArrowRight" : "ArrowLeft";
-      const backward = direction === "ltr" ? "ArrowLeft" : "ArrowRight";
-      // Key navigation owns the same rule as the other page-turn controls: the
-      // chrome hides so the reader is left with the pages.
-      const goForward = () => {
-        setIndex((value) => alignToSpread(value + step, pages.length, mode));
-        setMenu(false);
-      };
-      const goBackward = () => {
-        setIndex((value) => alignToSpread(value - step, pages.length, mode));
-        setMenu(false);
-      };
-      if (event.key === forward || event.key.toLowerCase() === "d") goForward();
-      if (event.key === backward || event.key.toLowerCase() === "a") goBackward();
       // Paged extras. Webtoon owns its own scroll keys; Space on a focused
       // button keeps its native activation so chevrons never double-fire.
       if (mode !== "webtoon") {
         if (event.key === " " && target?.tagName !== "BUTTON") {
           event.preventDefault();
-          if (event.shiftKey) goBackward();
-          else goForward();
+          if (event.shiftKey) turnPrevious();
+          else turnNext();
         } else if (event.key === "PageDown" || event.key === "PageUp") {
           event.preventDefault();
-          if (event.key === "PageDown") goForward();
-          else goBackward();
+          if (event.key === "PageDown") turnNext();
+          else turnPrevious();
         } else if (event.key === "Home") {
           event.preventDefault();
-          setIndex(0);
+          goToPageIndex(0);
         } else if (event.key === "End") {
           event.preventDefault();
-          setIndex(alignToSpread(pages.length - 1, pages.length, mode));
+          goToPageIndex(pages.length - 1);
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
-    direction,
     drawerOpen,
     flow.next,
     flow.prev,
     goChapter,
     goToOpen,
+    goToPageIndex,
     helpOpen,
     mangaId,
     mode,
@@ -633,14 +770,9 @@ export function ReaderPage() {
     saveReaderOverride,
     settingsOpen,
     toggleFullscreen,
+    turnNext,
+    turnPrevious,
   ]);
-  // The last spread is fully visible: paged modes show 1-2 pages, webtoon
-  // tracks the first visible page, so its end is the final page on screen.
-  const atEnd =
-    pages.length > 0 &&
-    (mode === "webtoon" ? index >= pages.length - 1 : index + spreadStep(mode) >= pages.length);
-  const visibleCount = Math.min(pages.length, index + (mode === "webtoon" ? 1 : spreadStep(mode)));
-  const percent = pages.length ? Math.round((visibleCount / pages.length) * 100) : 0;
   const imgFilter = useMemo(() => readerImageFilter(display), [display]);
   useEffect(() => {
     // Warm the HTTP cache for the next chapter while the reader finishes
@@ -648,26 +780,23 @@ export function ReaderPage() {
     if (atEnd && flow.next) void api.pages(flow.next.id).catch(() => {});
   }, [atEnd, flow.next]);
   useEffect(() => {
-    // Prefetch the neighboring spreads in paged modes so page turns usually
-    // hit the browser cache. Two spreads ahead covers double-page jumps; one
-    // behind covers going back. Every page of a spread is warmed, not just
-    // its first, so a double-page turn never blocks on the network. Failures
-    // are ignored: the image element retries through the normal path.
-    if (mode === "webtoon" || !pages.length) return;
-    const step = spreadStep(mode);
-    const ids = new Set<string>();
-    for (const start of [index + step, index + step * 2, index - step]) {
-      for (let n = start; n < start + step; n++) {
-        const page = pages[n];
-        if (page) ids.add(page.id);
+    // Warm the engine's preload window through the host image URLs so page
+    // turns usually hit the browser cache. The window follows the reading
+    // position, so it is re-warmed on every engine move. Failures are
+    // ignored: the image element retries through the normal path.
+    if (!engine || !pages.length) return;
+    const warm = () => {
+      for (const pageIndex of engine.getPreloadWindow()) {
+        const page = pages[pageIndex];
+        if (!page) continue;
+        const img = new Image();
+        img.decoding = "async";
+        img.src = `${api.readerImage(page)}${retryAttempts[page.id] ? `?retry=${retryAttempts[page.id]}` : ""}`;
       }
-    }
-    for (const id of ids) {
-      const img = new Image();
-      img.decoding = "async";
-      img.src = `/api/pages/${encodeURIComponent(id)}/image`;
-    }
-  }, [index, mode, pages]);
+    };
+    warm();
+    return engine.subscribe(warm);
+  }, [engine, pages, retryAttempts]);
   // Auto-advance counts down on the end card, then jumps. Any navigation
   // away or an explicit stay cancels it via the effect cleanup.
   useEffect(() => {
@@ -1036,7 +1165,7 @@ export function ReaderPage() {
         <Webtoon
           pages={pages}
           index={index}
-          setIndex={setIndex}
+          setIndex={goToPageIndex}
           gap={display.gap}
           imgFilter={imgFilter}
           retryAttempts={retryAttempts}
@@ -1047,8 +1176,7 @@ export function ReaderPage() {
       ) : (
         <Paged
           pages={pages}
-          index={index}
-          setIndex={setIndex}
+          index={pagedIndex}
           double={mode === "double"}
           direction={direction}
           fit={fit}
@@ -1058,8 +1186,10 @@ export function ReaderPage() {
           onFail={reportFailed}
           onRecover={reportRecovered}
           onRetry={retryPage}
-          onToggleMenu={() => setMenu((value) => !value)}
-          onNavigateTurn={() => setMenu(false)}
+          onNext={turnNext}
+          onPrevious={turnPrevious}
+          onToggleMenu={toggleChrome}
+          onNavigateTurn={hideChrome}
         />
       )}
       {drawerOpen && (
@@ -1087,7 +1217,7 @@ export function ReaderPage() {
           pageCount={pages.length}
           current={Math.min(index + 1, pages.length)}
           onJump={(page) => {
-            setIndex(alignToSpread(page - 1, pages.length, mode));
+            goToPageIndex(page - 1);
             setGoToOpen(false);
           }}
           onClose={() => setGoToOpen(false)}
@@ -1114,13 +1244,13 @@ export function ReaderPage() {
           min="0"
           max={Math.max(0, pages.length - 1)}
           value={index}
-          onChange={(e) => setIndex(alignToSpread(Number(e.target.value), pages.length, mode))}
+          onChange={(e) => goToPageIndex(Number(e.target.value))}
           className="flex-1 accent-amber-400"
         />
         <button
           aria-label="Hide reader menu"
           aria-expanded={menu}
-          onClick={() => setMenu(false)}
+          onClick={hideChrome}
           className="rounded-lg p-2 text-[var(--reader-dim)]"
         >
           <Menu size={16} />
@@ -1130,7 +1260,7 @@ export function ReaderPage() {
       {!menu && (
         <button
           aria-label="Show reader menu"
-          onClick={() => setMenu(true)}
+          onClick={toggleChrome}
           className="absolute right-4 top-4 rounded-lg border border-[var(--reader-border)] bg-[var(--reader-bar)] p-2 text-[var(--reader-text)]"
         >
           <Menu size={17} />
@@ -1444,7 +1574,6 @@ function ShortcutsDialog({ onClose }: { onClose: () => void }) {
 function Paged({
   pages,
   index,
-  setIndex,
   double,
   direction,
   fit,
@@ -1454,12 +1583,13 @@ function Paged({
   onRetry,
   navigation,
   imgFilter,
+  onNext,
+  onPrevious,
   onToggleMenu,
   onNavigateTurn,
 }: {
   pages: Page[];
   index: number;
-  setIndex: (value: number) => void;
   double: boolean;
   direction: Direction;
   fit: Fit;
@@ -1469,22 +1599,23 @@ function Paged({
   onRetry: (id: string) => void;
   navigation: ReaderNavigation;
   imgFilter: string;
+  onNext: () => void;
+  onPrevious: () => void;
   onToggleMenu: () => void;
   onNavigateTurn: () => void;
 }) {
   const count = double ? 2 : 1;
-  const mode: Mode = double ? "double" : "single";
   // Chevron sides stay fixed, but their actions follow the reading direction:
   // in RTL the left control advances and the right control goes back, so the
   // labels always describe what the button does. Both share the zone callbacks
   // so every page turn hides the chrome, whichever control caused it.
+  // Navigation is engine-relative (next/prev move one spread under the
+  // engine's own pairing); the index prop only positions the slice.
   const goPrevious = () => {
-    setIndex(alignToSpread(index - count, pages.length, mode));
-    onNavigateTurn();
+    onPrevious();
   };
   const goNext = () => {
-    setIndex(alignToSpread(index + count, pages.length, mode));
-    onNavigateTurn();
+    onNext();
   };
   const leftAction = direction === "rtl" ? goNext : goPrevious;
   const rightAction = direction === "rtl" ? goPrevious : goNext;

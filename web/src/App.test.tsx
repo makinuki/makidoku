@@ -1195,8 +1195,8 @@ describe("MakiDoku app shell", () => {
     });
   });
 
-  // Leaving the reader inside the debounce window must still record the
-  // position the reader showed at exit, not drop the write.
+  // A page turn samples immediately through the engine, and leaving the
+  // reader afterwards must not duplicate the write the turn just posted.
   it("flushes a pending progress write when leaving the reader", async () => {
     vi.useFakeTimers();
     window.history.pushState({}, "", "/");
@@ -1252,21 +1252,24 @@ describe("MakiDoku app shell", () => {
     expect(screen.getByRole("button", { name: "Single" })).toBeInTheDocument();
     const baseline = progressPosts.length;
 
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
-    expect(progressPosts).toHaveLength(baseline);
-
-    act(() => {
-      view.unmount();
-    });
+    // Discrete engine moves sample immediately, so the turn itself posts.
     expect(progressPosts).toHaveLength(baseline + 1);
     expect(progressPosts[progressPosts.length - 1]).toMatchObject({
       mangaId,
       lastReadChapterId: chapterId,
       lastReadPage: 2,
     });
+
+    act(() => {
+      view.unmount();
+    });
+    // The exit flush drops the write the turn just posted instead of
+    // duplicating it: leaving records nothing new.
+    expect(progressPosts).toHaveLength(baseline + 1);
   });
 
   // Reader shortcuts must not fire while the user operates a form control,
@@ -1313,12 +1316,12 @@ describe("MakiDoku app shell", () => {
     const position = () => screen.getByRole("button", { name: /currently page 1 of 2/ });
     expect(position()).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(screen.getByRole("button", { name: /currently page 2 of 2/ })).toBeInTheDocument();
 
     const slider = screen.getByRole("slider");
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
-    fireEvent.keyDown(slider, { key: "ArrowLeft" });
+    fireEvent.keyDown(slider, { key: "ArrowRight", code: "ArrowRight" });
+    fireEvent.keyDown(slider, { key: "ArrowLeft", code: "ArrowLeft" });
     fireEvent.keyDown(slider, { key: "w" });
     fireEvent.keyDown(slider, { key: "g" });
     expect(screen.getByRole("button", { name: /currently page 2 of 2/ })).toBeInTheDocument();
@@ -1470,9 +1473,9 @@ describe("MakiDoku app shell", () => {
     );
     fireEvent.error(await screen.findByAltText("Page 1"));
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
     const image = await screen.findByAltText("Page 1");
     fireEvent.load(image);
     await waitFor(() =>
@@ -3615,7 +3618,7 @@ describe("reader chapter flow", () => {
     );
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     expect(screen.queryByText(/Up next/)).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next chapter" }));
     await waitFor(() => expect(window.location.pathname).toBe(`/reader/${mangaId}/${chapterTwo}`));
@@ -3700,7 +3703,7 @@ describe("reader chapter flow", () => {
     expect(pill.className).toContain("bottom-16");
     // At the chapter end the next-up card occupies the pill's slot, so the
     // pill shifts up instead of stacking under it.
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     expect(pill.className).toContain("bottom-72");
   });
@@ -3744,7 +3747,7 @@ describe("reader chapter flow", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByText("Incognito")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     view.unmount();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/progress"))).toBe(
       false,
@@ -3779,8 +3782,8 @@ describe("reader chapter flow", () => {
         </BrowserRouter>,
       );
       // The reader settles over a few macrotask turns while the incognito
-      // read is still in flight; the 500 ms save debounce must not leak a
-      // progress write before the state is known.
+      // read is still in flight; with no navigation yet the engine emits no
+      // sample, so no progress write may leak before the state is known.
       const progressPosts = () =>
         fetchMock.mock.calls.filter(
           ([url, init]) =>
@@ -3814,10 +3817,10 @@ describe("reader chapter flow", () => {
     // The failed page is off screen by the time the retry runs, so the count
     // the reader keeps for its id is the only thing that can restore the
     // cache-busting URL when the page mounts again.
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
-    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
     expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=1");
   });
 
@@ -3862,9 +3865,9 @@ describe("reader chapter flow", () => {
     // The page failing again after a spread round trip, while the pill still
     // tracks it, re-populates the pill once: repeat failure reports for a
     // tracked id are deduplicated.
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
     fireEvent.error(await screen.findByAltText("Page 1"));
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
@@ -3875,7 +3878,7 @@ describe("reader chapter flow", () => {
     expect(await screen.findByRole("button", { name: "Retry 1 failed page" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed page" }));
     expect((await screen.findByAltText("Page 1")).getAttribute("src")).toContain("retry=2");
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Download next" }));
     await waitFor(() => expect(queued).toMatchObject({ mangaId, chapters: [chapterTwo] }));
@@ -3955,16 +3958,16 @@ describe("reader chapter flow", () => {
         </BrowserRouter>,
       );
       // The reader settles over a few macrotask turns while the fetches resolve;
-      // the 10 ms steps keep the 500 ms save debounce from firing early.
+      // the 10 ms steps keep the clock near zero before the first turn.
       for (let round = 0; round < 8; round++) {
         await vi.advanceTimersByTimeAsync(10);
       }
       expect(screen.getByAltText("Page 1")).toBeInTheDocument();
-      // Every turn lands inside the 500 ms save debounce, so each write covers
-      // less than a second of reading. Flooring the raw interval to zero each
-      // time loses the session; the seconds have to accrue instead.
+      // Every turn samples immediately, so each write covers less than a
+      // second of reading. Flooring the raw interval to zero each time loses
+      // the session; the seconds have to accrue instead.
       for (let turn = 0; turn < 10; turn++) {
-        fireEvent.keyDown(window, { key: "ArrowRight" });
+        fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
         await vi.advanceTimersByTimeAsync(700);
       }
       expect(posted.length).toBeGreaterThanOrEqual(8);
@@ -3972,9 +3975,9 @@ describe("reader chapter flow", () => {
       expect(total).toBeGreaterThanOrEqual(4);
       // A long idle is capped at the 300 seconds the daemon accepts: the save
       // that follows the gap reports the cap, not 400 seconds.
-      fireEvent.keyDown(window, { key: "ArrowLeft" });
+      fireEvent.keyDown(window, { key: "ArrowLeft", code: "ArrowLeft" });
       await vi.advanceTimersByTimeAsync(400_000);
-      fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
       await vi.advanceTimersByTimeAsync(1000);
       expect(posted.at(-1)).toBe(300);
       expect(Math.max(...posted)).toBeLessThanOrEqual(300);
@@ -4198,7 +4201,7 @@ describe("reader chapter flow", () => {
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show reader menu" }));
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByRole("button", { name: "Show reader menu" })).toBeInTheDocument();
   });
 
@@ -4215,9 +4218,9 @@ describe("reader chapter flow", () => {
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     // The dialog owns the keyboard: page turns, mode switches, and menu toggles
     // all stay behind it. Escape is the only key it forwards.
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     fireEvent.keyDown(window, { key: "w" });
-    fireEvent.keyDown(window, { key: "m" });
+    fireEvent.keyDown(window, { key: "m", code: "KeyM" });
     expect(screen.getByAltText("Page 1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Single" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Double" })).toHaveAttribute("aria-pressed", "false");
@@ -4227,7 +4230,7 @@ describe("reader chapter flow", () => {
       expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument(),
     );
     // The reader takes the keyboard back once the dialog is gone.
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight", code: "ArrowRight" });
     expect(await screen.findByAltText("Page 2")).toBeInTheDocument();
   });
 });

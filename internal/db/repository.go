@@ -937,8 +937,20 @@ func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingPro
 	if err != nil {
 		return ReadingProgress{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO history_events(id,manga_id,chapter_id,page,occurred_at) VALUES(?,?,?,?,?)`, eventID, progress.MangaID, progress.LastReadChapterID, progress.LastReadPage, progress.LastReadAt); err != nil {
+	// History keeps one row per chapter with the latest page: repeated
+	// progress writes refresh the row instead of appending a row per page.
+	changed, err := tx.Exec(`UPDATE history_events SET page=?, occurred_at=? WHERE manga_id=? AND chapter_id=?`, progress.LastReadPage, progress.LastReadAt, progress.MangaID, progress.LastReadChapterID)
+	if err != nil {
 		return ReadingProgress{}, err
+	}
+	affected, err := changed.RowsAffected()
+	if err != nil {
+		return ReadingProgress{}, err
+	}
+	if affected == 0 {
+		if _, err := tx.Exec(`INSERT INTO history_events(id,manga_id,chapter_id,page,occurred_at) VALUES(?,?,?,?,?)`, eventID, progress.MangaID, progress.LastReadChapterID, progress.LastReadPage, progress.LastReadAt); err != nil {
+			return ReadingProgress{}, err
+		}
 	}
 	if progress.IsCompleted {
 		if _, err := tx.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at) VALUES(?,?,1,?)

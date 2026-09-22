@@ -95,6 +95,62 @@ func TestLibraryRepositoryListsReadingHistory(t *testing.T) {
 func floatPtr(v float64) *float64 { return &v }
 func stringPtr(v string) *string  { return &v }
 
+// Earlier builds appended a history row per page turn. The migration keeps
+// the newest row of each manga and chapter pair.
+func TestHistoryCoalesceMigrationKeepsNewest(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "coalesce", Title: "Coalesce", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []struct {
+		id        string
+		chapterID any
+		page      int
+		at        int64
+	}{
+		{"coalesce-1", chapter.ID, 61, 100},
+		{"coalesce-2", chapter.ID, 62, 200},
+		{"coalesce-3", chapter.ID, 61, 150},
+		{"coalesce-4", nil, 0, 50},
+		{"coalesce-5", nil, 0, 75},
+	}
+	for _, row := range seed {
+		if _, err := repo.db.Exec(`INSERT INTO history_events(id,manga_id,chapter_id,page,occurred_at) VALUES(?,?,?,?,?)`, row.id, manga.ID, row.chapterID, row.page, row.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const name = "migrations/000019_history_coalesce.up.sql"
+	if _, err := repo.db.Exec(`DELETE FROM _migrations WHERE name=?`, name); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(repo.db); err != nil {
+		t.Fatal(err)
+	}
+	events, err := repo.ListHistoryEvents(10)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+	for _, event := range events {
+		switch {
+		case event.ChapterID != nil && *event.ChapterID == chapter.ID:
+			if event.Page == nil || *event.Page != 62 {
+				t.Fatalf("chapter event = %+v", event)
+			}
+		case event.ChapterID == nil:
+			if event.OccurredAt != 75 {
+				t.Fatalf("title event = %+v", event)
+			}
+		default:
+			t.Fatalf("unexpected event = %+v", event)
+		}
+	}
+}
+
 // A refresh used to store the source upload time in milliseconds while every
 // other timestamp is in seconds. The migration folds values that can only be
 // milliseconds and leaves a seconds value alone.

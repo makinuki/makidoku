@@ -425,7 +425,7 @@ func TestSettingsRoundTripAndChapterReadState(t *testing.T) {
 	}
 }
 
-func TestUpsertReadingProgressAppendsHistoryEvent(t *testing.T) {
+func TestUpsertReadingProgressCoalescesHistoryEvent(t *testing.T) {
 	repo := testRepository(t)
 	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "history-event", Title: "History", Status: "ongoing"})
 	if err != nil {
@@ -435,15 +435,37 @@ func TestUpsertReadingProgressAppendsHistoryEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.UpsertReadingProgress(ReadingProgress{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 1, TotalPages: 3}); err != nil {
+	other, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "history-chapter-2"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	writes := []ReadingProgress{
+		{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 1, TotalPages: 3},
+		{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 2, TotalPages: 3},
+		{MangaID: manga.ID, LastReadChapterID: other.ID, LastReadPage: 1, TotalPages: 3},
+		{MangaID: manga.ID, LastReadChapterID: chapter.ID, LastReadPage: 3, TotalPages: 3},
+	}
+	for _, write := range writes {
+		if _, err := repo.UpsertReadingProgress(write); err != nil {
+			t.Fatal(err)
+		}
+	}
 	events, err := repo.ListHistoryEvents(10)
-	if err != nil || len(events) != 1 {
+	if err != nil || len(events) != 2 {
 		t.Fatalf("events = %+v, err = %v", events, err)
 	}
-	if events[0].MangaID != manga.ID || events[0].ChapterID == nil || *events[0].ChapterID != chapter.ID {
-		t.Fatalf("event = %+v", events[0])
+	byChapter := map[string]HistoryEvent{}
+	for _, event := range events {
+		if event.ChapterID == nil {
+			t.Fatalf("event without chapter = %+v", event)
+		}
+		byChapter[*event.ChapterID] = event
+	}
+	if byChapter[chapter.ID].Page == nil || *byChapter[chapter.ID].Page != 3 {
+		t.Fatalf("chapter event = %+v", byChapter[chapter.ID])
+	}
+	if byChapter[other.ID].Page == nil || *byChapter[other.ID].Page != 1 {
+		t.Fatalf("other chapter event = %+v", byChapter[other.ID])
 	}
 }
 

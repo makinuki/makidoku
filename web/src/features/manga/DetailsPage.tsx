@@ -413,13 +413,13 @@ export function DetailsPage() {
                 )
               }
               disabled={visible.length === 0}
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs disabled:opacity-50"
+              className="min-h-11 rounded-lg border border-zinc-700 px-3 py-2 text-xs disabled:opacity-50"
             >
               Mark visible read
             </button>
             <button
               onClick={() => setSelected(chapters.map((item) => item.id))}
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs"
+              className="min-h-11 rounded-lg border border-zinc-700 px-3 py-2 text-xs"
             >
               Select all
             </button>
@@ -427,7 +427,7 @@ export function DetailsPage() {
               onClick={() => void enqueue()}
               disabled={enqueueing || selected.length === 0}
               title="Select chapters to download"
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-xs font-semibold text-zinc-950 disabled:opacity-50"
             >
               <Download size={14} /> {enqueueing ? "Queueing…" : "Download"}
             </button>
@@ -440,7 +440,7 @@ export function DetailsPage() {
               aria-label="Chapter sort"
               value={chapterSort}
               onChange={(event) => setChapterSort(event.target.value as typeof chapterSort)}
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+              className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
             >
               <option value="number-desc">Number, newest first</option>
               <option value="number-asc">Number, oldest first</option>
@@ -453,7 +453,7 @@ export function DetailsPage() {
               aria-label="Chapter filter"
               value={chapterFilter}
               onChange={(event) => setChapterFilter(event.target.value as typeof chapterFilter)}
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+              className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
             >
               <option value="all">All chapters</option>
               <option value="unread">Unread only</option>
@@ -472,7 +472,7 @@ export function DetailsPage() {
           <div className="mb-5 flex flex-wrap gap-2">
             <button
               onClick={() => setLanguageFilter(undefined)}
-              className={`rounded-full border px-3 py-1.5 text-xs ${languageFilter === undefined ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
+              className={`min-h-11 rounded-full border px-4 py-1.5 text-xs ${languageFilter === undefined ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
             >
               All languages
             </button>
@@ -480,7 +480,7 @@ export function DetailsPage() {
               <button
                 key={code}
                 onClick={() => setLanguageFilter(code)}
-                className={`rounded-full border px-3 py-1.5 text-xs ${languageFilter === code ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
+                className={`min-h-11 rounded-full border px-4 py-1.5 text-xs ${languageFilter === code ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
               >
                 {languageLabel(code)}
               </button>
@@ -497,13 +497,14 @@ export function DetailsPage() {
                 {group.chapters.map((chapter) => (
                   <div
                     key={chapter.id}
-                    className={`flex items-center gap-3 p-4 hover:bg-zinc-900 ${chapter.read ? "text-zinc-500" : ""}`}
+                    className={`flex items-center gap-1.5 p-4 hover:bg-zinc-900 sm:gap-3 ${chapter.read ? "text-zinc-500" : ""}`}
                   >
                     <input
                       type="checkbox"
                       checked={selected.includes(chapter.id)}
                       onChange={() => toggle(chapter.id)}
-                      className="accent-amber-400"
+                      aria-label={`Select ${formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}`}
+                      className="size-5 shrink-0 accent-amber-400"
                     />
                     <Link
                       to={`/reader/${encodeURIComponent(manga.id)}/${encodeURIComponent(chapter.id)}`}
@@ -528,7 +529,7 @@ export function DetailsPage() {
                             ),
                           )
                       }
-                      className={`rounded-lg p-1.5 ${chapter.bookmark ? "text-amber-300" : "text-zinc-600 hover:text-amber-300"}`}
+                      className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1.5 ${chapter.bookmark ? "text-amber-300" : "text-zinc-600 hover:text-amber-300"}`}
                     >
                       <Bookmark size={16} />
                     </button>
@@ -545,7 +546,7 @@ export function DetailsPage() {
                             ),
                           )
                       }
-                      className={`rounded-lg p-1.5 ${chapter.read ? "text-amber-300" : "text-zinc-600 hover:text-amber-300"}`}
+                      className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1.5 ${chapter.read ? "text-amber-300" : "text-zinc-600 hover:text-amber-300"}`}
                     >
                       <Check size={16} />
                     </button>
@@ -577,9 +578,9 @@ export function DetailsPage() {
           </PageHeader>
           {suggestionsLoaded && suggestions.length > 0 && (
             <>
-              <div className="flex gap-3 overflow-x-auto pb-2">
+              <div className="flex snap-x gap-3 overflow-x-auto pb-2">
                 {suggestions.map((item) => (
-                  <article key={item.remoteId} className="w-36 shrink-0">
+                  <article key={item.remoteId} className="w-36 shrink-0 snap-start">
                     <div className="aspect-3/4 overflow-hidden rounded-lg bg-zinc-900">
                       {item.coverUrl ? (
                         <img src={item.coverUrl} alt="" className="size-full object-cover" />

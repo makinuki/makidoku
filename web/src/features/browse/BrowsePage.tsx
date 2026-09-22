@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   Bookmark,
   ChevronLeft,
   ChevronRight,
@@ -33,6 +35,9 @@ import { MigrationModal } from "../manga/DetailsPage";
 
 type Tab = "sources" | "plugins" | "migrate";
 
+// Dispatched after a search is saved so the feeds panel reloads in place.
+const FEEDS_REFRESH_EVENT = "makidoku:feeds-refresh";
+
 export function BrowsePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
@@ -52,7 +57,7 @@ export function BrowsePage() {
   };
   return (
     <div className="mx-auto max-w-7xl p-5 sm:p-8">
-      <PageHeader eyebrow="Desktop catalog" title="Browse" />
+      <PageHeader eyebrow="Catalog" title="Browse" />
       <div className="mb-8 flex gap-1 border-b border-zinc-800">
         {(["sources", "plugins", "migrate"] as const).map((item) => (
           <button
@@ -93,6 +98,10 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [failedSources, setFailedSources] = useState({ failed: 0, total: 0 });
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveNote, setSaveNote] = useState("");
+  const [saving, setSaving] = useState(false);
   const pendingFilters = useRef<Record<string, unknown>>({});
 
   const loadSources = async () => {
@@ -284,11 +293,11 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
                   {group.label}
                 </h2>
-                <div className="flex gap-3 overflow-x-auto pb-1">
+                <div className="flex snap-x gap-3 overflow-x-auto pb-1">
                   {group.items.map((source) => (
                     <div
                       key={source.id}
-                      className={`flex min-w-52 items-center gap-2 rounded-xl border px-3 py-3 ${
+                      className={`flex min-w-52 snap-start items-center gap-2 rounded-xl border px-3 py-3 ${
                         selected === source.id
                           ? "border-amber-400 bg-amber-400/10"
                           : "border-zinc-800 bg-zinc-900"
@@ -311,7 +320,7 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
                         aria-label={source.pinned ? "Unpin source" : "Pin source"}
                         title={`${source.pinned ? "Unpin" : "Pin"} ${source.name}`}
                         onClick={() => void pin(source)}
-                        className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-amber-300"
+                        className="flex min-h-11 min-w-11 items-center justify-center rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-amber-300 active:bg-zinc-800 active:text-amber-300"
                       >
                         {source.pinned ? <PinOff size={14} /> : <Pin size={14} />}
                       </button>
@@ -340,6 +349,75 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
           className="min-w-0 flex-1 bg-transparent outline-none"
         />
       </form>
+      {selected !== "all" && query.trim() && (
+        <div className="mb-6">
+          {saveOpen ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                const name = saveName.trim() || query.trim();
+                setSaving(true);
+                setSaveNote("");
+                void api
+                  .createSavedSearch({
+                    sourceId: selected,
+                    name,
+                    query: query.trim(),
+                    filters: JSON.stringify(filterValues),
+                  })
+                  .then(() => {
+                    setSaveOpen(false);
+                    setSaveName("");
+                    setSaveNote(`Saved "${name}" to feeds and saved searches.`);
+                    window.dispatchEvent(new CustomEvent(FEEDS_REFRESH_EVENT));
+                  })
+                  .catch((e) =>
+                    setSaveNote(e instanceof Error ? e.message : "Unable to save this search"),
+                  )
+                  .finally(() => setSaving(false));
+              }}
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3"
+            >
+              <input
+                value={saveName}
+                onChange={(event) => setSaveName(event.target.value)}
+                placeholder={query.trim()}
+                aria-label="Saved search name"
+                className="min-h-11 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm outline-none"
+              />
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-amber-400 px-4 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save search"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSaveOpen(false)}
+                className="min-h-11 rounded-lg px-3 text-sm text-zinc-400 hover:text-white"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSaveName(query.trim());
+                  setSaveNote("");
+                  setSaveOpen(true);
+                }}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-700 px-3 text-sm text-zinc-300 hover:border-zinc-500 active:border-zinc-500"
+              >
+                <Plus size={15} /> Save this search
+              </button>
+              {saveNote && <p className="text-xs text-emerald-300">{saveNote}</p>}
+            </div>
+          )}
+        </div>
+      )}
       {selected !== "all" && filterSchemas.length > 0 && (
         <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <h2 className="text-sm font-semibold">Plugin filters</h2>
@@ -416,13 +494,19 @@ function FeedsPanel({
   const [searches, setSearches] = useState<SavedSearch[]>([]);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = () => {
     void Promise.all([api.feeds(), api.savedSearches("")])
       .then(([feedList, searchList]) => {
         setFeeds(feedList);
         setSearches(searchList);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Unable to load feeds"));
+  };
+  useEffect(load, []);
+  // Saving a search from the form below refreshes the panel in place.
+  useEffect(() => {
+    window.addEventListener(FEEDS_REFRESH_EVENT, load);
+    return () => window.removeEventListener(FEEDS_REFRESH_EVENT, load);
   }, []);
 
   if (error)
@@ -618,6 +702,16 @@ function PluginsTab() {
                     {source.nsfw ? " · 18+" : ""}
                   </small>
                 </div>
+                {source.hasClearance && (
+                  <span
+                    role="img"
+                    aria-label={`${source.name} has browser clearance`}
+                    title="Browser clearance active"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg border border-emerald-500/40 text-emerald-300"
+                  >
+                    <ShieldCheck size={15} />
+                  </span>
+                )}
                 {update && (
                   <button
                     onClick={() =>
@@ -777,6 +871,8 @@ function MigrateTab() {
   const [manga, setManga] = useState<Manga[]>([]);
   const [query, setQuery] = useState("");
   const [selectedManga, setSelectedManga] = useState<Manga>();
+  const [sort, setSort] = useState<"name" | "count">("count");
+  const [ascending, setAscending] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     void api
@@ -797,6 +893,11 @@ function MigrateTab() {
   const visible = manga.filter((item) =>
     item.title.toLowerCase().includes(query.trim().toLowerCase()),
   );
+  const ordered = [...sources].sort((a, b) => {
+    const order =
+      sort === "count" ? a.count - b.count : a.source.name.localeCompare(b.source.name);
+    return ascending ? order : -order;
+  });
   return (
     <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
       {error && (
@@ -808,8 +909,31 @@ function MigrateTab() {
         <h2 className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Library sources
         </h2>
-        <div className="mt-1 space-y-1">
-          {sources.map((item) => (
+        <div className="mb-2 flex items-center gap-1 px-2" role="group" aria-label="Sort sources">
+          {(["count", "name"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={sort === mode}
+              onClick={() => setSort(mode)}
+              className={`min-h-11 rounded-lg px-3 text-xs font-medium capitalize ${
+                sort === mode ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+          <button
+            type="button"
+            aria-label={ascending ? "Sort ascending" : "Sort descending"}
+            onClick={() => setAscending((value) => !value)}
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white"
+          >
+            {ascending ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+          </button>
+        </div>
+        <div className="mt-1 max-h-72 space-y-1 overflow-y-auto lg:max-h-none">
+          {ordered.map((item) => (
             <button
               key={item.source.id}
               onClick={() => setSelectedSource(item.source.id)}

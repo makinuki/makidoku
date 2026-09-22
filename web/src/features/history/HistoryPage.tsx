@@ -62,44 +62,47 @@ export function HistoryPage() {
                 {label}
               </h2>
               <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/50">
-                {group.map((item) => (
-                  <Link
-                    key={item.id}
-                    to={
-                      item.chapter
-                        ? `/reader/${encodeURIComponent(item.manga.id)}/${encodeURIComponent(item.chapter.id)}${item.page != null ? `?page=${item.page}` : ""}`
-                        : `/manga/${encodeURIComponent(item.manga.id)}`
-                    }
-                    className="flex items-center gap-4 p-4 hover:bg-zinc-900"
-                  >
-                    <div className="size-14 overflow-hidden rounded-lg bg-zinc-800">
-                      <CoverImg src={item.manga.coverUrl} className="size-full object-cover" />
+                {group.map((item) => {
+                  const target = item.chapter
+                    ? `/reader/${encodeURIComponent(item.manga.id)}/${encodeURIComponent(item.chapter.id)}${item.page != null ? `?page=${item.page}` : ""}`
+                    : `/manga/${encodeURIComponent(item.manga.id)}`;
+                  return (
+                    <div key={item.id} className="flex items-center gap-4 p-4">
+                      <Link
+                        to={`/manga/${encodeURIComponent(item.manga.id)}`}
+                        aria-label={`Open ${item.manga.title}`}
+                        className="size-14 shrink-0 overflow-hidden rounded-lg bg-zinc-800"
+                      >
+                        <CoverImg src={item.manga.coverUrl} className="size-full object-cover" />
+                      </Link>
+                      <Link
+                        to={target}
+                        className="flex min-w-0 flex-1 items-center gap-4 hover:bg-zinc-900"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <b className="block truncate">{item.manga.title}</b>
+                          <small className="text-zinc-500">
+                            {item.chapter?.chapterNumber == null
+                              ? item.chapter?.title || "Title viewed"
+                              : `Chapter ${item.chapter.chapterNumber}`}
+                            {item.page != null && ` · page ${item.page}`}
+                            {item.occurredAt > 0 &&
+                              ` · ${formatTimestamp(item.occurredAt, dateFormat)}`}
+                          </small>
+                        </span>
+                        <ChevronRight size={17} className="shrink-0 text-zinc-600" />
+                      </Link>
+                      <button
+                        type="button"
+                        aria-label={`Delete history for ${item.manga.title}`}
+                        className="min-h-11 min-w-11 rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-red-300 active:bg-zinc-800 active:text-red-300"
+                        onClick={() => void remove(item.id)}
+                      >
+                        <Trash2 size={17} />
+                      </button>
                     </div>
-                    <span className="min-w-0 flex-1">
-                      <b className="block truncate">{item.manga.title}</b>
-                      <small className="text-zinc-500">
-                        {item.chapter?.chapterNumber == null
-                          ? item.chapter?.title || "Title viewed"
-                          : `Chapter ${item.chapter.chapterNumber}`}
-                        {item.page != null && ` · page ${item.page}`}
-                        {item.occurredAt > 0 &&
-                          ` · ${formatTimestamp(item.occurredAt, dateFormat)}`}
-                      </small>
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`Delete history for ${item.manga.title}`}
-                      className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-red-300"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void remove(item.id);
-                      }}
-                    >
-                      <Trash2 size={17} />
-                    </button>
-                    <ChevronRight size={17} className="text-zinc-600" />
-                  </Link>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ))}

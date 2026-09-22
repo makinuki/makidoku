@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../../api";
+import { onReselect, setBottomNavVisible } from "../../app/nav";
 import type { BulkResult, Category, LibraryManga } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
 import { Modal } from "../../components/Modal";
@@ -158,6 +159,19 @@ export function LibraryPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selectionMode, clearSelection]);
+
+  // The active Library tab reopens the layout sheet; selection mode lends the
+  // bottom edge to the bulk action bar while it lasts.
+  useEffect(
+    () =>
+      onReselect((tab) => {
+        if (tab === "library") setFiltersOpen(true);
+      }),
+    [],
+  );
+  useEffect(() => {
+    setBottomNavVisible(!selectionMode);
+  }, [selectionMode]);
 
   const runBulk = useCallback(
     async (action: () => Promise<BulkResult>, message: string) => {
@@ -356,7 +370,7 @@ export function LibraryPage() {
         />
       )}
       {selectionMode && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
+        <div className="fixed inset-x-0 bottom-[calc(var(--nav-height)+var(--sat-bottom))] z-30 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur md:bottom-0">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-3">
             <SelectionAction
               icon={<BookCheck size={15} />}

@@ -6,6 +6,7 @@ import { DownloadsPage } from "./features/downloads/DownloadsPage";
 import { DetailsPage } from "./features/manga/DetailsPage";
 import { HistoryPage } from "./features/history/HistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
+import { MorePage } from "./features/more/MorePage";
 import { ReaderPage } from "./features/reader/ReaderPage";
 import { SettingsIndexPage } from "./features/settings/SettingsIndexPage";
 import { SettingsLayout } from "./features/settings/SettingsLayout";
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/manga/:mangaId/recommendations" element={<RecommendationsPage />} />
           <Route path="/downloads" element={<DownloadsPage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/more" element={<MorePage />} />
           <Route path="/updates" element={<UpdatesPage />} />
           <Route path="/stats" element={<StatsPage />} />
           <Route path="/settings" element={<SettingsLayout />}>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
+import { refreshBadges } from "../../app/nav";
 import type { LibraryUpdateState, UpdateLog } from "../../types";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 import { CoverImg } from "../../components/CoverImg";
@@ -50,6 +51,7 @@ export function UpdatesPage() {
     try {
       await api.acknowledgeUpdates([id]);
       setItems((current) => current.filter((item) => item.id !== id));
+      refreshBadges();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to acknowledge update");
     }
@@ -57,15 +59,23 @@ export function UpdatesPage() {
   return (
     <div className="mx-auto max-w-5xl p-5 sm:p-8">
       <PageHeader eyebrow="Library changes" title="Updates">
-        <button
-          type="button"
-          onClick={() => void run()}
-          disabled={busy}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
-        >
-          <RefreshCw size={16} className={busy ? "animate-spin" : ""} />{" "}
-          {busy ? "Checking…" : "Check now"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to="/downloads"
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:border-zinc-500 active:border-zinc-500"
+          >
+            View queue
+          </Link>
+          <button
+            type="button"
+            onClick={() => void run()}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+          >
+            <RefreshCw size={16} className={busy ? "animate-spin" : ""} />{" "}
+            {busy ? "Checking…" : "Check now"}
+          </button>
+        </div>
       </PageHeader>
       {state?.lastRunAt && (
         <p className="mb-6 text-sm text-zinc-500">

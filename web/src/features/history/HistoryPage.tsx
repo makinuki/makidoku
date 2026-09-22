@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { ChevronRight, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ChevronRight, Play, Trash2 } from "lucide-react";
 import { api } from "../../api";
+import { resumeLastRead } from "../../app/nav";
 import type { HistoryEvent } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
@@ -10,6 +11,7 @@ import { useDateFormat } from "../../hooks/useDateFormat";
 
 export function HistoryPage() {
   const dateFormat = useDateFormat();
+  const navigate = useNavigate();
   const [items, setItems] = useState<HistoryEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -40,7 +42,15 @@ export function HistoryPage() {
   }, [items]);
   return (
     <div className="mx-auto max-w-5xl p-5 sm:p-8">
-      <PageHeader eyebrow="Recently read" title="History" />
+      <PageHeader eyebrow="Recently read" title="History">
+        <button
+          type="button"
+          onClick={() => void resumeLastRead(navigate)}
+          className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+        >
+          <Play size={16} /> Resume last
+        </button>
+      </PageHeader>
       {error && <ErrorState message={error} />}
       {loading ? (
         <LoadingState label="Loading history" />

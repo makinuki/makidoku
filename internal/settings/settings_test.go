@@ -144,7 +144,7 @@ func TestLibraryViewSettingsAreHiddenAndValidated(t *testing.T) {
 			t.Fatalf("view setting %s is not hidden", entry.Key)
 		}
 	}
-	if hidden != 10 {
-		t.Fatalf("hidden view settings = %d, want 10", hidden)
+	if hidden != 15 {
+		t.Fatalf("hidden view settings = %d, want 15", hidden)
 	}
 }

@@ -332,7 +332,7 @@ var definitionList = []Definition{
 	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Processed image cache retention in days", Validate: number(1, 3650)},
 	{Key: "library.view.sort", Type: "string", Default: `"recent"`, Description: "Library ordering", Validate: enum("recent", "title", "added", "last_read", "unread"), Hidden: true},
 	{Key: "library.view.sort_direction", Type: "string", Default: `"desc"`, Description: "Library ordering direction", Validate: enum("asc", "desc"), Hidden: true},
-	{Key: "library.view.card_size", Type: "string", Default: `"medium"`, Description: "Library card size", Validate: enum("small", "medium", "large"), Hidden: true},
+	{Key: "library.view.card_size", Type: "string", Default: `"medium"`, Description: "Library card size", Validate: enum("small", "medium", "large", "list", "cover-only"), Hidden: true},
 	{Key: "library.view.unread_badge", Type: "boolean", Default: "true", Description: "Show unread counts on library cards", Validate: boolean, Hidden: true},
 	{Key: "library.view.progress_bar", Type: "boolean", Default: "true", Description: "Show reading progress on library cards", Validate: boolean, Hidden: true},
 	{Key: "library.view.continue_button", Type: "boolean", Default: "true", Description: "Show the continue action on library cards", Validate: boolean, Hidden: true},
@@ -340,6 +340,11 @@ var definitionList = []Definition{
 	{Key: "library.view.filter_read_state", Type: "string", Default: `""`, Description: "Library read state filter", Validate: listOf("unread", "in_progress", "completed"), Hidden: true},
 	{Key: "library.view.filter_status", Type: "string", Default: `""`, Description: "Library publication status filter", Validate: listOf("ongoing", "completed", "hiatus", "cancelled", "unknown"), Hidden: true},
 	{Key: "library.view.filter_sources", Type: "string", Default: `""`, Description: "Library source filter", Validate: identifierList(), Hidden: true},
+	{Key: "library.view.filter_downloaded", Type: "boolean", Default: "false", Description: "Library shows only titles with downloads", Validate: boolean, Hidden: true},
+	{Key: "library.view.filter_started", Type: "boolean", Default: "false", Description: "Library shows only started titles", Validate: boolean, Hidden: true},
+	{Key: "library.view.filter_bookmarked", Type: "boolean", Default: "false", Description: "Library shows only titles with bookmarked chapters", Validate: boolean, Hidden: true},
+	{Key: "library.view.columns", Type: "number", Default: "0", Description: "Library grid columns, 0 follows the card size", Validate: number(0, 10), Hidden: true},
+	{Key: "library.view.group_by", Type: "string", Default: `"none"`, Description: "Library grouping", Validate: enum("none", "category", "source", "status"), Hidden: true},
 }
 
 var definitions = func() map[string]Definition {

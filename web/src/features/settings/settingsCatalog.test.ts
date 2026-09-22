@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { RuntimeSetting } from "../../api";
 import {
+  durationLabel,
   searchSettings,
   sectionForKey,
   settingLabel,
@@ -36,8 +37,13 @@ describe("settings catalog", () => {
   });
 
   it("labels a setting from the last key segment", () => {
-    expect(settingLabel("library.update_interval")).toBe("Update interval");
-    expect(settingLabel("browse.hide_nsfw")).toBe("Hide nsfw");
+    expect(settingLabel("reader.direction")).toBe("Direction");
+  });
+
+  it("overrides labels that read like developer terms", () => {
+    expect(settingLabel("library.update_interval")).toBe("Check for new chapters");
+    expect(settingLabel("browse.hide_nsfw")).toBe("Hide adult sources");
+    expect(settingLabel("downloads.concurrent")).toBe("Parallel downloads");
   });
 
   it("ranks section and label matches above description matches", () => {
@@ -58,7 +64,7 @@ describe("settings catalog", () => {
     const settings = [setting("library.update_interval", 1, "Automatic library update interval")];
     expect(searchSettings(settings, "")).toEqual([]);
     expect(searchSettings(settings, "UPDATE").map((result) => result.title)).toEqual([
-      "Update interval",
+      "Check for new chapters",
     ]);
   });
 
@@ -69,6 +75,14 @@ describe("settings catalog", () => {
     expect(searchSettings(settings, "")).toHaveLength(0);
     expect(searchSettings(settings, "key").length).toBeLessThanOrEqual(10);
     expect(searchSettings(settings, "shared")).toHaveLength(10);
+  });
+
+  it("describes durations in plain terms", () => {
+    expect(durationLabel(0)).toBe("Never");
+    expect(durationLabel(86_400_000_000_000)).toBe("Every day");
+    expect(durationLabel(14 * 24 * 3_600_000_000_000)).toBe("Every 2 weeks");
+    expect(durationLabel(36 * 3_600_000_000_000)).toBe("Every 36 hours");
+    expect(durationLabel(30 * 60_000_000_000)).toBe("Every 30 minutes");
   });
 
   it("covers every setting prefix with a section", () => {

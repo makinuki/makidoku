@@ -29,6 +29,7 @@ import type {
   TrackerInfo,
 } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
+import { ExpandableText } from "../../components/ExpandableText";
 import { Modal } from "../../components/Modal";
 import { Switch } from "../../components/Switch";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
@@ -247,15 +248,23 @@ export function DetailsPage() {
               {manga.altTitles && (
                 <div className="sm:col-span-2">
                   <dt className="text-xs text-zinc-500">Alternative titles</dt>
-                  <dd className="text-zinc-300">{parseList(manga.altTitles).join(" · ")}</dd>
+                  <dd>
+                    <ExpandableText
+                      text={parseList(manga.altTitles).join(" · ")}
+                      lines={2}
+                      className="text-zinc-300"
+                    />
+                  </dd>
                 </div>
               )}
             </dl>
           )}
           {manga.description && (
-            <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-zinc-400">
-              {manga.description}
-            </p>
+            <ExpandableText
+              text={manga.description}
+              lines={3}
+              className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-6 text-zinc-400"
+            />
           )}
           <div className="mt-5 flex flex-wrap gap-2">
             {parseList(manga.genres).map((genre) => (
@@ -648,8 +657,9 @@ function formatChapter(volume?: number, number?: number, title?: string) {
   return volume == null ? label : `Vol. ${volume} · ${label}`;
 }
 
-// Groups chapters into volume sections in descending order, with chapters
-// numbered descending inside each group and specials at the end.
+// Groups chapters into volume sections. Chapters without a volume number are
+// the latest releases, so they lead the list unless oldest-first sorting is
+// selected; numbered volumes follow the same direction.
 function groupByVolume(
   chapters: Chapter[],
   sort: "number-desc" | "number-asc" | "source" = "number-desc",
@@ -662,12 +672,19 @@ function groupByVolume(
     else byVolume.set(key, [chapter]);
   }
   const keys = Array.from(byVolume.keys());
-  const volumes = keys.filter((key): key is number => key != null).sort((a, b) => b - a);
+  const ascending = sort === "number-asc";
+  const volumes = keys
+    .filter((key): key is number => key != null)
+    .sort((a, b) => (ascending ? a - b : b - a));
   const ordered: Array<{ key: number | null; label: string }> = volumes.map((volume) => ({
     key: volume as number | null,
     label: `Volume ${volume}`,
   }));
-  if (keys.includes(null)) ordered.push({ key: null, label: "No volume" });
+  if (keys.includes(null)) {
+    const group = { key: null, label: "No volume" };
+    if (ascending) ordered.push(group);
+    else ordered.unshift(group);
+  }
   return ordered.map(({ key, label }) => {
     const bucket = byVolume.get(key) ?? [];
     const sorted = [...bucket].sort((a, b) => {

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 import { Outlet } from "react-router-dom";
 import { api, type RuntimeSetting } from "../../api";
 import { ErrorState, LoadingState } from "../../components/States";
+import { settingLabel } from "./settingsCatalog";
 
 export type SettingsContextValue = {
   settings: RuntimeSetting[];
@@ -58,7 +59,7 @@ export function SettingsLayout() {
       setSettings((current) =>
         current.map((item) => (item.key === setting.key ? { ...item, value } : item)),
       );
-      setStatus(`${setting.key} updated.`);
+      setStatus(`${settingLabel(setting.key)} updated.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save setting");
     } finally {

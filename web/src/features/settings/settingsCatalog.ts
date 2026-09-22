@@ -57,7 +57,7 @@ export const settingsSections: SettingsSection[] = [
   {
     id: "downloads",
     title: "Downloads",
-    subtitle: "Automatic downloads and concurrency",
+    subtitle: "Automatic and parallel downloads",
     icon: Download,
     prefixes: ["downloads"],
   },
@@ -119,12 +119,63 @@ export function settingsForSection(
   return settings.filter((setting) => sectionForKey(setting.key) === id);
 }
 
+// Labels for keys whose generated names read like developer terms.
+const settingLabelOverrides: Record<string, string> = {
+  "library.update_interval": "Check for new chapters",
+  "library.update_on_launch": "Update on startup",
+  "reader.default_mode": "Default reading mode",
+  "reader.fit": "Page fit",
+  "reader.navigation": "Tap zones",
+  "reader.webtoon_gap": "Webtoon spacing",
+  "downloads.auto_download": "Automatic downloads",
+  "downloads.download_ahead": "Download ahead",
+  "downloads.concurrent": "Parallel downloads",
+  "tracking.auto_sync": "Automatic sync",
+  "backup.auto_interval": "Automatic backups",
+  "backup.auto_keep": "Backups to keep",
+  "browse.hide_nsfw": "Hide adult sources",
+  "privacy.incognito": "Incognito mode",
+  "advanced.log_level": "Log detail",
+  "advanced.image_cache_days": "Image cache lifetime",
+};
+
 export function settingLabel(key: string) {
+  const override = settingLabelOverrides[key];
+  if (override) return override;
   return key
     .split(".")
     .at(-1)!
     .replaceAll("_", " ")
     .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+const durationHour = 3_600_000_000_000;
+
+// Duration settings present preset waits; raw nanosecond values never reach
+// the screen.
+export const durationOptions: Array<{ value: number; label: string }> = [
+  { value: 0, label: "Never" },
+  { value: 6 * durationHour, label: "Every 6 hours" },
+  { value: 12 * durationHour, label: "Every 12 hours" },
+  { value: 24 * durationHour, label: "Every day" },
+  { value: 48 * durationHour, label: "Every 2 days" },
+  { value: 72 * durationHour, label: "Every 3 days" },
+  { value: 168 * durationHour, label: "Every week" },
+];
+
+// durationLabel describes a duration outside the preset list, for values
+// written through the API or before the presets existed.
+export function durationLabel(ns: number): string {
+  const preset = durationOptions.find((option) => option.value === ns);
+  if (preset) return preset.label;
+  if (ns <= 0) return "Never";
+  const hours = ns / durationHour;
+  if (hours < 1) return `Every ${Math.round(ns / 60_000_000_000)} minutes`;
+  if (hours % 24 === 0) {
+    const days = hours / 24;
+    return days % 7 === 0 ? `Every ${days / 7} weeks` : `Every ${days} days`;
+  }
+  return `Every ${hours} hours`;
 }
 
 export const settingOptions: Record<string, Array<{ value: string; label: string }>> = {

@@ -5,6 +5,8 @@ import type { RuntimeSetting } from "../../api";
 import { PageHeader } from "../../components/States";
 import { useSettings } from "./SettingsLayout";
 import {
+  durationLabel,
+  durationOptions,
   sectionById,
   settingLabel,
   settingOptions,
@@ -96,6 +98,22 @@ function SettingRow({ setting }: { setting: RuntimeSetting }) {
           disabled={disabled}
           onChange={(event) => void save(setting, event.target.checked)}
         />
+      ) : setting.type === "duration" ? (
+        <select
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          value={String(parsed)}
+          disabled={disabled}
+          onChange={(event) => void save(setting, Number(event.target.value))}
+        >
+          {(durationOptions.some((option) => option.value === parsed)
+            ? durationOptions
+            : [...durationOptions, { value: Number(parsed), label: durationLabel(Number(parsed)) }]
+          ).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       ) : options ? (
         <select
           className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"

@@ -299,9 +299,15 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     expect(await screen.findByText("Vol. 3 · Chapter 10.5")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Volume 3" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "No volume" })).toBeInTheDocument();
-    const noVolumeSection = screen.getByRole("heading", { name: "No volume" }).nextElementSibling;
+    const volumeHeading = screen.getByRole("heading", { name: "Volume 3" });
+    const noVolumeHeading = screen.getByRole("heading", { name: "No volume" });
+    // Chapters without a volume number are the latest releases and lead the list.
+    expect(
+      Boolean(
+        noVolumeHeading.compareDocumentPosition(volumeHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    const noVolumeSection = noVolumeHeading.nextElementSibling;
     expect(noVolumeSection).toHaveTextContent("Chapter 2");
     expect(noVolumeSection).toHaveTextContent("Chapter 1");
     expect(noVolumeSection?.textContent?.indexOf("Chapter 2")).toBeLessThan(
@@ -2099,7 +2105,7 @@ describe("settings sections", () => {
       value: "relative",
       default: "relative",
       type: "string",
-      description: "Timestamp display format",
+      description: "How dates and times are shown",
       hidden: false,
     },
     {
@@ -2107,7 +2113,7 @@ describe("settings sections", () => {
       value: 86400000000000,
       default: 86400000000000,
       type: "duration",
-      description: "Automatic library update interval in nanoseconds",
+      description: "How often the library checks for new chapters",
       hidden: false,
     },
     {
@@ -2115,7 +2121,7 @@ describe("settings sections", () => {
       value: "single",
       default: "single",
       type: "string",
-      description: "Default reader mode",
+      description: "Reading mode used when a chapter opens",
       hidden: false,
     },
     {
@@ -2159,7 +2165,7 @@ describe("settings sections", () => {
       expect(within(main).getByText(title)).toBeInTheDocument();
     }
     await user.click(within(main).getByText("Reader"));
-    expect(await screen.findByText("Default mode")).toBeInTheDocument();
+    expect(await screen.findByText("Default reading mode")).toBeInTheDocument();
     expect(within(main).queryByText("Date format")).not.toBeInTheDocument();
     // Hidden view state never reaches a section.
     expect(within(main).queryByText("Library ordering")).not.toBeInTheDocument();
@@ -2188,7 +2194,7 @@ describe("settings sections", () => {
     );
     const user = userEvent.setup();
     await user.selectOptions(
-      await screen.findByRole("combobox", { name: /Default mode/ }),
+      await screen.findByRole("combobox", { name: /Default reading mode/ }),
       "double",
     );
     await waitFor(() => {
@@ -2198,7 +2204,7 @@ describe("settings sections", () => {
       expect(write).toBeTruthy();
       expect(JSON.parse(write!.body)).toEqual({ value: "double" });
     });
-    expect(await screen.findByText("reader.default_mode updated.")).toBeInTheDocument();
+    expect(await screen.findByText("Default reading mode updated.")).toBeInTheDocument();
   });
 
   it("searches all settings from the header control", async () => {
@@ -2220,9 +2226,9 @@ describe("settings sections", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Search settings" }));
     fireEvent.change(screen.getByPlaceholderText("Search settings"), {
-      target: { value: "update interval" },
+      target: { value: "new chapters" },
     });
-    const result = await screen.findByRole("link", { name: /Update interval/ });
+    const result = await screen.findByRole("link", { name: /Check for new chapters/ });
     await user.click(result);
     await waitFor(() => {
       expect(document.getElementById("library.update_interval")).toHaveAttribute(

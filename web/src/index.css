@@ -3,12 +3,41 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  /* Bottom navigation tokens. --nav-height matches the mobile bottom bar
+     height; --sat-bottom carries the safe-area inset. Main content reserves
+     this space only when a bottom bar is present (see .has-bottom-nav). */
+  --nav-height: 64px;
+  --sat-bottom: env(safe-area-inset-bottom, 0px);
 }
 body {
   margin: 0;
   min-width: 320px;
   background: #09090b;
   overscroll-behavior-y: none;
+}
+/* Reserve bottom-bar and safe-area space when the mobile tab bar is present. */
+.has-bottom-nav main {
+  padding-bottom: calc(var(--nav-height) + var(--sat-bottom));
+}
+/* Bottom sheets trap vertical overscroll so dragging the sheet never
+   rubber-bands the page behind it. */
+.sheet-panel {
+  overscroll-behavior: contain;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sheet-panel {
+    animation: sheet-rise 180ms ease-out;
+  }
+}
+@keyframes sheet-rise {
+  from {
+    transform: translateY(16px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 button,
 input,

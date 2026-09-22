@@ -1645,7 +1645,7 @@ describe("tracker binding feedback", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Tracking" }));
     await user.click(await screen.findByRole("button", { name: "AniList actions" }));
-    await user.click(screen.getByRole("button", { name: "Unbind" }));
+    await user.click(screen.getByRole("menuitem", { name: "Unbind" }));
     // The destructive step asks first.
     expect(unbindCalls).toBe(0);
     await user.click(screen.getByRole("button", { name: "Confirm unbind" }));

@@ -46,7 +46,7 @@ export function LibraryFiltersModal({
   const filtersActive =
     view.filters.readState.length + view.filters.status.length + view.filters.sources.length > 0;
   return (
-    <Modal title="Library layout" onClose={onClose}>
+    <Modal title="Library layout" variant="sheet" onClose={onClose}>
       <div className="mb-5 flex gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1">
         {tabs.map(([id, label]) => (
           <button
@@ -54,8 +54,10 @@ export function LibraryFiltersModal({
             type="button"
             aria-pressed={tab === id}
             onClick={() => setTab(id)}
-            className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
-              tab === id ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
+            className={`min-h-11 flex-1 rounded-lg px-3 py-2 text-sm font-medium ${
+              tab === id
+                ? "bg-zinc-800 text-white"
+                : "text-zinc-400 hover:text-white active:text-white"
             }`}
           >
             {label}
@@ -103,7 +105,7 @@ export function LibraryFiltersModal({
             type="button"
             disabled={!filtersActive}
             onClick={() => patchFilters({ readState: [], status: [], sources: [] })}
-            className="justify-self-start rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 disabled:opacity-40"
+            className="min-h-11 justify-self-start rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 active:border-zinc-500 disabled:opacity-40"
           >
             Clear filters
           </button>

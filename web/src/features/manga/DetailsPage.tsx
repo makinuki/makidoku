@@ -867,6 +867,26 @@ function TrackerSection({
   const [unbinding, setUnbinding] = useState(false);
   const [refreshingStatus, setRefreshingStatus] = useState(false);
   const [liveStatus, setLiveStatus] = useState<TrackerStatus>();
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Touch users have no hover escape hatch: the menu closes on outside tap
+  // and Escape like a modal dialog.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
   const searchSeq = useRef(0);
   const search = async () => {
     const seq = ++searchSeq.current;
@@ -955,29 +975,36 @@ function TrackerSection({
           )}
         </div>
         {binding && (
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               aria-label={`${label} actions`}
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
               onClick={() => setMenuOpen((open) => !open)}
-              className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white active:bg-zinc-800 active:text-white"
             >
               <Ellipsis size={17} />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-10 z-10 w-36 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl">
+              <div
+                role="menu"
+                className="absolute right-0 top-10 z-10 w-36 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
+              >
                 <button
+                  role="menuitem"
                   onClick={() => void refreshStatus()}
                   disabled={refreshingStatus}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-zinc-800 disabled:opacity-50"
+                  className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-zinc-800 active:bg-zinc-800 disabled:opacity-50"
                 >
                   <RefreshCw size={13} className={refreshingStatus ? "animate-spin" : ""} /> Refresh
                 </button>
                 <button
+                  role="menuitem"
                   onClick={() => {
                     setMenuOpen(false);
                     setConfirmUnbind(true);
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-red-300 hover:bg-red-950/40"
+                  className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-red-300 hover:bg-red-950/40 active:bg-red-950/40"
                 >
                   <X size={13} /> Unbind
                 </button>

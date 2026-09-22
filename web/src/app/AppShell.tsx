@@ -82,7 +82,7 @@ export function AppShell({
               key={to}
               to={to}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm ${isActive ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-800/70 hover:text-white"}`
+                `flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm ${isActive ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-800/70 hover:text-white active:bg-zinc-800/70 active:text-white"}`
               }
             >
               <Icon size={17} /> <span>{label}</span>
@@ -93,7 +93,7 @@ export function AppShell({
           <NavLink
             to="/settings"
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm ${isActive ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-800/70 hover:text-white"}`
+              `flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm ${isActive ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-800/70 hover:text-white active:bg-zinc-800/70 active:text-white"}`
             }
           >
             <Settings size={17} /> Settings
@@ -104,7 +104,7 @@ export function AppShell({
         <header className="sticky top-0 z-20 flex h-16 items-center gap-4 border-b border-zinc-800 bg-zinc-950/90 px-4 backdrop-blur lg:px-8">
           <button
             onClick={onSearch}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-left text-sm text-zinc-400 hover:border-zinc-700"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-left text-sm text-zinc-400 hover:border-zinc-700 active:border-zinc-700"
             aria-label={searchLabel}
           >
             <Search size={16} />
@@ -119,7 +119,7 @@ export function AppShell({
             aria-pressed={incognito}
             aria-label={incognito ? "Turn off incognito mode" : "Turn on incognito mode"}
             title={incognito ? "Incognito mode is on" : "Incognito mode is off"}
-            className={`rounded-lg border p-2 ${incognito ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : "border-zinc-800 text-zinc-400 hover:border-zinc-700"}`}
+            className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border p-2 ${incognito ? "border-amber-400/60 bg-amber-400/10 text-amber-300" : "border-zinc-800 text-zinc-400 hover:border-zinc-700 active:border-zinc-700"}`}
           >
             <EyeOff size={16} />
           </button>

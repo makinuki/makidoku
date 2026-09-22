@@ -112,7 +112,12 @@ type HTTPError struct {
 	Message string
 }
 
-func (e *HTTPError) Error() string { return fmt.Sprintf("tracker http %d: %s", e.Status, e.Message) }
+func (e *HTTPError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("the tracker returned an error (status %d: %s)", e.Status, e.Message)
+	}
+	return fmt.Sprintf("the tracker returned an error (status %d)", e.Status)
+}
 
 type Client struct {
 	HTTP        *http.Client
@@ -156,7 +161,7 @@ func (c Client) request(ctx context.Context, method, path string, body io.Reader
 			return err
 		}
 		if cred.AccessToken == "" {
-			return errors.New("tracker credentials are not configured")
+			return errors.New("connect this tracker again in Settings > Tracking")
 		}
 		if c.TokenHeader != nil {
 			key, value := c.TokenHeader(cred)

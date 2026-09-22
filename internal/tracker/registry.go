@@ -34,7 +34,7 @@ type Registry struct {
 // ErrCredentialMissing reports that no credential is stored for a tracker.
 // Unlike a failed refresh it is permanent: retrying cannot succeed until the
 // user connects the tracker.
-var ErrCredentialMissing = errors.New("no credentials stored for this tracker")
+var ErrCredentialMissing = errors.New("connect this tracker again in Settings > Tracking")
 
 // PasswordLogin is implemented by trackers that exchange a username and
 // password pair directly for a credential instead of using browser
@@ -163,7 +163,7 @@ func (r *Registry) credential(name string) (Credential, error) {
 		return Credential{}, err
 	}
 	if token.AccessToken == "" {
-		return Credential{}, errors.New("refresh response did not contain an access token")
+		return Credential{}, errors.New("authorization failed; connect the tracker again")
 	}
 	if token.RefreshToken == "" {
 		token.RefreshToken = cred.RefreshToken
@@ -231,7 +231,7 @@ func postToken(ctx context.Context, client *http.Client, endpoint string, form u
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Classified through HTTPError so rate limits and upstream outages
 		// count as transient by the standard retry rules.
-		return fmt.Errorf("OAuth token exchange failed: %s: %w", resp.Status, &HTTPError{Status: resp.StatusCode})
+		return fmt.Errorf("%w", &HTTPError{Status: resp.StatusCode, Message: resp.Status})
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
@@ -297,11 +297,11 @@ func (r *Registry) CompleteOAuth(ctx context.Context, name, code, state, redirec
 		redirect = pending.Redirect
 	}
 	if !ok || pending.State != state || pending.Redirect != redirect || time.Now().After(pending.Expires) {
-		return errors.New("invalid or expired OAuth state")
+		return errors.New("authorization expired; try connecting again")
 	}
 	provider := oauthProviders()[name]
 	if provider.authorizeURL == "" {
-		return errors.New("OAuth is not configured for this tracker")
+		return errors.New("browser sign-in is not set up for this tracker")
 	}
 	form := url.Values{"client_id": {provider.clientID()}, "grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}}
 	if secret := provider.secret(); secret != "" {
@@ -316,10 +316,10 @@ func (r *Registry) CompleteOAuth(ctx context.Context, name, code, state, redirec
 		ExpiresIn    int64  `json:"expires_in"`
 	}
 	if err := postToken(ctx, r.HTTP, provider.tokenURL, form, &token); err != nil {
-		return err
+		return fmt.Errorf("authorization failed; connect the tracker again: %w", err)
 	}
 	if token.AccessToken == "" {
-		return errors.New("OAuth response did not contain an access token")
+		return errors.New("authorization failed; connect the tracker again")
 	}
 	expiry := time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	credential := Credential{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, ExpiresAt: &expiry, Metadata: map[string]string{"redirect_uri": redirect}}

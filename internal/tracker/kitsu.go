@@ -62,7 +62,7 @@ func (k *Kitsu) Login(ctx context.Context, username, password string) (Credentia
 		return Credential{}, err
 	}
 	if token.AccessToken == "" {
-		return Credential{}, errors.New("kitsu login did not return an access token")
+		return Credential{}, errors.New("Kitsu did not accept the login; check the username and password")
 	}
 	expires := time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	credential := Credential{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, ExpiresAt: &expires}
@@ -253,10 +253,10 @@ func (k *Kitsu) createLibraryEntry(ctx context.Context, credential Credential, r
 		return err
 	}
 	if len(out.Errors) > 0 {
-		return fmt.Errorf("kitsu GraphQL: %s", out.Errors[0].Message)
+		return fmt.Errorf("Kitsu error: %s", out.Errors[0].Message)
 	}
 	if len(out.Data.LibraryEntry.Create.Errors) > 0 {
-		return fmt.Errorf("kitsu create failed: %s", out.Data.LibraryEntry.Create.Errors[0].Message)
+		return fmt.Errorf("Kitsu could not add the title: %s", out.Data.LibraryEntry.Create.Errors[0].Message)
 	}
 	return nil
 }
@@ -296,10 +296,10 @@ func (k *Kitsu) updateLibraryEntry(ctx context.Context, credential Credential, e
 		return err
 	}
 	if len(out.Errors) > 0 {
-		return fmt.Errorf("kitsu GraphQL: %s", out.Errors[0].Message)
+		return fmt.Errorf("Kitsu error: %s", out.Errors[0].Message)
 	}
 	if len(out.Data.LibraryEntry.Update.Errors) > 0 {
-		return fmt.Errorf("kitsu update failed: %s", out.Data.LibraryEntry.Update.Errors[0].Message)
+		return fmt.Errorf("Kitsu could not update the title: %s", out.Data.LibraryEntry.Update.Errors[0].Message)
 	}
 	return nil
 }

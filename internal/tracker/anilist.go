@@ -33,7 +33,7 @@ func (a *AniList) query(ctx context.Context, q string, vars map[string]any, out 
 		return err
 	}
 	if len(envelope.Errors) > 0 {
-		return fmt.Errorf("AniList GraphQL: %s", envelope.Errors[0].Message)
+		return fmt.Errorf("AniList error: %s", envelope.Errors[0].Message)
 	}
 	if out == nil {
 		return nil

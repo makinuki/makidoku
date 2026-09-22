@@ -1,5 +1,5 @@
 minimumReleaseAgeExclude:
-  - "@makinuki/mekuri@0.1.1"
+  - "@makinuki/mekuri@0.1.1 || 0.2.0"
 onlyBuiltDependencies:
   - esbuild
 overrides:

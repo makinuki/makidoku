@@ -63,13 +63,14 @@ import {
   useMekuriReader,
 } from "./useMekuriReader";
 
-// Keyboard contract: the prebuilt views attach the engine dispatcher against
-// this map, while the host listener keeps everything else. Space stays
-// host-side in paged modes because the engine cannot express shift-for-back
-// or the paged-only gate; PgDn/PgUp/Home/End stay host-side because the
-// engine map has no jump actions. The webtoon view takes the default map,
-// where Space advances one page.
-const PAGED_VIEW_KEYBOARD_MAP = {
+// Keyboard contract shared by both prebuilt views: the attached engine
+// dispatchers own the keys this map expresses (arrows and D/A with RTL
+// inversion, M for the HUD), while the host listener keeps everything else.
+// Space stays host-side in paged modes because the engine cannot express
+// shift-for-back or the paged-only gate; in webtoon mode the dispatcher
+// ignores it, so the column scrolls natively. PgDn/PgUp/Home/End stay
+// host-side because the engine map has no jump actions.
+const READER_KEYBOARD_MAP = {
   nextPage: ["ArrowRight", "KeyD"],
   toggleHUD: ["KeyM"],
 } satisfies Partial<MekuriKeyboardMap>;
@@ -536,7 +537,7 @@ export function ReaderPage() {
     navigation: display.navigation,
     initialPageIndex: resumePage,
     enabled: pages.length > 0,
-    keyboardMap: PAGED_VIEW_KEYBOARD_MAP,
+    keyboardMap: READER_KEYBOARD_MAP,
     // Open drawers and dialogs own the keyboard; the view dispatchers and
     // the host listener all stand down while any of them is open.
     suppressKeyboard: helpOpen || goToOpen || settingsOpen || drawerOpen,
@@ -804,9 +805,9 @@ export function ReaderPage() {
         if (mangaId) saveReaderOverride({ mode: next });
         else setMode(next);
       }
-      // Paged extras. The webtoon column scrolls natively and the view
-      // dispatcher owns Space there; Space on a focused button keeps its
-      // native activation.
+      // Paged extras. The webtoon column scrolls natively on Space because
+      // the shared map leaves it unbound there; Space on a focused button
+      // keeps its native activation.
       if (mode !== "webtoon") {
         if (event.key === " " && target?.tagName !== "BUTTON") {
           event.preventDefault();
@@ -1256,6 +1257,7 @@ export function ReaderPage() {
           altLabeler={altLabeler}
           hud={false}
           boundarySlot={nextUpSlot}
+          keyboardOptions={{ map: READER_KEYBOARD_MAP }}
           className="min-h-0 flex-1"
         />
       ) : (
@@ -1266,7 +1268,7 @@ export function ReaderPage() {
           altLabeler={altLabeler}
           hud={false}
           boundarySlot={nextUpSlot}
-          keyboardOptions={{ map: PAGED_VIEW_KEYBOARD_MAP }}
+          keyboardOptions={{ map: READER_KEYBOARD_MAP }}
           className="min-h-0 flex-1"
         />
       )}

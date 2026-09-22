@@ -228,6 +228,20 @@ describe("paged view integration", () => {
     expect(engine.getState().isHUDVisible).toBe(false);
   });
 
+  it("locks page turns while zoomed but keeps programmatic jumps", () => {
+    const { engine, container } = renderPaged({ initialState: { mode: "single" } });
+
+    act(() => engine.setZoomScale(2));
+    expect(container.querySelector("[data-mekuri-paged]")?.getAttribute("data-zoomed")).toBe(
+      "true",
+    );
+    pressKey("ArrowRight");
+    expect(engine.getState().pageIndex).toBe(0);
+
+    act(() => engine.goToIndex(2));
+    expect(engine.getState().pageIndex).toBe(2);
+  });
+
   it("mounts host content at the boundary slot only while provided", () => {
     const { container, rerender, engine } = renderPaged(
       { initialState: { mode: "single" } },
@@ -251,6 +265,7 @@ describe("webtoon view integration", () => {
   function renderWebtoon(
     engineOptions: Partial<MekuriEngineOptions> = {},
     gap = 8,
+    now?: () => number,
   ): { engine: MekuriEngine; container: HTMLElement } {
     const viewPages = engineOptions.pages ?? pages(4);
     const engine = createMekuriEngine({
@@ -263,8 +278,10 @@ describe("webtoon view integration", () => {
         engine={engine}
         pages={viewPages}
         gap={gap}
+        now={now}
         renderPage={(page, index) => <span data-host-page={index}>{String(page.id)}</span>}
         hud={false}
+        keyboardOptions={{ map: PAGED_KEYBOARD_MAP }}
       />,
     );
     return { engine, container };
@@ -288,18 +305,17 @@ describe("webtoon view integration", () => {
 
   it("reports user scrolls back to the engine", async () => {
     const resize = mountWebtoonGeometry();
-    const { engine, container } = renderWebtoon();
+    // The alignment lock reads this clock, so settling the mount window is a
+    // variable assignment instead of a real wait.
+    let now = 1000;
+    const { engine, container } = renderWebtoon({}, 8, () => now);
     act(() => {
       resize.fireAll(() => PAGE_HEIGHT);
     });
     const scroller = surfaceOf(container);
 
-    // Scrolls inside the mount alignment window belong to the restore and
-    // are absorbed, so the user scroll starts after it settles.
+    now += 2000;
     await act(async () => {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 800);
-      });
       scroller.scrollTop = PAGE_HEIGHT + 500;
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
       await new Promise((resolve) => {
@@ -308,6 +324,15 @@ describe("webtoon view integration", () => {
     });
 
     expect(engine.getState().pageIndex).toBe(1);
+  });
+
+  it("leaves Space unbound so the column scrolls natively", () => {
+    mountWebtoonGeometry();
+    const { engine } = renderWebtoon();
+
+    pressKey("Space");
+
+    expect(engine.getState().pageIndex).toBe(0);
   });
 
   it("turns the page from the keyboard", () => {

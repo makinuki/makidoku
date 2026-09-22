@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       '@makinuki/mekuri':
-        specifier: ^0.1.1
-        version: 0.1.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: ^0.2.0
+        version: 0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@19.2.8)
@@ -363,8 +363,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@makinuki/mekuri@0.1.1':
-    resolution: {integrity: sha512-gumznJJRUEgWQI0ORizkoBDO5ekUSIOw7X3eI/24Ah7uvoexJ7sIx+TaaW/4T0osqsBDLXGlDFMoXUCFzrEHNw==}
+  '@makinuki/mekuri@0.2.0':
+    resolution: {integrity: sha512-TXXvVBJsEsS104NIo/V5vey+kEQc3BRrXjp61k6MFeqodO6UzDbB246uHH/RN/YOQOTqOAprRW8+CHwL5P6ucg==}
     peerDependencies:
       react: ^18.2.0 || ^19.0.0
       react-dom: ^18.2.0 || ^19.0.0
@@ -2158,7 +2158,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@makinuki/mekuri@0.1.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@makinuki/mekuri@0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@tanstack/react-virtual': 3.14.13(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react: 19.2.8

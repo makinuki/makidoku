@@ -3645,6 +3645,28 @@ describe("reader chapter flow", () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/reader/${mangaId}/${chapterTwo}`));
   });
 
+  it("taps back from the end card to keep reading", async () => {
+    window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
+    vi.stubGlobal("fetch", stubReader());
+    const { container } = render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "ArrowRight", code: "ArrowRight" });
+    expect(await screen.findByText("Up next: Chapter 2")).toBeInTheDocument();
+    // The boundary mount lets taps beside the card reach the zones again.
+    const restore = mockSurfaceBox(container);
+    try {
+      await tapSurface(container, 100, 600);
+    } finally {
+      restore();
+    }
+    expect(await screen.findByAltText("Page 1")).toBeInTheDocument();
+    expect(screen.queryByText("Up next: Chapter 2")).not.toBeInTheDocument();
+  });
+
   it("renders the webtoon column with the reader gap", async () => {
     window.history.pushState({}, "", `/reader/${mangaId}/${chapterOne}`);
     vi.stubGlobal("fetch", stubReader());

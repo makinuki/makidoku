@@ -35,6 +35,30 @@ import type {
   TachibackupSummary,
 } from "./types";
 
+// Friendly defaults for the standardized error codes, shown when the server
+// reports a code without a message.
+const codeMessages: Record<string, string> = {
+  UNKNOWN_ERROR: "Something went wrong. Try again.",
+  NETWORK_TIMEOUT: "The request took too long. Try again.",
+  CLOUDFLARE_BLOCKED: "The source is blocking requests right now. Try again later.",
+  SOURCE_OFFLINE: "The source is not responding. Try again later.",
+  PARSING_ERROR: "The source returned something unexpected.",
+  AUTH_EXPIRED: "The saved login expired. Connect the account again.",
+  SESSION_REQUIRED: "The source requires a login.",
+  RATE_LIMITED: "The source asked to slow down. Try again in a moment.",
+  NOT_FOUND: "The source could not find this.",
+  UNSCRAMBLE_FAILED: "A page could not be prepared.",
+  MEMORY_LIMIT_EXCEEDED: "The plugin ran out of memory.",
+  UNSUPPORTED_MEDIA: "The source returned a file type that is not supported.",
+};
+
+function responseError(payload: unknown, status: number): Error {
+  const detail = (payload as { error?: { message?: string; code?: string } })?.error;
+  if (detail?.message) return new Error(detail.message);
+  if (detail?.code && codeMessages[detail.code]) return new Error(codeMessages[detail.code]);
+  return new Error(`The request failed (error ${status})`);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers();
   // FormData carries its own multipart content type with a generated boundary.
@@ -47,7 +71,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload?.error?.message || `Request failed (${response.status})`);
+    throw responseError(payload, response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -333,7 +357,7 @@ export const api = {
     const response = await fetch("/api/backup/tachibackup/import", { method: "POST", body });
     if (!response.ok || !response.body) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(payload?.error?.message || `Request failed (${response.status})`);
+      throw responseError(payload, response.status);
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();

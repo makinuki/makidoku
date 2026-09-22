@@ -29,7 +29,7 @@ export function HistoryPage() {
       await api.deleteHistoryEvent(id);
       setItems((current) => current.filter((item) => item.id !== id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to delete history event");
+      setError(e instanceof Error ? e.message : "Unable to remove this entry");
     }
   };
   const groups = useMemo(() => {
@@ -83,7 +83,7 @@ export function HistoryPage() {
                           <b className="block truncate">{item.manga.title}</b>
                           <small className="text-zinc-500">
                             {item.chapter?.chapterNumber == null
-                              ? item.chapter?.title || "Title viewed"
+                              ? item.chapter?.title || "Details viewed"
                               : `Chapter ${item.chapter.chapterNumber}`}
                             {item.page != null && ` · page ${item.page}`}
                             {item.occurredAt > 0 &&

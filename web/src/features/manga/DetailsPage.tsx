@@ -228,7 +228,7 @@ export function DetailsPage() {
         </div>
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-amber-400">
-            {data.sourceName || "Unknown plugin"} · {manga.status || "Unknown status"}
+            {data.sourceName || "Unknown source"} · {manga.status || "Unknown status"}
           </p>
           <h1 className="mt-2 text-3xl font-semibold">{manga.title}</h1>
           {(manga.authors || manga.artists || manga.altTitles) && (

@@ -71,7 +71,7 @@ describe("MakiDoku app shell", () => {
     expect(
       await screen.findByRole("heading", { name: "Your library is empty" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Daemon status")).toHaveTextContent("Connected");
+    expect(screen.getByLabelText("Server status")).toHaveTextContent("Connected");
     expect(screen.queryByText("Local user")).not.toBeInTheDocument();
   });
 
@@ -2285,15 +2285,15 @@ describe("settings credential feedback", () => {
     );
     const user = userEvent.setup();
     await user.selectOptions(await screen.findByRole("combobox", { name: /plugin/i }), "MangaDex");
-    await user.type(screen.getByPlaceholderText("cf_clearance cookie"), "cf-token");
+    await user.type(screen.getByPlaceholderText("Clearance cookie"), "cf-token");
     await user.type(screen.getByPlaceholderText("Browser user agent"), "Mozilla/test");
-    fireEvent.click(screen.getByRole("button", { name: "Submit clearance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save browser session" }));
     expect(await screen.findByText("clearance rejected")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Submit clearance" }));
-    expect(await screen.findByText("Clearance submitted.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save browser session" }));
+    expect(await screen.findByText("Browser session saved.")).toBeInTheDocument();
     expect(clearanceCalls).toBe(2);
-    expect(screen.getByPlaceholderText("cf_clearance cookie")).toHaveValue("");
+    expect(screen.getByPlaceholderText("Clearance cookie")).toHaveValue("");
   });
 
   it("reports tracker token save failures", async () => {
@@ -2874,7 +2874,7 @@ describe("settings credential feedback", () => {
 
     // The finished row keeps "Clear finished" available while the failed one
     // offers retry.
-    fireEvent.click(await screen.findByRole("button", { name: "retry" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry download" }));
     expect(retries).toBe(1);
     expect(await screen.findByText(/· pending/)).toBeInTheDocument();
 
@@ -3797,7 +3797,7 @@ describe("reader chapter flow", () => {
         <App />
       </BrowserRouter>,
     );
-    expect(await screen.findByText(/Request failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/request failed/i)).toBeInTheDocument();
     const surface = container.querySelector("div.reader[data-theme]");
     expect(surface).not.toBeNull();
     expect(surface!.getAttribute("data-theme")).toBe("dark");

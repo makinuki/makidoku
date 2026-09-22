@@ -99,7 +99,7 @@ export function LibraryFiltersModal({
             ))}
           </FilterGroup>
           {sources.length > 0 && (
-            <FilterGroup title="Plugin">
+            <FilterGroup title="Source">
               {sources.map((source) => (
                 <Choice
                   key={source.id}

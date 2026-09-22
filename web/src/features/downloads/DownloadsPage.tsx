@@ -76,8 +76,8 @@ export function DownloadsPage() {
           <div className="text-right text-xs text-zinc-500">
             <p>{snapshot.stats.downloadedPages} pages saved</p>
             <p>
-              {snapshot.stats.retriedRequests} retries · {snapshot.stats.throttledRequests}{" "}
-              throttled
+              {snapshot.stats.retriedRequests} retried · {snapshot.stats.throttledRequests} slowed
+              by the source
             </p>
           </div>
           {snapshot.items.some(
@@ -140,7 +140,9 @@ function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void })
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold">
-            {item.mangaTitle} · {item.chapterTitle || item.chapterNumber || "Special"}
+            {item.mangaTitle} ·{" "}
+            {item.chapterTitle ||
+              (item.chapterNumber != null ? `Chapter ${item.chapterNumber}` : "Special chapter")}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
             {item.sourceName} · {item.status.toLowerCase()}
@@ -160,8 +162,8 @@ function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void })
           {action && (
             <button
               disabled={busy}
-              aria-label={action}
-              title={action}
+              aria-label={action === "pause" ? "Pause download" : "Resume download"}
+              title={action === "pause" ? "Pause download" : "Resume download"}
               onClick={() => void control(action)}
               className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
             >
@@ -171,8 +173,8 @@ function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void })
           {retryable && (
             <button
               disabled={busy}
-              aria-label="retry"
-              title="Retry"
+              aria-label="Retry download"
+              title="Retry download"
               onClick={() => void control("retry")}
               className="rounded-lg p-2 text-amber-300 hover:bg-zinc-800"
             >
@@ -182,8 +184,8 @@ function QueueRow({ item, onChange }: { item: QueueItem; onChange: () => void })
           {["PENDING", "DOWNLOADING", "PAUSED", "FAILED"].includes(item.status) && (
             <button
               disabled={busy}
-              aria-label="cancel"
-              title="Cancel"
+              aria-label="Cancel download"
+              title="Cancel download"
               onClick={() => void control("cancel")}
               className="rounded-lg p-2 text-red-300 hover:bg-red-950/50"
             >

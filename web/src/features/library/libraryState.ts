@@ -447,7 +447,7 @@ export function librarySources(items: LibraryManga[]): LibrarySourceOption[] {
 // ids may share a source or import prefix.
 export function sourceDisplayName(item: { sourceId: string; sourceName?: string }): string {
   if (item.sourceName) return item.sourceName;
-  return `Unknown plugin ${item.sourceId.slice(-8)}`;
+  return `Unknown source ${item.sourceId.slice(-8)}`;
 }
 
 export function activeFilterCount(view: LibraryView): number {

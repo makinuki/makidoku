@@ -168,7 +168,7 @@ export function AppShell({
           </button>
           <span
             className={`flex items-center gap-2 text-xs ${connected ? "text-emerald-400" : connected === false ? "text-red-400" : "text-zinc-500"}`}
-            aria-label="Daemon status"
+            aria-label="Server status"
           >
             {connected ? <Wifi size={15} /> : <WifiOff size={15} />}
             <span className="hidden sm:inline">

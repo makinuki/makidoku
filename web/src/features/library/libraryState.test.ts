@@ -304,7 +304,7 @@ describe("library view state", () => {
       manga({ id: "c", sourceId: "one", sourceName: "One", status: "ongoing" }),
     ];
     const sources = groupLibrary(items, "source", [category(5, "A")]);
-    expect(sources.map((group) => group.label)).toEqual(["One", "Unknown plugin two"]);
+    expect(sources.map((group) => group.label)).toEqual(["One", "Unknown source two"]);
     expect(sources[0].items.map((item) => item.id)).toEqual(["a", "c"]);
     const statuses = groupLibrary(items, "status", []);
     expect(statuses.map((group) => group.label)).toEqual(["Completed", "Ongoing"]);
@@ -320,7 +320,7 @@ describe("library view state", () => {
     expect(gridClasses(defaultLibraryView)).toContain("sm:grid-cols-4");
     expect(sourceDisplayName({ sourceId: "0198c0de", sourceName: "Dex" })).toBe("Dex");
     expect(sourceDisplayName({ sourceId: "imported-7537715367149829912" })).toBe(
-      "Unknown plugin 49829912",
+      "Unknown source 49829912",
     );
   });
 });

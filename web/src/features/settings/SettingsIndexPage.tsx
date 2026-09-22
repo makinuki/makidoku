@@ -6,7 +6,7 @@ import { settingsSections } from "./settingsCatalog";
 export function SettingsIndexPage() {
   return (
     <div>
-      <PageHeader eyebrow="Local configuration" title="Settings" />
+      <PageHeader title="Settings" />
       <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
         {settingsSections.map((section) => {
           const Icon = section.icon;

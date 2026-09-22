@@ -231,14 +231,23 @@ export function TachibackupImport() {
       )}
 
       {summary && (
-        <p className="mt-4 text-sm text-zinc-400">
-          Restored {summary.manga} titles, {summary.chapters} chapters and {summary.categories}{" "}
-          categories. {summary.mergedManga} titles merged into existing entries,{" "}
-          {summary.deferredManga} kept without a source, {summary.skippedManga} skipped.{" "}
-          {summary.tracking} tracker links restored, {summary.skippedTracking} skipped.{" "}
-          {summary.outOfLibrary} titles outside the library, {summary.feeds} feeds,{" "}
-          {summary.savedSearches} saved searches and {summary.merges} merged sources restored.
-        </p>
+        <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-zinc-400">
+          <li>
+            Restored {summary.manga} titles, {summary.chapters} chapters and {summary.categories}{" "}
+            categories.
+          </li>
+          <li>
+            {summary.mergedManga} titles merged into existing entries, {summary.deferredManga} kept
+            without a source, {summary.skippedManga} skipped.
+          </li>
+          <li>
+            {summary.tracking} tracker links restored, {summary.skippedTracking} skipped.
+          </li>
+          <li>
+            {summary.outOfLibrary} titles outside the library, {summary.feeds} feeds,{" "}
+            {summary.savedSearches} saved searches and {summary.merges} merged sources restored.
+          </li>
+        </ul>
       )}
     </SettingsCard>
   );

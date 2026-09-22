@@ -139,7 +139,7 @@ export function SourcesMetadataModal({
           aria-label="Source title id"
           value={sourceMangaId}
           onChange={(event) => setSourceMangaId(event.target.value)}
-          placeholder="Source title id or url"
+          placeholder="Title ID or link"
           className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
         />
         <button
@@ -152,10 +152,10 @@ export function SourcesMetadataModal({
         </button>
       </div>
       <input
-        aria-label="Merge source url"
+        aria-label="Merge source link"
         value={url}
         onChange={(event) => setUrl(event.target.value)}
-        placeholder="Series page url (optional)"
+        placeholder="Series page link (optional)"
         className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
       />
 

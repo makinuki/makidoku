@@ -123,7 +123,7 @@ export function GlobalSearch({ mode, onClose }: { mode: SearchMode; onClose: () 
                   </div>
                   <span className="min-w-0 flex-1">
                     <b className="block truncate text-sm">{item.title}</b>
-                    <small className="text-zinc-500">{item.sourceName || "Unknown plugin"}</small>
+                    <small className="text-zinc-500">{item.sourceName || "Unknown source"}</small>
                   </span>
                   <ChevronRight size={16} className="text-zinc-600" />
                 </Link>

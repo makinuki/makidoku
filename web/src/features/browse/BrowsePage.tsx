@@ -784,7 +784,8 @@ function PluginsTab() {
           <h2 className="font-semibold">Browser clearance</h2>
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          Submit a browser session for a protected plugin.
+          If a source blocks the app with a browser check, paste the cookie and user agent from a
+          real browser session.
         </p>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           <select
@@ -803,7 +804,7 @@ function PluginsTab() {
           <input
             value={cookie}
             onChange={(event) => setCookie(event.target.value)}
-            placeholder="cf_clearance cookie"
+            placeholder="Clearance cookie"
             className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
           />
           <input
@@ -823,12 +824,12 @@ function PluginsTab() {
                 setCookie("");
                 setUserAgent("");
               },
-              "Clearance submitted.",
+              "Browser session saved.",
             )
           }
           className="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
         >
-          Submit clearance
+          Save browser session
         </button>
       </section>
       {confirmRemoval && (

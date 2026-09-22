@@ -125,8 +125,7 @@ export function CustomInfoModal({
   return (
     <Modal title="Custom info" onClose={onClose}>
       <p className="mb-4 text-xs text-zinc-500">
-        An override wins over the value the source provides. Leave a field empty to follow the
-        source again.
+        Your text replaces what the source shows. Leave a field empty to use the source's value.
       </p>
       <div className="space-y-3">
         {fields.map((field) => (

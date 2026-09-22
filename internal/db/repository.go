@@ -422,17 +422,67 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		}
 	}
 
+	// Chapter totals, downloaded and bookmarked counts, and content languages
+	// feed the library badges, filters, and sorts in one batched round-trip.
+	type chapterTotals struct {
+		Total      int
+		Downloaded int
+		Bookmarked int
+	}
+	totalsMap := map[string]chapterTotals{}
+	langMap := map[string][]string{}
+	if len(ids) > 0 {
+		var totalRows []struct {
+			MangaID    string `db:"manga_id"`
+			Total      int    `db:"total"`
+			Downloaded int    `db:"downloaded"`
+			Bookmarked int    `db:"bookmarked"`
+		}
+		totalQuery := `SELECT c.manga_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN c.downloaded=1 THEN 1 ELSE 0 END) AS downloaded,
+			SUM(CASE WHEN c.bookmark=1 THEN 1 ELSE 0 END) AS bookmarked
+			FROM chapters c WHERE c.manga_id IN (` + in + `) GROUP BY c.manga_id`
+		if err := r.db.Select(&totalRows, totalQuery, ids...); err != nil {
+			return nil, err
+		}
+		for _, row := range totalRows {
+			totalsMap[row.MangaID] = chapterTotals{Total: row.Total, Downloaded: row.Downloaded, Bookmarked: row.Bookmarked}
+		}
+		var langRows []struct {
+			MangaID  string `db:"manga_id"`
+			Language string `db:"language"`
+		}
+		langQuery := `SELECT DISTINCT c.manga_id, c.language FROM chapters c
+			WHERE c.manga_id IN (` + in + `) AND c.language IS NOT NULL AND c.language != ''
+			ORDER BY c.manga_id, c.language`
+		if err := r.db.Select(&langRows, langQuery, ids...); err != nil {
+			return nil, err
+		}
+		for _, row := range langRows {
+			langMap[row.MangaID] = append(langMap[row.MangaID], row.Language)
+		}
+	}
+
 	out := make([]LibraryManga, 0, len(manga))
 	for _, item := range manga {
 		var progress *ReadingProgress
 		if p, ok := progressMap[item.ID]; ok {
 			progress = &p
 		}
+		languages := langMap[item.ID]
+		if languages == nil {
+			languages = []string{}
+		}
 		out = append(out, LibraryManga{
-			Manga:          item,
-			Categories:     categoryMap[item.ID],
-			Progress:       progress,
-			UnreadChapters: unreadMap[item.ID],
+			Manga:              item,
+			Categories:         categoryMap[item.ID],
+			Progress:           progress,
+			UnreadChapters:     unreadMap[item.ID],
+			DownloadedChapters: totalsMap[item.ID].Downloaded,
+			TotalChapters:      totalsMap[item.ID].Total,
+			BookmarkedChapters: totalsMap[item.ID].Bookmarked,
+			Languages:          languages,
 		})
 	}
 	return out, nil

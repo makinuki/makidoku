@@ -163,10 +163,14 @@ func prefer(custom *string, fallback *string) *string {
 // SourceName is resolved by the API layer from the installed plugin registry.
 type LibraryManga struct {
 	Manga
-	Categories     []Category       `json:"categories"`
-	Progress       *ReadingProgress `json:"progress,omitempty"`
-	UnreadChapters int              `json:"unreadChapters"`
-	SourceName     string           `json:"sourceName,omitempty"`
+	Categories         []Category       `json:"categories"`
+	Progress           *ReadingProgress `json:"progress,omitempty"`
+	UnreadChapters     int              `json:"unreadChapters"`
+	DownloadedChapters int              `json:"downloadedChapters"`
+	TotalChapters      int              `json:"totalChapters"`
+	BookmarkedChapters int              `json:"bookmarkedChapters"`
+	Languages          []string         `json:"languages"`
+	SourceName         string           `json:"sourceName,omitempty"`
 }
 
 // MarshalJSON flattens the embedded manga, keeps the backend cover route, and
@@ -179,20 +183,28 @@ func (l LibraryManga) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		mangaAlias
-		Categories     []Category       `json:"categories"`
-		Progress       *ReadingProgress `json:"progress,omitempty"`
-		UnreadChapters int              `json:"unreadChapters"`
-		SourceName     string           `json:"sourceName,omitempty"`
-		CoverURL       string           `json:"coverUrl"`
+		Categories         []Category       `json:"categories"`
+		Progress           *ReadingProgress `json:"progress,omitempty"`
+		UnreadChapters     int              `json:"unreadChapters"`
+		DownloadedChapters int              `json:"downloadedChapters"`
+		TotalChapters      int              `json:"totalChapters"`
+		BookmarkedChapters int              `json:"bookmarkedChapters"`
+		Languages          []string         `json:"languages"`
+		SourceName         string           `json:"sourceName,omitempty"`
+		CoverURL           string           `json:"coverUrl"`
 		MangaDisplay
 	}{
-		mangaAlias:     mangaAlias(l.Manga),
-		Categories:     categories,
-		Progress:       l.Progress,
-		UnreadChapters: l.UnreadChapters,
-		SourceName:     l.SourceName,
-		CoverURL:       "/api/manga/" + l.Manga.ID + "/cover",
-		MangaDisplay:   l.Manga.display(),
+		mangaAlias:         mangaAlias(l.Manga),
+		Categories:         categories,
+		Progress:           l.Progress,
+		UnreadChapters:     l.UnreadChapters,
+		DownloadedChapters: l.DownloadedChapters,
+		TotalChapters:      l.TotalChapters,
+		BookmarkedChapters: l.BookmarkedChapters,
+		Languages:          l.Languages,
+		SourceName:         l.SourceName,
+		CoverURL:           "/api/manga/" + l.Manga.ID + "/cover",
+		MangaDisplay:       l.Manga.display(),
 	})
 }
 

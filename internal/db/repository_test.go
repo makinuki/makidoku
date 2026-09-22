@@ -802,6 +802,61 @@ func TestListLibraryExposesBackendCoverRoute(t *testing.T) {
 	}
 }
 
+// The library payload carries per-title chapter totals, download and bookmark
+// counts, and content languages for badges, filters, and sorts.
+func TestListLibraryExposesChapterCountsAndLanguages(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "counts", Title: "Counts", Status: "ongoing", InLibrary: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapters := []Chapter{
+		{MangaID: manga.ID, SourceChapterID: "c1", Language: stringPtr("en"), Downloaded: true},
+		{MangaID: manga.ID, SourceChapterID: "c2", Language: stringPtr("en")},
+		{MangaID: manga.ID, SourceChapterID: "c3", Language: stringPtr("ja")},
+	}
+	stored := make([]Chapter, 0, len(chapters))
+	for _, chapter := range chapters {
+		next, err := repo.UpsertChapter(chapter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored = append(stored, next)
+	}
+	// The bookmark flag is user state, so it is set like the details page
+	// does instead of riding along with the source refresh.
+	if err := repo.SetChapterBookmark(stored[1].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repo.ListLibrary("", 0)
+	if err != nil || len(library) != 1 {
+		t.Fatalf("library = %+v, err = %v", library, err)
+	}
+	item := library[0]
+	if item.TotalChapters != 3 || item.DownloadedChapters != 1 || item.BookmarkedChapters != 1 {
+		t.Fatalf("counts = %+v", item)
+	}
+	if len(item.Languages) != 2 || item.Languages[0] != "en" || item.Languages[1] != "ja" {
+		t.Fatalf("languages = %+v", item.Languages)
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		DownloadedChapters int      `json:"downloadedChapters"`
+		TotalChapters      int      `json:"totalChapters"`
+		BookmarkedChapters int      `json:"bookmarkedChapters"`
+		Languages          []string `json:"languages"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.TotalChapters != 3 || decoded.DownloadedChapters != 1 || decoded.BookmarkedChapters != 1 || len(decoded.Languages) != 2 {
+		t.Fatalf("payload = %s", payload)
+	}
+}
+
 func TestMigrateMangaSourceRetiresAndAttaches(t *testing.T) {
 	repo := testRepository(t)
 	if _, err := repo.DB().Exec(`INSERT INTO sources(id,name,version,abi_version,lang,base_url,wasm_path,installed_at) VALUES('asura','Asura','1',1,'en','https://asura.test','x',?)`, time.Now().Unix()); err != nil {

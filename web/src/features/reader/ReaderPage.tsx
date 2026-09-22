@@ -211,8 +211,8 @@ export function ReaderPage() {
   }, [readerReady]);
   const incognitoRef = useRef(false);
   // Progress writes are blocked until the incognito state has been read once;
-  // the 500 ms debounce can otherwise fire before the fetch resolves and leak
-  // a history write for a session the user believes is incognito.
+  // a sample can otherwise land before the fetch resolves and leak a history
+  // write for a session the user believes is incognito.
   const incognitoLoadedRef = useRef(false);
   useEffect(() => {
     incognitoRef.current = incognito;
@@ -714,8 +714,8 @@ export function ReaderPage() {
   }, [saveAtPage, resumePage]);
   useEffect(() => {
     // A pending write is flushed when leaving the reader, switching
-    // chapters, hiding the tab, or closing the page so the debounce window
-    // cannot lose the final position.
+    // chapters, hiding the tab, or closing the page so the final position is
+    // recorded even when nothing sampled after the last move.
     const flush = () => {
       void flushProgress();
     };

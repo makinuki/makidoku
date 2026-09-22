@@ -30,10 +30,6 @@ export interface UseMekuriReaderArgs {
   // Host-owned suppression flag, copied into the live boolean option on every
   // render so open drawers and focused inputs own the keyboard.
   suppressKeyboard?: boolean;
-  // Image pipeline hook, used only while a view resolves through the engine.
-  // Views with a custom page body own their image URLs and report load
-  // outcomes themselves, so this stays unset for them.
-  resolveImage?: (pageId: string | number, attempt: number) => string;
   onPositionSample?: (position: MekuriReadingPosition) => void;
   onBoundaryReached?: (boundary: ChapterBoundary) => void;
 }
@@ -58,14 +54,11 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
   }, [enabled]);
   const live = optionsRef;
 
-  const resolveImage = args.resolveImage;
   if (live !== null) {
     live.pages = args.pages;
     live.zoneMap = ZONE_MAP_PRESETS[args.navigation];
     live.keyboardMap = args.keyboardMap;
     live.isKeyboardSuppressed = args.suppressKeyboard;
-    live.resolveSrc =
-      resolveImage === undefined ? undefined : (page, attempt) => resolveImage(page.id, attempt);
     live.onPositionSample = args.onPositionSample;
     live.onBoundaryReached = args.onBoundaryReached;
   }

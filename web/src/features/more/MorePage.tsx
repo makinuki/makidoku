@@ -14,6 +14,7 @@ import type { LucideIcon } from "lucide-react";
 import { api } from "../../api";
 import { Logo } from "../../components/Logo";
 import { ErrorState, LoadingState } from "../../components/States";
+import { Switch } from "../../components/Switch";
 import { formatTimestamp } from "../../time";
 import { useDateFormat } from "../../hooks/useDateFormat";
 
@@ -109,11 +110,11 @@ export function MorePage() {
       ) : (
         <div className="space-y-6">
           <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={incognito}
-              onClick={toggleIncognito}
+            <Switch
+              checked={incognito}
+              onChange={toggleIncognito}
+              trackPosition="end"
+              size="md"
               className="flex min-h-11 w-full items-center gap-4 px-4 py-3.5 text-left hover:bg-zinc-800/50 active:bg-zinc-800/50"
             >
               <EyeOff size={18} className="shrink-0 text-amber-400" />
@@ -121,13 +122,7 @@ export function MorePage() {
                 <span className="block text-sm font-medium">Incognito mode</span>
                 <span className="block truncate text-xs text-zinc-500">Pauses reading history</span>
               </span>
-              <span
-                aria-hidden="true"
-                className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 ${incognito ? "justify-end bg-amber-400" : "justify-start bg-zinc-700"}`}
-              >
-                <span className="size-5 rounded-full bg-white" />
-              </span>
-            </button>
+            </Switch>
           </section>
           <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
             <MoreRow

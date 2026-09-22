@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 import { Modal } from "../../components/Modal";
+import { Switch } from "../../components/Switch";
 import {
   cardSizeLabels,
   cardSizes,
@@ -319,24 +320,16 @@ function ToggleRow({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={active}
-      onClick={onClick}
+    <Switch
+      checked={active}
+      onChange={onClick}
+      trackPosition="end"
       className="flex items-center justify-between gap-4 rounded-lg border border-zinc-800 px-3 py-2.5 text-left hover:border-zinc-600"
     >
       <span>
         <span className="block text-sm">{label}</span>
         <span className="block text-xs text-zinc-500">{description}</span>
       </span>
-      <span
-        className={`h-5 w-9 shrink-0 rounded-full p-0.5 ${active ? "bg-amber-400" : "bg-zinc-700"}`}
-      >
-        <span
-          className={`block size-4 rounded-full bg-white transition ${active ? "translate-x-4" : ""}`}
-        />
-      </span>
-    </button>
+    </Switch>
   );
 }

@@ -30,6 +30,7 @@ import type {
 } from "../../types";
 import { CoverImg } from "../../components/CoverImg";
 import { Modal } from "../../components/Modal";
+import { Switch } from "../../components/Switch";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 import { formatTimestamp } from "../../time";
 import { useDateFormat } from "../../hooks/useDateFormat";
@@ -345,29 +346,14 @@ export function DetailsPage() {
               Reading time: {formatReadingTime(data.readingSeconds ?? 0)}
             </p>
           )}
-          <button
-            type="button"
-            role="switch"
-            aria-checked={Boolean(manga.downloadNewChapters)}
+          <Switch
+            checked={Boolean(manga.downloadNewChapters)}
+            onChange={() => void toggleAutoDownload()}
             disabled={autoDownloadBusy}
-            onClick={() => void toggleAutoDownload()}
             className="mt-4 inline-flex items-center gap-2 text-sm text-zinc-300 disabled:opacity-50"
           >
-            <span
-              className={`relative h-5 w-9 rounded-full border transition-colors ${
-                manga.downloadNewChapters
-                  ? "border-amber-400 bg-amber-400"
-                  : "border-zinc-700 bg-zinc-900"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 size-3.5 rounded-full bg-zinc-950 transition-transform ${
-                  manga.downloadNewChapters ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
-            </span>
             Automatically download new chapters
-          </button>
+          </Switch>
           {refreshError && <p className="mt-3 text-xs text-red-300">{refreshError}</p>}
           {data.refreshError && (
             <p role="status" className="mt-3 text-xs text-amber-300">

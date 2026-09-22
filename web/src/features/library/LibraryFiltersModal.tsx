@@ -5,6 +5,8 @@ import { Modal } from "../../components/Modal";
 import {
   cardSizeLabels,
   cardSizes,
+  groupByLabels,
+  groupBys,
   librarySorts,
   naturalDirection,
   readStateLabels,
@@ -17,12 +19,13 @@ import {
   type LibraryView,
 } from "./libraryState";
 
-type Tab = "filter" | "sort" | "display";
+type Tab = "filter" | "sort" | "display" | "group";
 
 const tabs: Array<[Tab, string]> = [
   ["filter", "Filter"],
   ["sort", "Sort"],
   ["display", "Display"],
+  ["group", "Group"],
 ];
 
 function toggle<T>(values: T[], value: T): T[] {
@@ -44,7 +47,13 @@ export function LibraryFiltersModal({
   const patchFilters = (filters: Partial<LibraryFilters>) =>
     onPatch({ filters: { ...view.filters, ...filters } });
   const filtersActive =
-    view.filters.readState.length + view.filters.status.length + view.filters.sources.length > 0;
+    view.filters.readState.length +
+      view.filters.status.length +
+      view.filters.sources.length +
+      (view.filters.downloaded ? 1 : 0) +
+      (view.filters.started ? 1 : 0) +
+      (view.filters.bookmarked ? 1 : 0) >
+    0;
   return (
     <Modal title="Library layout" variant="sheet" onClose={onClose}>
       <div className="mb-5 flex gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1">
@@ -101,10 +110,39 @@ export function LibraryFiltersModal({
               ))}
             </FilterGroup>
           )}
+          <FilterGroup title="State">
+            <Choice
+              active={view.filters.downloaded}
+              onClick={() => patchFilters({ downloaded: !view.filters.downloaded })}
+            >
+              Downloaded
+            </Choice>
+            <Choice
+              active={view.filters.started}
+              onClick={() => patchFilters({ started: !view.filters.started })}
+            >
+              Started
+            </Choice>
+            <Choice
+              active={view.filters.bookmarked}
+              onClick={() => patchFilters({ bookmarked: !view.filters.bookmarked })}
+            >
+              Bookmarked
+            </Choice>
+          </FilterGroup>
           <button
             type="button"
             disabled={!filtersActive}
-            onClick={() => patchFilters({ readState: [], status: [], sources: [] })}
+            onClick={() =>
+              patchFilters({
+                readState: [],
+                status: [],
+                sources: [],
+                downloaded: false,
+                started: false,
+                bookmarked: false,
+              })
+            }
             className="min-h-11 justify-self-start rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:border-zinc-500 active:border-zinc-500 disabled:opacity-40"
           >
             Clear filters
@@ -146,7 +184,7 @@ export function LibraryFiltersModal({
         <div className="grid gap-4">
           <div className="rounded-lg border border-zinc-800 px-3 py-2.5">
             <span className="mb-2 block text-sm">Card size</span>
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               {cardSizes.map((value) => (
                 <Choice
                   key={value}
@@ -158,6 +196,23 @@ export function LibraryFiltersModal({
               ))}
             </div>
           </div>
+          {view.cardSize !== "list" && (
+            <div className="rounded-lg border border-zinc-800 px-3 py-2.5">
+              <label htmlFor="library-columns" className="mb-2 block text-sm">
+                Items per row: {view.columns === 0 ? "Auto" : view.columns}
+              </label>
+              <input
+                id="library-columns"
+                type="range"
+                min={0}
+                max={10}
+                step={1}
+                value={view.columns}
+                onChange={(event) => onPatch({ columns: Number(event.target.value) })}
+                className="w-full accent-amber-400"
+              />
+            </div>
+          )}
           <ToggleRow
             label="Unread badge"
             description="Show the number of unread chapters on each card."
@@ -176,6 +231,18 @@ export function LibraryFiltersModal({
             active={view.continueButton}
             onClick={() => onPatch({ continueButton: !view.continueButton })}
           />
+        </div>
+      )}
+      {tab === "group" && (
+        <div className="grid gap-1">
+          {groupBys.map((value) => (
+            <SortRow
+              key={value}
+              label={groupByLabels[value]}
+              active={view.groupBy === value}
+              onClick={() => onPatch({ groupBy: value })}
+            />
+          ))}
         </div>
       )}
     </Modal>

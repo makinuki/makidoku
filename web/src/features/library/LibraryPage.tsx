@@ -14,6 +14,7 @@ import {
   BookCheck,
   BookX,
   Check,
+  Dices,
   Download,
   FolderPlus,
   Play,
@@ -30,11 +31,12 @@ import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../componen
 import { LibraryFiltersModal } from "./LibraryFiltersModal";
 import {
   activeFilterCount,
-  cardSizeClasses,
   categoryCounts,
   defaultLibraryView,
   emptyFilters,
   filterChips,
+  gridClasses,
+  groupLibrary,
   invertSelection,
   librarySorts,
   librarySources,
@@ -44,6 +46,7 @@ import {
   naturalDirection,
   selectAllIds,
   sortLabels,
+  sourceDisplayName,
   toggleRangeSelection,
   toggleSelection,
   visibleLibrary,
@@ -65,6 +68,8 @@ export function LibraryPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [categoryOpen, setCategoryOpen] = useState(false);
+  // randomSeed re-rolls the random sort without storing a permutation.
+  const [randomSeed, setRandomSeed] = useState(1);
   // persisted mirrors the view last written to the settings service, so a
   // change writes only the keys that actually differ.
   const persisted = useRef<LibraryView>(defaultLibraryView);
@@ -107,9 +112,16 @@ export function LibraryPage() {
   const updateView = useCallback((patch: Partial<LibraryView>) => {
     setView((current) => mergeLibraryView(current, patch));
   }, []);
-  const visible = useMemo(() => visibleLibrary(items, view, ""), [items, view]);
+  const visible = useMemo(
+    () => visibleLibrary(items, view, "", randomSeed),
+    [items, view, randomSeed],
+  );
   const counts = useMemo(() => categoryCounts(items, view, ""), [items, view]);
   const sources = useMemo(() => librarySources(items), [items]);
+  const groups = useMemo(
+    () => groupLibrary(visible, view.groupBy, categories),
+    [visible, view.groupBy, categories],
+  );
   const chips = filterChips(view, (id) => sources.find((source) => source.id === id)?.name ?? id);
   const activeCount = activeFilterCount(view);
   const orderedIds = useMemo(() => visible.map((item) => item.id), [visible]);
@@ -205,12 +217,40 @@ export function LibraryPage() {
           {visible.length} of {items.length} {items.length === 1 ? "title" : "titles"}
         </span>
       </PageHeader>
+      <div
+        role="tablist"
+        aria-label="Categories"
+        className="-mx-5 mb-4 flex gap-1 overflow-x-auto px-5 sm:-mx-8 sm:px-8 lg:hidden"
+      >
+        {[{ id: 0, name: "All" }, ...categories].map((category) => {
+          const active = view.category === category.id;
+          return (
+            <button
+              key={category.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => updateView({ category: category.id })}
+              className={`flex min-h-11 shrink-0 items-center gap-1.5 border-b-2 px-3 text-sm font-medium ${
+                active
+                  ? "border-amber-400 text-white"
+                  : "border-transparent text-zinc-400 hover:text-zinc-200 active:text-zinc-200"
+              }`}
+            >
+              {category.name}
+              <span className="rounded-full bg-zinc-800 px-1.5 text-xs text-zinc-400">
+                {counts.get(category.id) ?? 0}
+              </span>
+            </button>
+          );
+        })}
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           aria-label="Category"
           value={view.category}
           onChange={(event) => updateView({ category: Number(event.target.value) })}
-          className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
+          className="hidden rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm lg:block"
         >
           <option value={0}>All categories ({counts.get(0) ?? 0})</option>
           {categories.map((item) => (
@@ -242,6 +282,16 @@ export function LibraryPage() {
         >
           {view.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
         </button>
+        {view.sort === "random" && (
+          <button
+            type="button"
+            aria-label="Shuffle again"
+            onClick={() => setRandomSeed((seed) => seed + 1)}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 p-2 text-zinc-300 hover:border-zinc-600"
+          >
+            <Dices size={16} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setFiltersOpen(true)}
@@ -348,16 +398,27 @@ export function LibraryPage() {
           }
         />
       ) : (
-        <div className={cardSizeClasses[view.cardSize]}>
-          {visible.map((item) => (
-            <LibraryCard
-              key={item.id}
-              item={item}
-              view={view}
-              selectionMode={selectionMode}
-              selected={selection.has(item.id)}
-              onSelect={(event) => handleSelect(item.id, event)}
-            />
+        <div className="space-y-8">
+          {groups.map((group) => (
+            <section key={group.key}>
+              {group.label && (
+                <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-amber-400">
+                  {group.label} <span className="text-zinc-600">{group.items.length}</span>
+                </h2>
+              )}
+              <div className={gridClasses(view)}>
+                {group.items.map((item) => (
+                  <LibraryCard
+                    key={`${group.key}:${item.id}`}
+                    item={item}
+                    view={view}
+                    selectionMode={selectionMode}
+                    selected={selection.has(item.id)}
+                    onSelect={(event) => handleSelect(item.id, event)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
@@ -519,6 +580,55 @@ function LibraryCard({
       onSelect(event);
     }
   };
+  if (view.cardSize === "list") {
+    return (
+      <div className={`group min-w-0 ${selected ? "rounded-xl ring-2 ring-amber-400" : ""}`}>
+        <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-2.5">
+          <Link
+            to={mangaUrl}
+            aria-label={item.title}
+            onClick={intercept}
+            className="relative block size-14 shrink-0 overflow-hidden rounded-lg bg-zinc-800"
+          >
+            <CoverImg src={item.coverUrl} className="size-full object-cover" />
+          </Link>
+          <Link to={mangaUrl} onClick={intercept} className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold group-hover:text-amber-300">
+              {item.title}
+            </h2>
+            <p className="mt-0.5 truncate text-xs text-zinc-500">
+              {sourceDisplayName(item)}
+              {item.status ? ` · ${item.status}` : ""}
+              {item.totalChapters > 0 ? ` · ${item.totalChapters} chapters` : ""}
+            </p>
+          </Link>
+          <ListBadges item={item} view={view} />
+          {selectionMode ? (
+            <span
+              aria-hidden="true"
+              className={`grid size-6 shrink-0 place-items-center rounded-full border ${
+                selected
+                  ? "border-amber-400 bg-amber-400 text-zinc-950"
+                  : "border-zinc-400/80 bg-zinc-950/70 text-transparent"
+              }`}
+            >
+              <Check size={14} />
+            </span>
+          ) : (
+            resume && (
+              <Link
+                to={`/reader/${encodeURIComponent(item.id)}/${encodeURIComponent(resume)}`}
+                aria-label={`Continue ${item.title}`}
+                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg border border-zinc-700 text-zinc-300 hover:border-zinc-500 active:border-zinc-500"
+              >
+                <Play size={15} />
+              </Link>
+            )
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={`group min-w-0 ${selected ? "rounded-xl ring-2 ring-amber-400" : ""}`}>
       <div className="relative aspect-3/4 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
@@ -545,14 +655,37 @@ function LibraryCard({
             <Check size={14} />
           </span>
         )}
-        {view.unreadBadge && item.unreadChapters > 0 && (
-          <span
-            aria-label={`${item.unreadChapters} unread chapters`}
-            className="pointer-events-none absolute right-2 top-2 rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-zinc-950"
-          >
-            {item.unreadChapters}
+        {!selectionMode && (
+          <span className="pointer-events-none absolute left-2 top-2 flex gap-1">
+            {(item.downloadedChapters ?? 0) > 0 && (
+              <span
+                aria-label={`${item.downloadedChapters} downloaded chapters`}
+                className="rounded-full bg-zinc-950/80 px-2 py-0.5 text-[11px] font-semibold text-zinc-200 backdrop-blur"
+              >
+                {item.downloadedChapters}
+              </span>
+            )}
+            {view.unreadBadge && item.unreadChapters > 0 && (
+              <span
+                aria-label={`${item.unreadChapters} unread chapters`}
+                className="rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-zinc-950"
+              >
+                {item.unreadChapters}
+              </span>
+            )}
           </span>
         )}
+        <span className="pointer-events-none absolute right-2 top-2 flex gap-1">
+          {(item.languages ?? []).length > 0 && (
+            <span
+              aria-label={`Language ${(item.languages ?? []).join(", ")}`}
+              className="rounded bg-zinc-950/80 px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-200 backdrop-blur"
+            >
+              {(item.languages ?? [])[0]}
+            </span>
+          )}
+          <SourceBadge item={item} />
+        </span>
         {view.continueButton && resume && !selectionMode && (
           <Link
             to={`/reader/${encodeURIComponent(item.id)}/${encodeURIComponent(resume)}`}
@@ -563,23 +696,75 @@ function LibraryCard({
           </Link>
         )}
       </div>
-      <Link to={mangaUrl} onClick={intercept}>
-        <h2 className="mt-2 line-clamp-2 text-sm font-semibold group-hover:text-amber-300">
-          {item.title}
-        </h2>
-      </Link>
-      <p className="mt-1 truncate text-xs text-zinc-500">
-        {item.sourceName || "Unknown plugin"}
-        {item.status ? ` · ${item.status}` : ""}
-      </p>
-      {view.progressBar && progress > 0 && (
-        <div className="mt-2 h-1 rounded-full bg-zinc-800">
-          <span
-            className="block h-full rounded-full bg-amber-400"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+      {view.cardSize !== "cover-only" && (
+        <>
+          <Link to={mangaUrl} onClick={intercept}>
+            <h2 className="mt-2 line-clamp-2 text-sm font-semibold group-hover:text-amber-300">
+              {item.title}
+            </h2>
+          </Link>
+          <p className="mt-1 truncate text-xs text-zinc-500">
+            {sourceDisplayName(item)}
+            {item.status ? ` · ${item.status}` : ""}
+          </p>
+          {view.progressBar && progress > 0 && (
+            <div className="mt-2 h-1 rounded-full bg-zinc-800">
+              <span
+                className="block h-full rounded-full bg-amber-400"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+function ListBadges({ item, view }: { item: LibraryManga; view: LibraryView }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {(item.downloadedChapters ?? 0) > 0 && (
+        <span
+          aria-label={`${item.downloadedChapters} downloaded chapters`}
+          className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold text-zinc-200"
+        >
+          <Download size={11} /> {item.downloadedChapters}
+        </span>
+      )}
+      {view.unreadBadge && item.unreadChapters > 0 && (
+        <span
+          aria-label={`${item.unreadChapters} unread chapters`}
+          className="rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-zinc-950"
+        >
+          {item.unreadChapters}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function SourceBadge({ item }: { item: LibraryManga }) {
+  const [failed, setFailed] = useState(false);
+  const label = sourceDisplayName(item);
+  if (failed) {
+    return (
+      <span
+        aria-label={label}
+        title={label}
+        className="grid size-6 place-items-center rounded bg-zinc-950/80 text-[10px] font-bold text-zinc-200 backdrop-blur"
+      >
+        {label.slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={api.sourceIcon(item.sourceId)}
+      alt=""
+      title={label}
+      onError={() => setFailed(true)}
+      className="size-6 rounded bg-zinc-950/80 object-cover backdrop-blur"
+    />
   );
 }

@@ -127,7 +127,7 @@ describe("BrowsePage migrate tab", () => {
         screen
           .getByRole("button", { name: /Alpha/ })
           .compareDocumentPosition(screen.getByRole("button", { name: /Zeta/ })) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING,
       );
     await screen.findByRole("button", { name: /Alpha/ });
     // Default: largest library first.

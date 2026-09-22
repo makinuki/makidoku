@@ -88,9 +88,7 @@ describe("UpdatesPage", () => {
       </MemoryRouter>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Bookmark Chapter 10" }));
-    await waitFor(() =>
-      expect(calls).toContain("POST /api/chapters/chapter-u1/bookmark"),
-    );
+    await waitFor(() => expect(calls).toContain("POST /api/chapters/chapter-u1/bookmark"));
     expect(
       await screen.findByRole("button", { name: "Remove bookmark from Chapter 10" }),
     ).toBeInTheDocument();
@@ -98,10 +96,7 @@ describe("UpdatesPage", () => {
 
   it("acknowledges selected updates in bulk", async () => {
     const calls: string[] = [];
-    stub(calls, [
-      log("u1", "m1", "Alpha", 10),
-      log("u2", "m2", "Beta", 3),
-    ]);
+    stub(calls, [log("u1", "m1", "Alpha", 10), log("u2", "m2", "Beta", 3)]);
     render(
       <MemoryRouter initialEntries={["/updates"]}>
         <UpdatesPage />

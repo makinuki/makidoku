@@ -443,10 +443,11 @@ export function librarySources(items: LibraryManga[]): LibrarySourceOption[] {
 }
 
 // sourceDisplayName keeps one filter pill per plugin even when the plugin is
-// gone: the short id tells apart repeated fallback labels.
+// gone: the trailing id characters tell apart repeated fallback labels, since
+// ids may share a source or import prefix.
 export function sourceDisplayName(item: { sourceId: string; sourceName?: string }): string {
   if (item.sourceName) return item.sourceName;
-  return `Unknown plugin ${item.sourceId.slice(0, 8)}`;
+  return `Unknown plugin ${item.sourceId.slice(-8)}`;
 }
 
 export function activeFilterCount(view: LibraryView): number {

@@ -894,8 +894,7 @@ function MigrateTab() {
     item.title.toLowerCase().includes(query.trim().toLowerCase()),
   );
   const ordered = [...sources].sort((a, b) => {
-    const order =
-      sort === "count" ? a.count - b.count : a.source.name.localeCompare(b.source.name);
+    const order = sort === "count" ? a.count - b.count : a.source.name.localeCompare(b.source.name);
     return ascending ? order : -order;
   });
   return (

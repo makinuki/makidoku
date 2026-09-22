@@ -319,7 +319,9 @@ describe("library view state", () => {
     expect(gridClasses({ ...defaultLibraryView, columns: 4 })).toContain("grid-cols-4");
     expect(gridClasses(defaultLibraryView)).toContain("sm:grid-cols-4");
     expect(sourceDisplayName({ sourceId: "0198c0de", sourceName: "Dex" })).toBe("Dex");
-    expect(sourceDisplayName({ sourceId: "0198c0de-aaaa" })).toBe("Unknown plugin 0198c0de");
+    expect(sourceDisplayName({ sourceId: "imported-7537715367149829912" })).toBe(
+      "Unknown plugin 49829912",
+    );
   });
 });
 

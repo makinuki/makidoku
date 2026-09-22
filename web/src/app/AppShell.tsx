@@ -144,7 +144,7 @@ export function AppShell({
       )}
       <div className="min-w-0 flex-1 md:pl-[76px] lg:pl-0">
         <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-zinc-800 bg-zinc-950/90 px-4 backdrop-blur lg:px-8">
-          <Logo className="size-7 shrink-0 lg:hidden" />
+          <Logo className="size-7 shrink-0 md:hidden" />
           <button
             onClick={onSearch}
             className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-left text-sm text-zinc-400 hover:border-zinc-700 active:border-zinc-700"

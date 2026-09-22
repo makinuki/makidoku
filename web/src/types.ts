@@ -107,6 +107,10 @@ export type LibraryManga = Manga & {
   categories: Category[];
   progress?: Progress;
   unreadChapters: number;
+  downloadedChapters: number;
+  totalChapters: number;
+  bookmarkedChapters: number;
+  languages: string[];
   sourceName?: string;
 };
 export type Aggregate = {

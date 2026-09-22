@@ -4,11 +4,14 @@ import type { Category, LibraryManga } from "../../types";
 import {
   categoryCounts,
   defaultLibraryView,
+  gridClasses,
+  groupLibrary,
   libraryViewFromSettings,
   libraryViewSettings,
   naturalDirection,
   invertSelection,
   selectAllIds,
+  sourceDisplayName,
   toggleRangeSelection,
   toggleSelection,
   visibleLibrary,
@@ -33,6 +36,10 @@ function manga(overrides: Partial<LibraryManga>): LibraryManga {
     updatedAt: 0,
     categories: [],
     unreadChapters: 0,
+    downloadedChapters: 0,
+    totalChapters: 0,
+    bookmarkedChapters: 0,
+    languages: [],
     ...overrides,
   };
 }
@@ -69,6 +76,8 @@ describe("library view state", () => {
       sort: "unread",
       direction: "asc",
       cardSize: "small",
+      columns: 4,
+      groupBy: "source",
       unreadBadge: false,
       progressBar: false,
       continueButton: false,
@@ -77,6 +86,9 @@ describe("library view state", () => {
         readState: ["in_progress"],
         status: ["completed", "hiatus"],
         sources: ["source-a"],
+        downloaded: true,
+        started: false,
+        bookmarked: true,
       },
     };
     const stored = libraryViewSettings(view).map(([key, value]) =>
@@ -171,23 +183,143 @@ describe("library view state", () => {
       readState: ["unread", "completed"] as const,
       status: ["ongoing"],
       sources: ["source-a", "source-b"],
+      downloaded: true,
+      started: true,
+      bookmarked: false,
     };
     const remaining = withoutFilter(
       {
         readState: [...filters.readState],
         status: [...filters.status],
         sources: [...filters.sources],
+        downloaded: true,
+        started: true,
+        bookmarked: false,
       },
       { id: "readState:unread", group: "readState", value: "unread", label: "Unread" },
     );
     expect(remaining.readState).toEqual(["completed"]);
     expect(remaining.status).toEqual(["ongoing"]);
     expect(remaining.sources).toEqual(["source-a", "source-b"]);
+    expect(
+      withoutFilter(
+        { ...remaining, downloaded: true },
+        { id: "flag", group: "downloaded", value: "x", label: "Downloaded" },
+      ),
+    ).toMatchObject({ downloaded: false, started: true });
   });
 
   it("starts text sorts ascending and everything else descending", () => {
     expect(naturalDirection("title")).toBe("asc");
     expect(naturalDirection("recent")).toBe("desc");
+  });
+
+  it("applies the downloaded, started, and bookmarked flags", () => {
+    const items = [
+      manga({ id: "a", downloadedChapters: 2 }),
+      manga({
+        id: "b",
+        progress: {
+          mangaId: "b",
+          lastReadChapterId: "c",
+          lastReadPage: 1,
+          totalPages: 5,
+          isCompleted: false,
+          lastReadAt: 1,
+        },
+      }),
+      manga({ id: "c", bookmarkedChapters: 1 }),
+      manga({ id: "d" }),
+    ];
+    const base = defaultLibraryView;
+    const flagged = { ...base.filters };
+    expect(
+      visibleLibrary(items, { ...base, filters: { ...flagged, downloaded: true } }, "").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["a"]);
+    expect(
+      visibleLibrary(items, { ...base, filters: { ...flagged, started: true } }, "").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["b"]);
+    expect(
+      visibleLibrary(items, { ...base, filters: { ...flagged, bookmarked: true } }, "").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["c"]);
+  });
+
+  it("sorts by chapter count, source, and status", () => {
+    const items = [
+      manga({ id: "a", title: "B", totalChapters: 10, sourceId: "zeta", status: "ongoing" }),
+      manga({ id: "b", title: "A", totalChapters: 30, sourceId: "alpha", status: "completed" }),
+      manga({ id: "c", title: "C", totalChapters: 20, sourceId: "mid", status: "hiatus" }),
+    ];
+    const base = defaultLibraryView;
+    expect(
+      visibleLibrary(items, { ...base, sort: "chapters", direction: "desc" }, "").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["b", "c", "a"]);
+    expect(
+      visibleLibrary(items, { ...base, sort: "source", direction: "asc" }, "").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["b", "c", "a"]);
+    expect(
+      visibleLibrary(items, { ...base, sort: "status", direction: "asc" }, "").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["b", "c", "a"]);
+  });
+
+  it("shuffles deterministically per seed for the random sort", () => {
+    const items = [
+      manga({ id: "m1" }),
+      manga({ id: "m2" }),
+      manga({ id: "m3" }),
+      manga({ id: "m4" }),
+      manga({ id: "m5" }),
+    ];
+    const base = { ...defaultLibraryView, sort: "random" as const, direction: "desc" as const };
+    const first = visibleLibrary(items, base, "", 7).map((item) => item.id);
+    expect(visibleLibrary(items, base, "", 7).map((item) => item.id)).toEqual(first);
+    expect([...first].sort()).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+    const other = visibleLibrary(items, base, "", 42).map((item) => item.id);
+    expect([...other].sort()).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+    expect(other).not.toEqual(first);
+  });
+
+  it("sections titles by source, status, and category", () => {
+    const items = [
+      manga({
+        id: "a",
+        sourceId: "one",
+        sourceName: "One",
+        status: "ongoing",
+        categories: [category(5, "A")],
+      }),
+      manga({ id: "b", sourceId: "two", status: "completed", categories: [category(5, "A")] }),
+      manga({ id: "c", sourceId: "one", sourceName: "One", status: "ongoing" }),
+    ];
+    const sources = groupLibrary(items, "source", [category(5, "A")]);
+    expect(sources.map((group) => group.label)).toEqual(["One", "Unknown plugin two"]);
+    expect(sources[0].items.map((item) => item.id)).toEqual(["a", "c"]);
+    const statuses = groupLibrary(items, "status", []);
+    expect(statuses.map((group) => group.label)).toEqual(["Completed", "Ongoing"]);
+    const categories = groupLibrary(items, "category", [category(5, "A")]);
+    expect(categories.map((group) => group.label)).toEqual(["A", "Uncategorized"]);
+    expect(categories[0].items.map((item) => item.id)).toEqual(["a", "b"]);
+    expect(groupLibrary(items, "none", [])).toHaveLength(1);
+  });
+
+  it("resolves grid classes from mode and column count", () => {
+    expect(gridClasses({ ...defaultLibraryView, cardSize: "list" })).toContain("grid-cols-1");
+    expect(gridClasses({ ...defaultLibraryView, columns: 4 })).toContain("grid-cols-4");
+    expect(gridClasses(defaultLibraryView)).toContain("sm:grid-cols-4");
+    expect(sourceDisplayName({ sourceId: "0198c0de", sourceName: "Dex" })).toBe("Dex");
+    expect(sourceDisplayName({ sourceId: "0198c0de-aaaa" })).toBe("Unknown plugin 0198c0de");
   });
 });
 

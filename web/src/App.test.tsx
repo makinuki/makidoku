@@ -9,7 +9,7 @@ import {
   simulateTouchGesture,
 } from "@makinuki/mekuri/test-utils";
 import App from "./App";
-import { resumeIndex } from "./features/reader/ReaderPage";
+import { resumeIndex } from "./features/reader/readerSettings";
 
 // Taps dispatch against the reading surface geometry, which jsdom does not
 // lay out. Tests that tap give the surface an explicit box first.

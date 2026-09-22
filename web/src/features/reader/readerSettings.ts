@@ -153,3 +153,16 @@ export function resolveReaderSettings(
     fit: overrides.fit ?? globals.fit,
   };
 }
+
+// resumeIndex converts a stored 1-based last-read page into the 0-based page
+// index a reader session opens on. A double-page spread opens on the pair
+// containing that page, and a missing or out-of-range value clamps to the
+// available pages.
+export function resumeIndex(
+  lastReadPage: number | null,
+  pageCount: number,
+  mode: ReaderMode,
+): number {
+  const zeroBased = (lastReadPage ?? 1) - 1;
+  return alignToSpread(zeroBased, pageCount, mode);
+}

@@ -1,4 +1,4 @@
-import type { Chapter } from "../../../types";
+import type { Aggregate, Chapter } from "../../../types";
 
 // Reading order is oldest-first: ascending chapter number, unnumbered
 // specials at the end. Details screens sort newest-first for browsing, so
@@ -51,4 +51,9 @@ export function chapterLabelFor(chapter: Chapter | undefined): string {
   if (chapter.chapterNumber == null) return chapter.title || "Special";
   const base = `Chapter ${chapter.chapterNumber}`;
   return chapter.volume == null ? base : `Vol. ${chapter.volume} · ${base}`;
+}
+
+export function chapterLabel(data: Aggregate, chapterID: string) {
+  const item = data.chapters.find((chapter) => chapter.id === chapterID);
+  return item?.chapterNumber == null ? item?.title || "Special" : `Chapter ${item.chapterNumber}`;
 }

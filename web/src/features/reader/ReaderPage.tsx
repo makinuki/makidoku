@@ -1,21 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate, Navigate } from "react-router-dom";
-import {
-  ArrowLeft,
-  Check,
-  EyeOff,
-  List,
-  Maximize,
-  Menu,
-  Minimize,
-  SlidersHorizontal,
-  X,
-} from "lucide-react";
+import { ArrowLeft, Menu } from "lucide-react";
 import { api } from "../../api";
 import {
-  IMAGE_LOAD_FAILED,
-  ZONE_MAP_PRESETS,
   attachFullscreen,
   attachWakeLock,
   type MekuriEngine,
@@ -27,14 +14,13 @@ import {
 import {
   MekuriPageStatus,
   MekuriViewStyles,
-  MekuriZoneOverlay,
   PagedView,
   WebtoonView,
   type MekuriAltLabeler,
 } from "@makinuki/mekuri/views";
-import type { Aggregate, Chapter, Page } from "../../types";
+import type { Aggregate, Page } from "../../types";
 import { ErrorState, EmptyState, LoadingState } from "../../components/States";
-import { chapterLabelFor, prevNextChapter } from "./engine/chapters";
+import { chapterLabel, prevNextChapter } from "./engine/chapters";
 import {
   alignToSpread,
   defaultReaderDisplay,
@@ -45,15 +31,14 @@ import {
   readerImageFilter,
   readerOverridesFromManga,
   resolveReaderSettings,
+  resumeIndex,
   spreadStep,
   type ReaderDirection as Direction,
   type ReaderDisplay,
   type ReaderFit as Fit,
   type ReaderGlobals,
   type ReaderMode as Mode,
-  type ReaderNavigation,
   type ReaderOverrides,
-  type ReaderTheme,
 } from "./readerSettings";
 import { toMekuriPages } from "./mekuriAdapter";
 import {
@@ -62,6 +47,17 @@ import {
   useMekuriPageIndex,
   useMekuriReader,
 } from "./useMekuriReader";
+import { useReaderKeyboard } from "./useReaderKeyboard";
+import { useReaderProgress } from "./useReaderProgress";
+import { ChapterDrawer } from "./ChapterDrawer";
+import { GoToDialog } from "./GoToDialog";
+import { HostPageImage } from "./HostPageImage";
+import { NextUpCard } from "./NextUpCard";
+import { ReaderFooter } from "./ReaderFooter";
+import { ReaderHeader } from "./ReaderHeader";
+import { ReaderScreen } from "./ReaderScreen";
+import { ReaderSettingsPopup } from "./ReaderSettingsPopup";
+import { ShortcutsDialog } from "./ShortcutsDialog";
 
 // Keyboard contract shared by both prebuilt views: the attached engine
 // dispatchers own the keys this map expresses (arrows and D/A with RTL
@@ -113,13 +109,8 @@ export function ReaderPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
-  const sessionStartedAt = useRef(Date.now());
-  // Whole seconds not yet reported; sub-second remainders carry over so a save
-  // per page turn cannot truncate the session away.
-  const pendingSeconds = useRef(0);
   const [overrides, setOverrides] = useState<ReaderOverrides>(emptyReaderOverrides);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [incognito, setIncognito] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [goToOpen, setGoToOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -210,14 +201,6 @@ export function ReaderPage() {
       fullscreenRef.current = null;
     };
   }, [readerReady]);
-  const incognitoRef = useRef(false);
-  // Progress writes are blocked until the incognito state has been read once;
-  // a sample can otherwise land before the fetch resolves and leak a history
-  // write for a session the user believes is incognito.
-  const incognitoLoadedRef = useRef(false);
-  useEffect(() => {
-    incognitoRef.current = incognito;
-  }, [incognito]);
 
   // Chapter flow in reading order (oldest-first), derived from the loaded
   // aggregate. Neighbors drive the drawer highlight, prev/next jumps, the
@@ -302,26 +285,6 @@ export function ReaderPage() {
   useEffect(() => {
     let active = true;
     api
-      .incognito()
-      .then((state) => {
-        if (!active) return;
-        incognitoRef.current = state.enabled;
-        setIncognito(state.enabled);
-        incognitoLoadedRef.current = true;
-      })
-      .catch(() => {
-        // Incognito state is optional; a failed read fails closed so no
-        // progress leaves the device until a later mount can confirm it.
-        incognitoRef.current = true;
-        incognitoLoadedRef.current = true;
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => {
-    let active = true;
-    api
       .settings()
       .then((items) => {
         if (!active) return;
@@ -375,6 +338,33 @@ export function ReaderPage() {
     },
     [mangaId, applyReaderSettings],
   );
+  // Last visible 1-based page under the engine's own spread pairing, so
+  // progress, percent, and the end card agree with the spreads the engine
+  // reports.
+  const spreadEndForPage = useCallback(
+    (pageIndex: number): number => {
+      const snapshot = engineRef.current?.getState();
+      const spread = snapshot?.activeSpreads.find((candidate) => candidate.includes(pageIndex));
+      if (spread && spread.length > 0) {
+        return Math.min(pages.length, spread[spread.length - 1] + 1);
+      }
+      return Math.min(pages.length, pageIndex + spreadStep(mode));
+    },
+    [pages.length, mode],
+  );
+  const currentPageIndex = useCallback(
+    () => engineRef.current?.getReadingPosition().pageIndex ?? resumePage,
+    [resumePage],
+  );
+  const { incognito, saveAtPage, resetReadingSession } = useReaderProgress({
+    mangaId,
+    chapterId,
+    aggregate,
+    pageCount: pages.length,
+    spreadEndForPage,
+    currentPageIndex,
+  });
+
   useEffect(() => {
     if (!mangaId || !chapterId) {
       setLoading(false);
@@ -402,8 +392,7 @@ export function ReaderPage() {
         if (!active) return;
         setAggregate(data);
         setPages(loaded);
-        sessionStartedAt.current = Date.now();
-        pendingSeconds.current = 0;
+        resetReadingSession();
         // Resume from the resolved title settings, not the `mode` state: the
         // global and per-title preferences may still be loading when the
         // chapter fetch wins the race, and the stale mount-time default would
@@ -431,105 +420,12 @@ export function ReaderPage() {
     return () => {
       active = false;
     };
-  }, [mangaId, chapterId, attempt]);
-  type PendingProgress = {
-    mangaId: string;
-    chapterId: string;
-    page: number;
-    total: number;
-    complete: boolean;
-    sessionSeconds: number;
-  };
-  const saver = useRef<(() => void) | null>(null);
-  const retryQueue = useRef<PendingProgress[]>([]);
-  const postProgress = useCallback((entry: PendingProgress) => {
-    // Incognito never leaves the device: the daemon also null-writes, but
-    // the frontend must not emit the request in the first place. Until the
-    // incognito state has been read once, unknown is treated as enabled.
-    if (!incognitoLoadedRef.current || incognitoRef.current) return Promise.resolve();
-    return api
-      .progress(
-        entry.mangaId,
-        entry.chapterId,
-        entry.page,
-        entry.total,
-        entry.complete,
-        entry.sessionSeconds,
-      )
-      .catch((e) => {
-        // Offline or transient failure queues for the next tick instead of
-        // dropping the position; the queue is bounded and oldest-first.
-        retryQueue.current = [...retryQueue.current, entry].slice(-5);
-        console.error("saving reading progress failed", e);
-      });
-  }, []);
-  const flushProgress = useCallback(() => {
-    const queued = retryQueue.current;
-    retryQueue.current = [];
-    return (async () => {
-      for (const entry of queued) await postProgress(entry);
-      if (saver.current) {
-        const save = saver.current;
-        saver.current = null;
-        save();
-      }
-    })();
-  }, [postProgress]);
+  }, [mangaId, chapterId, attempt, resetReadingSession]);
   // Engine behind the existing markup. One engine per chapter: created once
   // the pages load, replaced in place while reading, discarded when the pages
   // clear on chapter switch. Mode and direction sync through
   // setMode/setDirection effects inside useMekuriReader.
   const mekuriPages = useMemo(() => toMekuriPages(pages), [pages]);
-  // Last visible 1-based page under the engine's own spread pairing, so
-  // progress, percent, and the end card agree with the spreads the engine
-  // reports.
-  const spreadEndForPage = useCallback(
-    (pageIndex: number): number => {
-      const snapshot = engineRef.current?.getState();
-      const spread = snapshot?.activeSpreads.find((candidate) => candidate.includes(pageIndex));
-      if (spread && spread.length > 0) {
-        return Math.min(pages.length, spread[spread.length - 1] + 1);
-      }
-      return Math.min(pages.length, pageIndex + spreadStep(mode));
-    },
-    [pages.length, mode],
-  );
-  // Last progress write, to drop saves that carry no new information: the
-  // engine samples immediately on every discrete move, so without this the
-  // exit flush would re-post the position a page turn just recorded.
-  const lastPostedRef = useRef<{ key: string; page: number } | null>(null);
-  const saveAtPage = useCallback(
-    (pageIndex: number) => {
-      if (!pages.length || !aggregate) return;
-      const visibleEnd = spreadEndForPage(pageIndex);
-      const now = Date.now();
-      // Reading time accrues between writes. Most intervals cover well under
-      // a second; flooring each one on its own would drop them all. Whole
-      // seconds are reported and the remainder stays pending. The daemon
-      // stores one reading session per write, so the value is the delta since
-      // the previous write, capped at 300 seconds.
-      pendingSeconds.current = Math.min(
-        300,
-        pendingSeconds.current + (now - sessionStartedAt.current) / 1000,
-      );
-      sessionStartedAt.current = now;
-      const seconds = Math.floor(pendingSeconds.current);
-      pendingSeconds.current -= seconds;
-      const key = `${mangaId}/${chapterId}`;
-      const last = lastPostedRef.current;
-      if (last && last.key === key && last.page === visibleEnd && seconds === 0) return;
-      lastPostedRef.current = { key, page: visibleEnd };
-      void postProgress({
-        mangaId,
-        chapterId,
-        page: visibleEnd,
-        total: pages.length,
-        complete: visibleEnd >= pages.length,
-        sessionSeconds: seconds,
-      });
-    },
-    [pages, aggregate, mangaId, chapterId, postProgress, spreadEndForPage],
-  );
   const engine = useMekuriReader({
     pages: mekuriPages,
     mode,
@@ -602,6 +498,7 @@ export function ReaderPage() {
       });
     });
   }, [engine]);
+
   // The last spread is fully visible: progress counts the end of the spread
   // containing the reading position, so its end is the final page on screen.
   const visibleEnd = spreadEndForPage(index);
@@ -703,149 +600,30 @@ export function ReaderPage() {
         </div>
       </div>
     ) : null;
-  useEffect(() => {
-    // Discrete engine moves sample immediately (same-page scroll samples
-    // throttle to 1s inside the engine), so persistence rides
-    // onPositionSample above; the pending write below only covers
-    // unload and chapter switch.
-    saver.current = () => {
-      const position = engineRef.current?.getReadingPosition();
-      saveAtPage(position ? position.pageIndex : resumePage);
-    };
-  }, [saveAtPage, resumePage]);
-  useEffect(() => {
-    // A pending write is flushed when leaving the reader, switching
-    // chapters, hiding the tab, or closing the page so the final position is
-    // recorded even when nothing sampled after the last move.
-    const flush = () => {
-      void flushProgress();
-    };
-    window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", flush);
-    window.addEventListener("online", flush);
-    return () => {
-      window.removeEventListener("pagehide", flush);
-      document.removeEventListener("visibilitychange", flush);
-      window.removeEventListener("online", flush);
-      if (saver.current) {
-        saver.current();
-        saver.current = null;
-      }
-    };
-  }, [mangaId, chapterId, flushProgress]);
-  useEffect(() => {
-    // Host keys: chapter flow, fullscreen, dialogs, mode cycling, the page
-    // extras the engine map cannot express (Space with its shift-for-back
-    // rule, PgDn/PgUp, Home/End), and the chrome-hide on the arrows and D/A
-    // the view dispatchers navigate with. The hide is unconditional there,
-    // matching the turn controls; suppression and editable-focus guards apply
-    // to both halves alike.
-    const onKey = (event: KeyboardEvent) => {
-      // Shortcuts must not fire while a form control has focus: typing into
-      // another field or stepping the page slider must stay local to it.
-      // Buttons are left alone: arrows never activate a focused button, so a
-      // focused control must not trap page navigation.
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      if (event.key === "Escape") {
-        // Close the topmost layer first: help, go-to, settings, drawer.
-        if (helpOpen) setHelpOpen(false);
-        else if (goToOpen) setGoToOpen(false);
-        else if (settingsOpen) setSettingsOpen(false);
-        else if (drawerOpen) setDrawerOpen(false);
-        return;
-      }
-      // An open dialog owns the keyboard: the reader behind it must not turn
-      // pages, cycle modes, or hide its own chrome while the user is choosing.
-      if (helpOpen || goToOpen || settingsOpen || drawerOpen) return;
-      // The view dispatchers navigate on arrows and D/A; the host hides the
-      // chrome for them, matching the turn controls. Modified keys belong to
-      // the host and the browser, mirroring the dispatcher guards.
-      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
-        const key = event.key;
-        if (
-          key === "ArrowRight" ||
-          key === "ArrowLeft" ||
-          key.toLowerCase() === "d" ||
-          key.toLowerCase() === "a"
-        ) {
-          hideChrome();
-        }
-      }
-      if (event.key.toLowerCase() === "f") toggleFullscreen();
-      if (event.key === "?") {
-        setHelpOpen(true);
-        return;
-      }
-      if (event.key.toLowerCase() === "g") {
-        setGoToOpen((value) => !value);
-        return;
-      }
-      if (event.key.toLowerCase() === "n" && flow.next) {
-        goChapter(flow.next.id);
-        return;
-      }
-      if (event.key.toLowerCase() === "p" && flow.prev) {
-        goChapter(flow.prev.id);
-        return;
-      }
-      if (event.key.toLowerCase() === "w") {
-        // The header quick-switcher and the `w` key share one path: both
-        // persist the per-title override, so a late settings fetch can never
-        // clobber a mode the reader just chose.
-        const next = mode === "single" ? "double" : mode === "double" ? "webtoon" : "single";
-        if (mangaId) saveReaderOverride({ mode: next });
-        else setMode(next);
-      }
-      // Paged extras. The webtoon column scrolls natively on Space because
-      // the shared map leaves it unbound there; Space on a focused button
-      // keeps its native activation.
-      if (mode !== "webtoon") {
-        if (event.key === " " && target?.tagName !== "BUTTON") {
-          event.preventDefault();
-          if (event.shiftKey) turnPrevious();
-          else turnNext();
-        } else if (event.key === "PageDown" || event.key === "PageUp") {
-          event.preventDefault();
-          if (event.key === "PageDown") turnNext();
-          else turnPrevious();
-        } else if (event.key === "Home") {
-          event.preventDefault();
-          goToPageIndex(0);
-        } else if (event.key === "End") {
-          event.preventDefault();
-          goToPageIndex(pages.length - 1);
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [
-    drawerOpen,
-    flow.next,
-    flow.prev,
-    goChapter,
-    goToOpen,
-    goToPageIndex,
+
+  useReaderKeyboard({
     helpOpen,
-    hideChrome,
-    mangaId,
-    mode,
-    pages.length,
-    saveReaderOverride,
+    goToOpen,
     settingsOpen,
+    drawerOpen,
+    mode,
+    mangaId,
+    pageCount: pages.length,
+    prev: flow.prev,
+    next: flow.next,
+    setHelpOpen,
+    setGoToOpen,
+    setSettingsOpen,
+    setDrawerOpen,
+    hideChrome,
     toggleFullscreen,
+    goChapter,
+    saveReaderOverride,
+    setMode,
     turnNext,
     turnPrevious,
-  ]);
+    goToPageIndex,
+  });
   useEffect(() => {
     // Warm the HTTP cache for the next chapter while the reader finishes
     // this one so the jump rarely shows a loading screen.
@@ -890,12 +668,10 @@ export function ReaderPage() {
       />
     );
   }
+
   if (error)
     return (
-      <div
-        data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text) p-5"
-      >
+      <ReaderScreen theme={display.theme} pad>
         <div className="max-w-lg">
           <ErrorState message={error} />
           <div className="mt-4 flex gap-2">
@@ -913,14 +689,11 @@ export function ReaderPage() {
             </button>
           </div>
         </div>
-      </div>
+      </ReaderScreen>
     );
   if (!mangaId || !chapterId)
     return (
-      <div
-        data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text) p-5"
-      >
+      <ReaderScreen theme={display.theme} pad>
         <div className="max-w-lg">
           <EmptyState
             title="No chapter selected"
@@ -933,23 +706,17 @@ export function ReaderPage() {
             <ArrowLeft size={15} /> Back to library
           </button>
         </div>
-      </div>
+      </ReaderScreen>
     );
   if (loading)
     return (
-      <div
-        data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text)"
-      >
+      <ReaderScreen theme={display.theme}>
         <LoadingState label="Loading reader" />
-      </div>
+      </ReaderScreen>
     );
   if (aggregate && !pages.length)
     return (
-      <div
-        data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text) p-5"
-      >
+      <ReaderScreen theme={display.theme} pad>
         <div className="max-w-lg">
           <EmptyState
             title="This chapter has no pages"
@@ -962,288 +729,53 @@ export function ReaderPage() {
             <ArrowLeft size={15} /> Back
           </button>
         </div>
-      </div>
+      </ReaderScreen>
     );
   if (!aggregate || !pages.length || !engine)
     return (
-      <div
-        data-theme={display.theme}
-        className="reader grid min-h-screen place-items-center bg-(--reader-canvas) text-(--reader-text)"
-      >
+      <ReaderScreen theme={display.theme}>
         <LoadingState label="Loading reader" />
-      </div>
+      </ReaderScreen>
     );
+
   return (
     <div
       ref={readerRef}
       data-theme={display.theme}
       className="reader fixed inset-0 z-30 flex flex-col bg-(--reader-canvas) text-(--reader-text)"
     >
-      <div
-        className={`flex items-center gap-3 border-b border-(--reader-border) bg-(--reader-bar) px-3 py-2 ${menu ? "" : "hidden"}`}
-      >
-        <button
-          aria-label={mangaId ? "Back to details" : "Back to library"}
-          title={mangaId ? "Back to details" : "Back to library"}
-          onClick={exitReader}
-          className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <div className="min-w-0 flex-1">
-          <b className="block truncate text-sm">{aggregate.manga.title}</b>
-          <small className="text-(--reader-dim)">{chapterLabel(aggregate, chapterId)}</small>
-          {incognito && (
-            <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[11px] text-amber-300">
-              <EyeOff size={12} /> Incognito
-            </span>
-          )}
-          {currentChapter?.downloaded && (
-            <span
-              title="This chapter is downloaded and reads offline"
-              className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] text-emerald-300"
-            >
-              <Check size={12} /> Saved
-            </span>
-          )}
-          {!online && (
-            <span
-              title="No network connection; remote sources are unreachable"
-              className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-red-400/15 px-2 py-0.5 text-[11px] text-red-300"
-            >
-              No network
-            </span>
-          )}
-        </div>
-        <div className="flex gap-1" role="group" aria-label="Reader mode">
-          <button
-            aria-label="Chapters"
-            title="Chapters"
-            onClick={() => setDrawerOpen((value) => !value)}
-            className={`rounded-lg p-2 ${drawerOpen ? "bg-(--reader-border) text-amber-400" : "text-(--reader-dim) hover:bg-(--reader-border)"}`}
-          >
-            <List size={16} />
-          </button>
-          <button
-            aria-pressed={mode === "single"}
-            onClick={() => saveReaderOverride({ mode: "single" })}
-            className={`rounded-lg px-2 py-1 text-xs ${mode === "single" ? "bg-amber-400 text-zinc-950" : "text-(--reader-dim)"}`}
-          >
-            Single
-          </button>
-          <button
-            aria-pressed={mode === "double"}
-            onClick={() => saveReaderOverride({ mode: "double" })}
-            className={`rounded-lg px-2 py-1 text-xs ${mode === "double" ? "bg-amber-400 text-zinc-950" : "text-(--reader-dim)"}`}
-          >
-            Double
-          </button>
-          <button
-            aria-pressed={mode === "webtoon"}
-            onClick={() => saveReaderOverride({ mode: "webtoon" })}
-            className={`rounded-lg px-2 py-1 text-xs ${mode === "webtoon" ? "bg-amber-400 text-zinc-950" : "text-(--reader-dim)"}`}
-          >
-            Webtoon
-          </button>
-          <button
-            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            aria-pressed={isFullscreen}
-            title={isFullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}
-            onClick={toggleFullscreen}
-            className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
-          >
-            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
-          </button>
-          <button
-            aria-label="Reader settings"
-            onClick={() => setSettingsOpen((value) => !value)}
-            className={`rounded-lg p-2 ${settingsOpen ? "bg-(--reader-border) text-amber-400" : "text-(--reader-dim) hover:bg-(--reader-border)"}`}
-          >
-            <SlidersHorizontal size={16} />
-          </button>
-          <button
-            aria-label="Keyboard shortcuts"
-            title="Keyboard shortcuts (?)"
-            onClick={() => setHelpOpen(true)}
-            className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
-          >
-            ?
-          </button>
-        </div>
-      </div>
+      <ReaderHeader
+        visible={menu}
+        hasManga={Boolean(mangaId)}
+        title={aggregate.manga.title}
+        chapterLabel={chapterLabel(aggregate, chapterId)}
+        incognito={incognito}
+        downloaded={currentChapter?.downloaded ?? false}
+        online={online}
+        drawerOpen={drawerOpen}
+        mode={mode}
+        isFullscreen={isFullscreen}
+        settingsOpen={settingsOpen}
+        onBack={exitReader}
+        onToggleDrawer={() => setDrawerOpen((value) => !value)}
+        onMode={(next) => saveReaderOverride({ mode: next })}
+        onToggleFullscreen={toggleFullscreen}
+        onToggleSettings={() => setSettingsOpen((value) => !value)}
+        onShowHelp={() => setHelpOpen(true)}
+      />
       {settingsOpen && (
-        <div className="absolute right-3 top-14 z-40 max-h-[80vh] w-72 max-w-[90vw] space-y-4 overflow-y-auto rounded-xl border border-(--reader-border) bg-(--reader-bar) p-3 shadow-2xl">
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <b className="text-sm">This title</b>
-              <span className="text-xs text-(--reader-dim)">Overrides</span>
-            </div>
-            <label className="block text-xs text-(--reader-dim)">
-              Mode
-              <select
-                value={overrides.mode ?? ""}
-                onChange={(event) =>
-                  saveReaderOverride({
-                    mode: (event.target.value || null) as Mode | null,
-                  })
-                }
-                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
-              >
-                <option value="">Default ({globals.current.mode})</option>
-                <option value="single">Single</option>
-                <option value="double">Double</option>
-                <option value="webtoon">Webtoon</option>
-              </select>
-            </label>
-            <label className="block text-xs text-(--reader-dim)">
-              Direction
-              <select
-                value={overrides.direction ?? ""}
-                onChange={(event) =>
-                  saveReaderOverride({
-                    direction: (event.target.value || null) as Direction | null,
-                  })
-                }
-                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
-              >
-                <option value="">Default ({globals.current.direction})</option>
-                <option value="ltr">Left to right</option>
-                <option value="rtl">Right to left</option>
-              </select>
-            </label>
-            <label className="block text-xs text-(--reader-dim)">
-              Fit
-              <select
-                value={overrides.fit ?? ""}
-                onChange={(event) =>
-                  saveReaderOverride({
-                    fit: (event.target.value || null) as Fit | null,
-                  })
-                }
-                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
-              >
-                <option value="">Default ({globals.current.fit})</option>
-                <option value="width">Fit width</option>
-                <option value="height">Fit height</option>
-                <option value="screen">Fit screen</option>
-                <option value="original">Original</option>
-              </select>
-            </label>
-          </section>
-          <section className="space-y-3 border-t border-(--reader-border) pt-3">
-            <b className="text-sm">Display</b>
-            <label className="block text-xs text-(--reader-dim)">
-              Tap and click zones
-              <select
-                aria-label="Tap and click zones"
-                value={display.navigation}
-                onChange={(event) =>
-                  saveDisplaySetting("reader.navigation", event.target.value as ReaderNavigation)
-                }
-                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
-              >
-                <option value="default-manga">Default manga</option>
-                <option value="l-shaped">L-shaped</option>
-                <option value="edge-only">Edges only</option>
-                <option value="disabled">Disabled</option>
-              </select>
-            </label>
-            <div
-              aria-hidden="true"
-              className="relative h-16 w-full overflow-hidden rounded-lg border border-(--reader-border) bg-(--reader-canvas)"
-            >
-              <MekuriZoneOverlay engine={engine} zoneMap={ZONE_MAP_PRESETS[display.navigation]} />
-            </div>
-            {display.navigation === "disabled" && (
-              <p className="text-[11px] text-(--reader-dim)">Zones off. Use keys or swipe.</p>
-            )}
-            <label className="block text-xs text-(--reader-dim)">
-              Theme
-              <select
-                aria-label="Reader theme"
-                value={display.theme}
-                onChange={(event) =>
-                  saveDisplaySetting("reader.theme", event.target.value as ReaderTheme)
-                }
-                className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
-              >
-                <option value="dark">Dark</option>
-                <option value="amoled">AMOLED black</option>
-                <option value="paper">Paper</option>
-                <option value="light">Light</option>
-              </select>
-            </label>
-            <label className="block text-xs text-(--reader-dim)">
-              Image brightness · {display.brightness}%
-              <input
-                type="range"
-                aria-label="Image brightness"
-                min={50}
-                max={150}
-                step={5}
-                value={display.brightness}
-                onChange={(event) =>
-                  saveDisplaySetting("reader.brightness", Number(event.target.value))
-                }
-                className="mt-1 w-full accent-amber-400"
-              />
-            </label>
-            <label className="block text-xs text-(--reader-dim)">
-              Webtoon gap · {display.gap}px
-              <input
-                type="range"
-                aria-label="Webtoon gap"
-                min={0}
-                max={48}
-                step={4}
-                value={display.gap}
-                onChange={(event) =>
-                  saveDisplaySetting("reader.webtoon_gap", Number(event.target.value))
-                }
-                className="mt-1 w-full accent-amber-400"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
-              <input
-                type="checkbox"
-                checked={display.grayscale}
-                onChange={(event) => saveDisplaySetting("reader.grayscale", event.target.checked)}
-                className="accent-amber-400"
-              />
-              Grayscale images
-            </label>
-            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
-              <input
-                type="checkbox"
-                checked={display.invert}
-                onChange={(event) => saveDisplaySetting("reader.invert", event.target.checked)}
-                className="accent-amber-400"
-              />
-              Invert image colors
-            </label>
-          </section>
-          <section className="space-y-2 border-t border-(--reader-border) pt-3">
-            <b className="text-sm">Reading</b>
-            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
-              <input
-                type="checkbox"
-                checked={autoAdvance}
-                onChange={(event) => setAutoAdvanceStored(event.target.checked)}
-                className="accent-amber-400"
-              />
-              Auto-advance to the next chapter
-            </label>
-            <label className="flex items-center gap-2 text-xs text-(--reader-text)">
-              <input
-                type="checkbox"
-                checked={keepAwake}
-                onChange={(event) => setKeepAwakeStored(event.target.checked)}
-                className="accent-amber-400"
-              />
-              Keep screen on while reading
-            </label>
-          </section>
-        </div>
+        <ReaderSettingsPopup
+          overrides={overrides}
+          globals={globals.current}
+          display={display}
+          engine={engine}
+          autoAdvance={autoAdvance}
+          keepAwake={keepAwake}
+          onOverride={saveReaderOverride}
+          onDisplaySetting={saveDisplaySetting}
+          onAutoAdvance={setAutoAdvanceStored}
+          onKeepAwake={setKeepAwakeStored}
+        />
       )}
       <MekuriViewStyles />
       <MekuriPageStatus engine={engine} pages={mekuriPages} altLabeler={altLabeler} />
@@ -1291,39 +823,15 @@ export function ReaderPage() {
           onClose={() => setGoToOpen(false)}
         />
       )}
-      <div
-        className={`flex items-center gap-3 border-t border-(--reader-border) bg-(--reader-bar) px-4 py-2 ${menu ? "" : "hidden"}`}
-      >
-        <button
-          onClick={() => setGoToOpen(true)}
-          title="Go to page (G)"
-          aria-label={`Go to page, currently page ${Math.min(index + 1, pages.length)} of ${pages.length}, ${percent} percent read`}
-          className="shrink-0 text-xs text-(--reader-dim) hover:text-(--reader-text)"
-        >
-          {Math.min(index + 1, pages.length)} / {pages.length} · {percent}%
-        </button>
-        <input
-          type="range"
-          aria-label="Page"
-          aria-valuemin={1}
-          aria-valuemax={pages.length}
-          aria-valuenow={Math.min(index + 1, pages.length)}
-          aria-valuetext={`Page ${Math.min(index + 1, pages.length)} of ${pages.length}`}
-          min="0"
-          max={Math.max(0, pages.length - 1)}
-          value={index}
-          onChange={(e) => goToPageIndex(Number(e.target.value))}
-          className="flex-1 accent-amber-400"
-        />
-        <button
-          aria-label="Hide reader menu"
-          aria-expanded={menu}
-          onClick={hideChrome}
-          className="rounded-lg p-2 text-(--reader-dim)"
-        >
-          <Menu size={16} />
-        </button>
-      </div>
+      <ReaderFooter
+        visible={menu}
+        index={index}
+        pageCount={pages.length}
+        percent={percent}
+        onShowGoTo={() => setGoToOpen(true)}
+        onSeek={goToPageIndex}
+        onHide={hideChrome}
+      />
       {helpOpen && (
         <ShortcutsDialog engine={engine} mode={mode} onClose={() => setHelpOpen(false)} />
       )}
@@ -1348,357 +856,4 @@ export function ReaderPage() {
       )}
     </div>
   );
-}
-
-function ChapterDrawer({
-  ordered,
-  currentId,
-  onSelect,
-  onClose,
-}: {
-  ordered: Chapter[];
-  currentId: string;
-  onSelect: (id: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="absolute inset-y-0 left-0 z-40 flex w-72 max-w-[80vw] flex-col border-r border-(--reader-border) bg-(--reader-bar) text-(--reader-text) shadow-2xl">
-      <div className="flex items-center justify-between border-b border-(--reader-border) px-3 py-2">
-        <b className="text-sm">Chapters · {ordered.length}</b>
-        <button
-          aria-label="Close chapters"
-          onClick={onClose}
-          className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
-        >
-          <X size={16} />
-        </button>
-      </div>
-      <ol className="min-h-0 flex-1 overflow-y-auto">
-        {ordered.map((chapter) => (
-          <li key={chapter.id}>
-            <button
-              onClick={() => onSelect(chapter.id)}
-              aria-current={chapter.id === currentId ? "true" : undefined}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-(--reader-border) ${
-                chapter.id === currentId ? "bg-(--reader-border) text-amber-400" : ""
-              } ${chapter.read ? "opacity-60" : ""}`}
-            >
-              {chapter.read && <Check size={14} className="shrink-0 text-emerald-400" />}
-              <span className="min-w-0 flex-1 truncate">{chapterLabelFor(chapter)}</span>
-              {chapter.downloaded && (
-                <span className="shrink-0 text-[11px] text-(--reader-dim)">saved</span>
-              )}
-            </button>
-          </li>
-        ))}
-      </ol>
-      <p className="border-t border-(--reader-border) px-3 py-2 text-[11px] text-(--reader-dim)">
-        N / P jumps to the next / previous chapter.
-      </p>
-    </div>
-  );
-}
-
-function NextUpCard({
-  next,
-  autoAdvance,
-  queueNote,
-  trackerCount,
-  onNext,
-  onDownload,
-  onStay,
-  onDetails,
-}: {
-  next: Chapter;
-  autoAdvance: boolean;
-  queueNote: string;
-  trackerCount: number;
-  onNext: () => void;
-  onDownload: () => void;
-  onStay: () => void;
-  onDetails: () => void;
-}) {
-  return (
-    <div className="absolute inset-x-0 bottom-16 z-40 mx-auto w-80 max-w-[90vw] rounded-xl border border-(--reader-border) bg-(--reader-bar) p-4 text-(--reader-text) shadow-2xl">
-      <p className="text-xs uppercase tracking-wide text-(--reader-dim)">Chapter finished</p>
-      <b className="mt-1 block truncate text-sm">Up next: {chapterLabelFor(next)}</b>
-      {autoAdvance && (
-        <p className="mt-1 text-xs text-(--reader-dim)">
-          Auto-advancing shortly. Stay to keep reading.
-        </p>
-      )}
-      {trackerCount > 0 && (
-        <p className="mt-1 text-xs text-(--reader-dim)">
-          Chapter progress syncs to {trackerCount} bound{" "}
-          {trackerCount === 1 ? "tracker" : "trackers"}.
-        </p>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          onClick={onNext}
-          className="rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
-        >
-          Next chapter
-        </button>
-        {next.downloaded ? (
-          <span className="inline-flex items-center gap-1 self-center text-xs text-emerald-300">
-            <Check size={13} /> Saved
-          </span>
-        ) : (
-          <button
-            onClick={onDownload}
-            className="rounded-lg border border-(--reader-border) px-3 py-2 text-sm"
-          >
-            Download next
-          </button>
-        )}
-        <button
-          onClick={onStay}
-          className="rounded-lg border border-(--reader-border) px-3 py-2 text-sm"
-        >
-          Keep reading
-        </button>
-        <button
-          onClick={onDetails}
-          className="rounded-lg border border-(--reader-border) px-3 py-2 text-sm text-(--reader-dim)"
-        >
-          Details
-        </button>
-      </div>
-      {queueNote && (
-        <p role="status" className="mt-2 text-xs text-emerald-300">
-          {queueNote}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function GoToDialog({
-  pageCount,
-  current,
-  onJump,
-  onClose,
-}: {
-  pageCount: number;
-  current: number;
-  onJump: (page: number) => void;
-  onClose: () => void;
-}) {
-  const [value, setValue] = useState(String(current));
-  return (
-    <div
-      className="absolute inset-0 z-40 grid place-items-center bg-black/70 p-5"
-      onMouseDown={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Go to page"
-        className="w-64 rounded-xl border border-(--reader-border) bg-(--reader-bar) p-4 text-(--reader-text) shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <b className="text-sm">Go to page</b>
-        <form
-          className="mt-3 flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const page = Math.min(Math.max(1, Number(value) || 1), Math.max(1, pageCount));
-            onJump(page);
-          }}
-        >
-          <input
-            // eslint-disable-next-line jsx-a11y/no-autofocus
-            autoFocus
-            aria-label="Page number"
-            inputMode="numeric"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1.5 text-sm"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-amber-400 px-3 py-1.5 text-sm font-semibold text-zinc-950"
-          >
-            Go
-          </button>
-        </form>
-        <p className="mt-2 text-xs text-(--reader-dim)">
-          Page {current} of {pageCount}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// Human-readable label for a KeyboardEvent.code as stored in the engine
-// keyboard map. Unknown codes fall through verbatim so a remapped binding
-// stays visible even when it has no friendly name here.
-function describeKeyCode(code: string): string {
-  if (code === "ArrowRight") return "→";
-  if (code === "ArrowLeft") return "←";
-  if (code === "ArrowUp") return "↑";
-  if (code === "ArrowDown") return "↓";
-  if (code === "Space") return "Space";
-  if (code === "Escape") return "Esc";
-  if (code === "Equal") return "=";
-  if (code === "Minus") return "-";
-  if (code === "NumpadAdd") return "Num+";
-  if (code === "NumpadSubtract") return "Num-";
-  if (code === "Numpad0") return "Num0";
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  return code;
-}
-
-function ShortcutsDialog({
-  engine,
-  mode,
-  onClose,
-}: {
-  engine: MekuriEngine;
-  mode: Mode;
-  onClose: () => void;
-}) {
-  // Engine rows render from the bindings in force, so a remapped dispatcher
-  // and this list cannot drift apart. The dispatcher mirrors the page-turn
-  // pair in right-to-left mode.
-  const map = engine.getKeyboardMap();
-  const engineRows: Array<{ keys: string[]; label: string }> = [
-    { keys: map.nextPage, label: "Next spread" },
-    { keys: map.prevPage, label: "Previous spread" },
-    { keys: map.toggleHUD, label: "Show or hide the menu" },
-    { keys: map.zoomIn, label: "Zoom in" },
-    { keys: map.zoomOut, label: "Zoom out" },
-    { keys: map.resetZoom, label: "Reset zoom" },
-  ];
-  const rows: Array<[string, string]> = [
-    ...engineRows
-      .filter((row) => row.keys.length > 0)
-      .map((row) => [row.keys.map(describeKeyCode).join(" / "), row.label] as [string, string]),
-    ...(mode !== "webtoon"
-      ? ([
-          ["Space / Shift+Space, PgDn / PgUp", "Next / previous spread"],
-          ["Home / End", "First / last page"],
-        ] as Array<[string, string]>)
-      : []),
-    ["N / P", "Next / previous chapter"],
-    ["W", "Cycle single, double, webtoon"],
-    ["G", "Go to page"],
-    ["F", "Fullscreen"],
-    ["Double-tap / double-click center, pinch", "Zoom"],
-    ["Swipe left / right", "Turn pages on touch screens"],
-    ["?", "This list"],
-    ["Esc", "Close dialogs"],
-  ];
-  return (
-    <div
-      className="absolute inset-0 z-40 grid place-items-center bg-black/70 p-5"
-      onMouseDown={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Keyboard shortcuts"
-        className="w-80 max-w-full rounded-xl border border-(--reader-border) bg-(--reader-bar) p-4 text-(--reader-text) shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <b className="text-sm">Shortcuts</b>
-          <button
-            aria-label="Close shortcuts"
-            onClick={onClose}
-            className="rounded-lg p-2 text-(--reader-dim) hover:bg-(--reader-border)"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <dl className="mt-3 space-y-2 text-xs">
-          {rows.map(([keys, action]) => (
-            <div key={keys} className="flex items-center justify-between gap-3">
-              <dt className="shrink-0 rounded bg-(--reader-border) px-1.5 py-0.5 font-mono text-[11px]">
-                {keys}
-              </dt>
-              <dd className="text-right text-(--reader-dim)">{action}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-    </div>
-  );
-}
-
-// Host page body for the prebuilt views: the daemon image with the reader fit
-// styles, image filters, and an inline retry. Load outcomes report straight
-// into the engine failure registry, which the retry pill reads; the retry
-// button itself stays per mount, so a page that remounts after a spread round
-// trip loads again instead of sticking on its earlier failure.
-const HostPageImage = memo(function HostPageImage({
-  page,
-  alt,
-  className,
-  style,
-  loading,
-  priority,
-  attempt,
-  engine,
-  onRetry,
-}: {
-  page: Page;
-  alt: string;
-  className: string;
-  style?: CSSProperties;
-  loading?: "lazy" | "eager";
-  priority?: boolean;
-  attempt: number;
-  engine: MekuriEngine;
-  onRetry: (id: string) => void;
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (attempt > 0) setFailed(false);
-  }, [attempt]);
-  if (failed)
-    return (
-      <button
-        onClick={() => onRetry(page.id)}
-        className={`grid h-64 w-full place-items-center rounded-sm border border-zinc-800 bg-zinc-900 text-sm text-zinc-300 ${className}`}
-      >
-        Retry page
-      </button>
-    );
-  return (
-    <img
-      src={`${api.readerImage(page)}${attempt ? `?retry=${attempt}` : ""}`}
-      alt={alt}
-      onError={() => {
-        setFailed(true);
-        engine.reportPageLoadFailed(
-          page.id,
-          IMAGE_LOAD_FAILED,
-          `Page ${page.index + 1} reported a load error`,
-        );
-      }}
-      onLoad={() => engine.reportPageLoaded(page.id)}
-      className={className}
-      style={style}
-      loading={loading ?? (priority ? "eager" : undefined)}
-      decoding="async"
-      fetchPriority={priority ? "high" : "auto"}
-    />
-  );
-});
-
-function chapterLabel(data: Aggregate, chapterID: string) {
-  const item = data.chapters.find((chapter) => chapter.id === chapterID);
-  return item?.chapterNumber == null ? item?.title || "Special" : `Chapter ${item.chapterNumber}`;
-}
-
-// resumeIndex converts a stored 1-based last-read page into the 0-based page
-// index a reader session opens on. A double-page spread opens on the pair
-// containing that page, and a missing or out-of-range value clamps to the
-// available pages.
-export function resumeIndex(lastReadPage: number | null, pageCount: number, mode: Mode): number {
-  const zeroBased = (lastReadPage ?? 1) - 1;
-  return alignToSpread(zeroBased, pageCount, mode);
 }

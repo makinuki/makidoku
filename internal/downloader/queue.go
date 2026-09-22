@@ -287,7 +287,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		return q.fail(item, err)
 	}
 	if len(pages) == 0 {
-		return q.fail(item, errors.New("source returned no pages"))
+		return q.fail(item, errors.New("the source returned no pages for this chapter"))
 	}
 	sort.SliceStable(pages, func(i, j int) bool { return pages[i].Index < pages[j].Index })
 	done := parseDonePages(item.DonePagesJSON)

@@ -41,7 +41,7 @@ func NewArchiver(root string) *Archiver {
 // pages and metadata have been written successfully.
 func (a *Archiver) Write(request ArchiveRequest) (string, error) {
 	if len(request.Pages) == 0 {
-		return "", errors.New("cannot archive a chapter without pages")
+		return "", errors.New("this chapter has no pages to save")
 	}
 	if request.Format == "" {
 		request.Format = FormatCBZ

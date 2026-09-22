@@ -1,7 +1,7 @@
 export type ReaderMode = "single" | "double" | "webtoon";
 export type ReaderDirection = "ltr" | "rtl";
 export type ReaderFit = "width" | "height" | "screen" | "original";
-export type ReaderNavigation = "default" | "l" | "edge" | "disabled";
+export type ReaderNavigation = "default-manga" | "l-shaped" | "edge-only" | "disabled";
 export type ReaderTheme = "dark" | "amoled" | "paper" | "light";
 
 export type ReaderGlobals = {
@@ -83,13 +83,33 @@ export type ReaderDisplay = {
 };
 
 export const defaultReaderDisplay: ReaderDisplay = {
-  navigation: "default",
+  navigation: "default-manga",
   gap: 8,
   theme: "dark",
   brightness: 100,
   grayscale: false,
   invert: false,
 };
+
+// Retired preset names stored before the rename. The daemon maps them on
+// read, and this mirrors that mapping so stale values never break the reader.
+const retiredNavigationNames: Record<string, ReaderNavigation> = {
+  default: "default-manga",
+  l: "l-shaped",
+  edge: "edge-only",
+};
+
+function toReaderNavigation(value: string | undefined): ReaderNavigation {
+  if (
+    value === "default-manga" ||
+    value === "l-shaped" ||
+    value === "edge-only" ||
+    value === "disabled"
+  ) {
+    return value;
+  }
+  return (value !== undefined ? retiredNavigationNames[value] : undefined) ?? "default-manga";
+}
 
 export function readerDisplayFromSettings(
   settings: Iterable<{ key: string; value: string | number | boolean }>,
@@ -101,10 +121,7 @@ export function readerDisplayFromSettings(
   const gap = Number(values.get("reader.webtoon_gap"));
   const brightness = Number(values.get("reader.brightness"));
   return {
-    navigation:
-      navigation === "l" || navigation === "edge" || navigation === "disabled"
-        ? navigation
-        : "default",
+    navigation: toReaderNavigation(navigation),
     gap: Number.isFinite(gap) ? Math.min(48, Math.max(0, Math.round(gap))) : 8,
     theme: theme === "amoled" || theme === "paper" || theme === "light" ? theme : "dark",
     brightness: Number.isFinite(brightness)

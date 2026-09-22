@@ -9,29 +9,18 @@ import type {
   MekuriZoneMap,
 } from "@makinuki/mekuri/engine";
 import type { Page } from "../../types";
-import type { ReaderDirection, ReaderDisplay, ReaderGlobals, ReaderMode } from "./readerSettings";
+import type { ReaderDirection, ReaderGlobals, ReaderMode } from "./readerSettings";
 
 export const MEKURI_SPREAD_CONFIG = {
   firstPageIsCover: true,
   landscapeThreshold: 1.2,
 } as const;
 
-const ZONE_MAP_BY_NAVIGATION: Record<ReaderDisplay["navigation"], MekuriZoneMap["name"]> = {
-  default: "default-manga",
-  l: "l-shaped",
-  edge: "edge-only",
-  disabled: "disabled",
-};
-
 // Maps the persisted webtoon value onto the continuous mode with a
 // configurable gap. The gapless continuous-webtoon contract stays unused
 // until a host distinguishes the two.
 export function toMekuriMode(mode: ReaderMode): MekuriMode {
   return mode === "webtoon" ? "continuous-vertical" : mode;
-}
-
-export function toZoneMapName(navigation: ReaderDisplay["navigation"]): MekuriZoneMap["name"] {
-  return ZONE_MAP_BY_NAVIGATION[navigation];
 }
 
 export function toMekuriPages(pages: Page[]): MekuriPage[] {

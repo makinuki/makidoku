@@ -3972,9 +3972,12 @@ describe("reader chapter flow", () => {
     expect(await screen.findByRole("button", { name: "Single" })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "?" });
     expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Double-tap / double-click center, Ctrl+wheel, pinch"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Double-tap / double-click center, pinch")).toBeInTheDocument();
+    // Engine rows render from the bindings in force: the paged map turns on
+    // arrows and D/A and toggles the menu on M.
+    expect(screen.getByText("→ / D")).toBeInTheDocument();
+    expect(screen.getByText("Next spread")).toBeInTheDocument();
+    expect(screen.getByText("Show or hide the menu")).toBeInTheDocument();
     // The keys the row used to advertise are not bound, so pressing them must
     // leave the spread untouched.
     fireEvent.keyDown(document, { key: "+" });
@@ -4088,7 +4091,7 @@ describe("reader chapter flow", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/settings") {
-          return Response.json([{ key: "reader.navigation", value: "l" }]);
+          return Response.json([{ key: "reader.navigation", value: "l-shaped" }]);
         }
         if (path === "/api/incognito") return Response.json({ enabled: false });
         if (path.includes(`/api/manga/${mangaId}`) && !init?.method) {

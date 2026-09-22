@@ -48,7 +48,7 @@ describe("reader settings resolution", () => {
     const globals = readerGlobalsFromSettings([{ key: "reader.fit", value: "screen" }]);
     expect(globals.fit).toBe("screen");
     const display = readerDisplayFromSettings([
-      { key: "reader.navigation", value: "edge" },
+      { key: "reader.navigation", value: "edge-only" },
       { key: "reader.webtoon_gap", value: 24 },
       { key: "reader.theme", value: "paper" },
       { key: "reader.brightness", value: 120 },
@@ -56,7 +56,7 @@ describe("reader settings resolution", () => {
       { key: "reader.invert", value: false },
     ]);
     expect(display).toEqual({
-      navigation: "edge",
+      navigation: "edge-only",
       gap: 24,
       theme: "paper",
       brightness: 120,
@@ -65,6 +65,22 @@ describe("reader settings resolution", () => {
     });
     expect(readerImageFilter(display)).toBe("brightness(120%) grayscale(1)");
     expect(readerImageFilter(defaultReaderDisplay)).toBe("none");
+  });
+
+  it("maps retired navigation names onto their presets", () => {
+    expect(readerDisplayFromSettings([{ key: "reader.navigation", value: "l" }]).navigation).toBe(
+      "l-shaped",
+    );
+    expect(
+      readerDisplayFromSettings([{ key: "reader.navigation", value: "edge" }]).navigation,
+    ).toBe("edge-only");
+    expect(
+      readerDisplayFromSettings([{ key: "reader.navigation", value: "default" }]).navigation,
+    ).toBe("default-manga");
+    expect(
+      readerDisplayFromSettings([{ key: "reader.navigation", value: "corners" }]).navigation,
+    ).toBe("default-manga");
+    expect(readerDisplayFromSettings([]).navigation).toBe("default-manga");
   });
 
   it("clamps display preferences to their valid ranges", () => {

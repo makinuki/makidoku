@@ -4,7 +4,6 @@ import {
   buildMekuriEngineOptions,
   toMekuriMode,
   toMekuriPages,
-  toZoneMapName,
 } from "./mekuriAdapter";
 import type { Page } from "../../types";
 import type { MekuriReaderInput } from "./mekuriAdapter";
@@ -19,13 +18,6 @@ describe("mekuri adapter", () => {
     expect(toMekuriMode("single")).toBe("single");
     expect(toMekuriMode("double")).toBe("double");
     expect(toMekuriMode("webtoon")).toBe("continuous-vertical");
-  });
-
-  it("maps each navigation preset onto its zone map name", () => {
-    expect(toZoneMapName("default")).toBe("default-manga");
-    expect(toZoneMapName("l")).toBe("l-shaped");
-    expect(toZoneMapName("edge")).toBe("edge-only");
-    expect(toZoneMapName("disabled")).toBe("disabled");
   });
 
   it("carries page ids into engine pages without dimensions", () => {

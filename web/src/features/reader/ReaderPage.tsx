@@ -15,13 +15,19 @@ import {
 import { api } from "../../api";
 import {
   IMAGE_LOAD_FAILED,
+  ZONE_MAP_PRESETS,
+  attachFullscreen,
+  attachWakeLock,
   type MekuriEngine,
+  type MekuriFullscreenController,
   type MekuriKeyboardMap,
   type MekuriPage,
+  type MekuriWakeLockController,
 } from "@makinuki/mekuri/engine";
 import {
   MekuriPageStatus,
   MekuriViewStyles,
+  MekuriZoneOverlay,
   PagedView,
   WebtoonView,
   type MekuriAltLabeler,
@@ -163,6 +169,7 @@ export function ReaderPage() {
   const overridesRef = useRef<ReaderOverrides>(emptyReaderOverrides);
   const readerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<MekuriEngine | null>(null);
+  const fullscreenRef = useRef<MekuriFullscreenController | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Leaving the reader always lands on a real page: the title details when a
@@ -174,22 +181,34 @@ export function ReaderPage() {
   }, [mangaId, navigate]);
 
   const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => {
-        // Leaving fullscreen is best-effort; the chrome stays usable.
-      });
-      return;
+    const controller = fullscreenRef.current;
+    if (!controller) return;
+    if (controller.isActive()) {
+      void controller.exit().then(() => setIsFullscreen(controller.isActive()));
+    } else {
+      void controller.enter().then(() => setIsFullscreen(controller.isActive()));
     }
-    void readerRef.current?.requestFullscreen().catch(() => {
-      // Fullscreen may be unavailable (iframe permissions, headless test);
-      // the reader remains fully usable inline.
-    });
   }, []);
+  // The reader surface mounts once loading resolves; the controller attaches
+  // then and re-attaches after chapter switches. Native promotion can close
+  // outside this code through the platform gesture, so the state also syncs
+  // off the fullscreenchange event. Exits the module owns itself (its Escape
+  // binding, its exit control) correct the state on the next toggle.
+  const readerReady = pages.length > 0 && !loading;
   useEffect(() => {
-    const sync = () => setIsFullscreen(document.fullscreenElement != null);
+    if (!readerReady) return;
+    const element = readerRef.current;
+    if (!element || fullscreenRef.current) return;
+    const controller = attachFullscreen({ element });
+    fullscreenRef.current = controller;
+    const sync = () => setIsFullscreen(controller.isActive());
     document.addEventListener("fullscreenchange", sync);
-    return () => document.removeEventListener("fullscreenchange", sync);
-  }, []);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      controller.detach();
+      fullscreenRef.current = null;
+    };
+  }, [readerReady]);
   const incognitoRef = useRef(false);
   // Progress writes are blocked until the incognito state has been read once;
   // the 500 ms debounce can otherwise fire before the fetch resolves and leak
@@ -250,59 +269,25 @@ export function ReaderPage() {
       // Private browsing may refuse storage; the session value still applies.
     }
   }, []);
+  const wakeLockRef = useRef<MekuriWakeLockController | null>(null);
+  useEffect(() => {
+    const controller = attachWakeLock();
+    wakeLockRef.current = controller;
+    return () => {
+      controller.detach();
+      wakeLockRef.current = null;
+    };
+  }, []);
   useEffect(() => {
     // Screen wake lock is best-effort: unsupported browsers and denied
     // requests simply leave the reader usable without it.
-    if (!keepAwake || !("wakeLock" in navigator)) return;
-    let cancelled = false;
-    let lock: {
-      release: () => void;
-      addEventListener?: (type: string, listener: () => void) => void;
-    } | null = null;
-    const acquire = () => {
-      try {
-        (
-          navigator as Navigator & {
-            wakeLock: { request: (kind: string) => Promise<unknown> };
-          }
-        ).wakeLock
-          .request("screen")
-          .then((sentinel) => {
-            const next = sentinel as {
-              release: () => void;
-              addEventListener?: (type: string, listener: () => void) => void;
-            };
-            if (cancelled) {
-              next.release();
-              return;
-            }
-            lock = next;
-            // The browser releases the lock when the tab hides; clearing the
-            // reference lets the visibilitychange handler re-acquire it
-            // instead of treating the stale sentinel as still held.
-            next.addEventListener?.("release", () => {
-              lock = null;
-            });
-          })
-          .catch(() => {});
-      } catch {
-        // Older engines throw synchronously; ignore and carry on.
-      }
-    };
-    acquire();
-    const reacquire = () => {
-      if (document.visibilityState === "visible" && !lock) acquire();
-    };
-    document.addEventListener("visibilitychange", reacquire);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", reacquire);
-      try {
-        lock?.release();
-      } catch {
-        // Already released; nothing to do.
-      }
-    };
+    const controller = wakeLockRef.current;
+    if (!controller) return;
+    if (keepAwake) {
+      void controller.enable();
+    } else {
+      void controller.disable();
+    }
   }, [keepAwake]);
 
   // The effective reader settings are the per-title override on top of the
@@ -1156,13 +1141,21 @@ export function ReaderPage() {
                 }
                 className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
               >
-                <option value="default">Default thirds</option>
-                <option value="l">L-shaped</option>
-                <option value="edge">Edges only</option>
+                <option value="default-manga">Default manga</option>
+                <option value="l-shaped">L-shaped</option>
+                <option value="edge-only">Edges only</option>
                 <option value="disabled">Disabled</option>
               </select>
             </label>
-            <ZonePreview navigation={display.navigation} direction={direction} />
+            <div
+              aria-hidden="true"
+              className="relative h-16 w-full overflow-hidden rounded-lg border border-(--reader-border) bg-(--reader-canvas)"
+            >
+              <MekuriZoneOverlay engine={engine} zoneMap={ZONE_MAP_PRESETS[display.navigation]} />
+            </div>
+            {display.navigation === "disabled" && (
+              <p className="text-[11px] text-(--reader-dim)">Zones off. Use keys or swipe.</p>
+            )}
             <label className="block text-xs text-(--reader-dim)">
               Theme
               <select
@@ -1329,7 +1322,9 @@ export function ReaderPage() {
           <Menu size={16} />
         </button>
       </div>
-      {helpOpen && <ShortcutsDialog onClose={() => setHelpOpen(false)} />}
+      {helpOpen && (
+        <ShortcutsDialog engine={engine} mode={mode} onClose={() => setHelpOpen(false)} />
+      )}
       {!menu && (
         <button
           aria-label="Show reader menu"
@@ -1534,73 +1529,62 @@ function GoToDialog({
   );
 }
 
-function ZonePreview({
-  navigation,
-  direction,
-}: {
-  navigation: ReaderNavigation;
-  direction: Direction;
-}) {
-  if (navigation === "disabled") {
-    return <p className="text-[11px] text-(--reader-dim)">Zones off. Use edges, keys, or swipe.</p>;
-  }
-  const prev = direction === "rtl" ? "Next" : "Prev";
-  const next = direction === "rtl" ? "Prev" : "Next";
-  return (
-    <div
-      aria-hidden="true"
-      className="relative h-16 w-full overflow-hidden rounded-lg border border-(--reader-border) bg-(--reader-canvas) text-[10px] text-(--reader-dim)"
-    >
-      {navigation === "l" && (
-        <>
-          <div className="absolute inset-y-0 left-0 grid w-[30%] place-items-center bg-white/5">
-            {prev}
-          </div>
-          <div className="absolute inset-y-0 right-0 grid w-[70%] place-items-center">{next}</div>
-          <div className="absolute inset-x-0 top-0 grid h-4 place-items-center bg-white/10">
-            Menu
-          </div>
-        </>
-      )}
-      {navigation === "edge" && (
-        <>
-          <div className="absolute inset-y-0 left-0 grid w-[15%] place-items-center bg-white/5">
-            {prev}
-          </div>
-          <div className="absolute inset-0 grid place-items-center">Menu</div>
-          <div className="absolute inset-y-0 right-0 grid w-[15%] place-items-center bg-white/5">
-            {next}
-          </div>
-        </>
-      )}
-      {navigation === "default" && (
-        <>
-          <div className="absolute inset-y-0 left-0 grid w-[20%] place-items-center bg-white/5">
-            {prev}
-          </div>
-          <div className="absolute inset-y-0 left-[20%] right-[20%] grid place-items-center">
-            Menu
-          </div>
-          <div className="absolute inset-y-0 right-0 grid w-[20%] place-items-center bg-white/5">
-            {next}
-          </div>
-        </>
-      )}
-    </div>
-  );
+// Human-readable label for a KeyboardEvent.code as stored in the engine
+// keyboard map. Unknown codes fall through verbatim so a remapped binding
+// stays visible even when it has no friendly name here.
+function describeKeyCode(code: string): string {
+  if (code === "ArrowRight") return "→";
+  if (code === "ArrowLeft") return "←";
+  if (code === "ArrowUp") return "↑";
+  if (code === "ArrowDown") return "↓";
+  if (code === "Space") return "Space";
+  if (code === "Escape") return "Esc";
+  if (code === "Equal") return "=";
+  if (code === "Minus") return "-";
+  if (code === "NumpadAdd") return "Num+";
+  if (code === "NumpadSubtract") return "Num-";
+  if (code === "Numpad0") return "Num0";
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  return code;
 }
 
-function ShortcutsDialog({ onClose }: { onClose: () => void }) {
+function ShortcutsDialog({
+  engine,
+  mode,
+  onClose,
+}: {
+  engine: MekuriEngine;
+  mode: Mode;
+  onClose: () => void;
+}) {
+  // Engine rows render from the bindings in force, so a remapped dispatcher
+  // and this list cannot drift apart. The dispatcher mirrors the page-turn
+  // pair in right-to-left mode.
+  const map = engine.getKeyboardMap();
+  const engineRows: Array<{ keys: string[]; label: string }> = [
+    { keys: map.nextPage, label: "Next spread" },
+    { keys: map.prevPage, label: "Previous spread" },
+    { keys: map.toggleHUD, label: "Show or hide the menu" },
+    { keys: map.zoomIn, label: "Zoom in" },
+    { keys: map.zoomOut, label: "Zoom out" },
+    { keys: map.resetZoom, label: "Reset zoom" },
+  ];
   const rows: Array<[string, string]> = [
-    ["← / → or A / D", "Previous / next spread"],
-    ["Space / Shift+Space, PgDn / PgUp", "Next / previous (webtoon scrolls)"],
-    ["Home / End", "First / last page"],
+    ...engineRows
+      .filter((row) => row.keys.length > 0)
+      .map((row) => [row.keys.map(describeKeyCode).join(" / "), row.label] as [string, string]),
+    ...(mode !== "webtoon"
+      ? ([
+          ["Space / Shift+Space, PgDn / PgUp", "Next / previous spread"],
+          ["Home / End", "First / last page"],
+        ] as Array<[string, string]>)
+      : []),
     ["N / P", "Next / previous chapter"],
     ["W", "Cycle single, double, webtoon"],
     ["G", "Go to page"],
     ["F", "Fullscreen"],
-    ["M", "Show or hide the menu"],
-    ["Double-tap / double-click center, Ctrl+wheel, pinch", "Zoom"],
+    ["Double-tap / double-click center, pinch", "Zoom"],
     ["Swipe left / right", "Turn pages on touch screens"],
     ["?", "This list"],
     ["Esc", "Close dialogs"],

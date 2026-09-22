@@ -16,7 +16,7 @@ import {
   type MekuriReadingPosition,
   type MekuriState,
 } from "@makinuki/mekuri/engine";
-import { MEKURI_SPREAD_CONFIG, toMekuriMode, toZoneMapName } from "./mekuriAdapter";
+import { MEKURI_SPREAD_CONFIG, toMekuriMode } from "./mekuriAdapter";
 import type { ReaderDirection, ReaderDisplay, ReaderMode } from "./readerSettings";
 
 export interface UseMekuriReaderArgs {
@@ -52,7 +52,7 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
         direction: args.direction,
         spreadConfig: { ...MEKURI_SPREAD_CONFIG },
       },
-      zoneMap: ZONE_MAP_PRESETS[toZoneMapName(args.navigation)],
+      zoneMap: ZONE_MAP_PRESETS[args.navigation],
     };
     return options;
   }, [enabled]);
@@ -61,7 +61,7 @@ export function useMekuriReader(args: UseMekuriReaderArgs): MekuriEngine | null 
   const resolveImage = args.resolveImage;
   if (live !== null) {
     live.pages = args.pages;
-    live.zoneMap = ZONE_MAP_PRESETS[toZoneMapName(args.navigation)];
+    live.zoneMap = ZONE_MAP_PRESETS[args.navigation];
     live.keyboardMap = args.keyboardMap;
     live.isKeyboardSuppressed = args.suppressKeyboard;
     live.resolveSrc =

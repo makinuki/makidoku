@@ -148,9 +148,9 @@ export const settingOptions: Record<string, Array<{ value: string; label: string
     { value: "original", label: "Original size" },
   ],
   "reader.navigation": [
-    { value: "default", label: "Default thirds" },
-    { value: "l", label: "L-shaped" },
-    { value: "edge", label: "Edges only" },
+    { value: "default-manga", label: "Default manga" },
+    { value: "l-shaped", label: "L-shaped" },
+    { value: "edge-only", label: "Edges only" },
     { value: "disabled", label: "Disabled" },
   ],
   "reader.theme": [

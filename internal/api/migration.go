@@ -13,7 +13,7 @@ import (
 	"github.com/makinuki/makidoku/internal/engine"
 )
 
-var errEngineUnavailable = errors.New("engine is unavailable")
+var errEngineUnavailable = errors.New("sources are unavailable right now; try again later")
 
 type migrationCandidate struct {
 	Source engine.InstalledSource `json:"source"`

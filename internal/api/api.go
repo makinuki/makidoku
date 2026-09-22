@@ -237,7 +237,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(target); err != nil {
-		writeBadRequest(w, "request body is not valid JSON: "+err.Error())
+		writeBadRequest(w, "the request body is not valid JSON: "+err.Error())
 		return false
 	}
 	return true

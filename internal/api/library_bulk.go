@@ -199,7 +199,7 @@ func (s *Server) bulkDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.downloads == nil {
-		writeLocalError(w, http.StatusServiceUnavailable, errors.New("downloads are unavailable"))
+		writeLocalError(w, http.StatusServiceUnavailable, errors.New("downloads are unavailable right now; try again later"))
 		return
 	}
 	result := bulkResult{Failed: []bulkFailure{}}

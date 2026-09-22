@@ -288,19 +288,19 @@ func identifierList() func(any) error {
 }
 
 var definitionList = []Definition{
-	{Key: "appearance.date_format", Type: "string", Default: `"relative"`, Description: "Timestamp display format", Validate: enum("relative", "absolute")},
-	{Key: "library.update_interval", Type: "duration", Default: "86400000000000", Description: "Automatic library update interval in nanoseconds", Validate: number(0, 30*24*60*60*1e9)},
-	{Key: "library.update_on_launch", Type: "boolean", Default: "false", Description: "Run a library update when the daemon starts", Validate: func(v any) error {
+	{Key: "appearance.date_format", Type: "string", Default: `"relative"`, Description: "How dates and times are shown", Validate: enum("relative", "absolute")},
+	{Key: "library.update_interval", Type: "duration", Default: "86400000000000", Description: "How often the library checks for new chapters", Validate: number(0, 30*24*60*60*1e9)},
+	{Key: "library.update_on_launch", Type: "boolean", Default: "false", Description: "Check for new chapters when the app starts", Validate: func(v any) error {
 		if _, ok := v.(bool); !ok {
 			return errors.New("value must be boolean")
 		}
 		return nil
 	}},
-	{Key: "reader.default_mode", Type: "string", Default: `"single"`, Description: "Default reader mode", Validate: enum("single", "double", "webtoon")},
+	{Key: "reader.default_mode", Type: "string", Default: `"single"`, Description: "Reading mode used when a chapter opens", Validate: enum("single", "double", "webtoon")},
 	{Key: "reader.direction", Type: "string", Default: `"ltr"`, Description: "Reader page direction", Validate: enum("ltr", "rtl")},
-	{Key: "reader.fit", Type: "string", Default: `"width"`, Description: "Reader image fit", Validate: enum("width", "height", "screen", "original")},
-	{Key: "reader.navigation", Type: "string", Default: `"default-manga"`, Description: "Paged tap and click zone preset", Validate: enum("default-manga", "l-shaped", "edge-only", "disabled")},
-	{Key: "reader.webtoon_gap", Type: "number", Default: "8", Description: "Gap between webtoon pages in pixels", Validate: number(0, 48)},
+	{Key: "reader.fit", Type: "string", Default: `"width"`, Description: "How pages fit the screen", Validate: enum("width", "height", "screen", "original")},
+	{Key: "reader.navigation", Type: "string", Default: `"default-manga"`, Description: "Tap and click zones in paged reading", Validate: enum("default-manga", "l-shaped", "edge-only", "disabled")},
+	{Key: "reader.webtoon_gap", Type: "number", Default: "8", Description: "Space between pages in webtoon mode, in pixels", Validate: number(0, 48)},
 	{Key: "reader.theme", Type: "string", Default: `"dark"`, Description: "Reader color theme", Validate: enum("dark", "amoled", "paper", "light")},
 	{Key: "reader.brightness", Type: "number", Default: "100", Description: "Reader image brightness in percent", Validate: number(50, 150)},
 	{Key: "reader.grayscale", Type: "boolean", Default: "false", Description: "Show reader images in grayscale", Validate: boolean},
@@ -311,25 +311,25 @@ var definitionList = []Definition{
 		}
 		return nil
 	}},
-	{Key: "downloads.download_ahead", Type: "number", Default: "0", Description: "Number of chapters to download ahead", Validate: number(0, 10)},
-	{Key: "downloads.concurrent", Type: "number", Default: "2", Description: "Concurrent downloads", Validate: number(1, 16)},
-	{Key: "tracking.auto_sync", Type: "boolean", Default: "true", Description: "Drain tracker synchronization jobs", Validate: func(v any) error {
+	{Key: "downloads.download_ahead", Type: "number", Default: "0", Description: "Upcoming chapters to keep downloaded while you read", Validate: number(0, 10)},
+	{Key: "downloads.concurrent", Type: "number", Default: "2", Description: "How many chapters download at the same time", Validate: number(1, 16)},
+	{Key: "tracking.auto_sync", Type: "boolean", Default: "true", Description: "Sync progress with trackers in the background", Validate: func(v any) error {
 		if _, ok := v.(bool); !ok {
 			return errors.New("value must be boolean")
 		}
 		return nil
 	}},
-	{Key: "backup.auto_interval", Type: "duration", Default: "0", Description: "Automatic backup interval in nanoseconds", Validate: number(0, 30*24*60*60*1e9)},
-	{Key: "backup.auto_keep", Type: "number", Default: "5", Description: "Number of automatic backups to retain", Validate: number(1, 100)},
-	{Key: "browse.hide_nsfw", Type: "boolean", Default: "false", Description: "Hide NSFW sources from Browse", Validate: func(v any) error {
+	{Key: "backup.auto_interval", Type: "duration", Default: "0", Description: "How often automatic backups are created", Validate: number(0, 30*24*60*60*1e9)},
+	{Key: "backup.auto_keep", Type: "number", Default: "5", Description: "How many automatic backups to keep", Validate: number(1, 100)},
+	{Key: "browse.hide_nsfw", Type: "boolean", Default: "false", Description: "Adult (NSFW) sources do not appear in Browse", Validate: func(v any) error {
 		if _, ok := v.(bool); !ok {
 			return errors.New("value must be boolean")
 		}
 		return nil
 	}},
 	{Key: "privacy.incognito", Type: "boolean", Default: "false", Description: "Start in incognito mode, which does not record reading activity", Validate: boolean},
-	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "Daemon log level", Validate: enum("debug", "info", "warn", "error")},
-	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Processed image cache retention in days", Validate: number(1, 3650)},
+	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "How much detail is written to the log", Validate: enum("debug", "info", "warn", "error")},
+	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Days to keep processed page images", Validate: number(1, 3650)},
 	{Key: "library.view.sort", Type: "string", Default: `"recent"`, Description: "Library ordering", Validate: enum("recent", "title", "added", "last_read", "unread"), Hidden: true},
 	{Key: "library.view.sort_direction", Type: "string", Default: `"desc"`, Description: "Library ordering direction", Validate: enum("asc", "desc"), Hidden: true},
 	{Key: "library.view.card_size", Type: "string", Default: `"medium"`, Description: "Library card size", Validate: enum("small", "medium", "large", "list", "cover-only"), Hidden: true},

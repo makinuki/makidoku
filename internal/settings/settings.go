@@ -56,6 +56,7 @@ func (s *Service) Get(key string) (string, error) {
 	} else {
 		value = setting.Value
 	}
+	value = migrateValue(key, value)
 	s.mu.Lock()
 	if s.cache == nil {
 		s.cache = map[string]string{}
@@ -205,6 +206,34 @@ func boolean(value any) error {
 	return nil
 }
 
+// navigationPresetRenames maps retired tap zone preset names onto their
+// replacements. Stored values predate the rename and keep working by mapping
+// on read; writes validate against the new vocabulary only.
+var navigationPresetRenames = map[string]string{
+	"default": "default-manga",
+	"l":       "l-shaped",
+	"edge":    "edge-only",
+}
+
+func migrateValue(key, value string) string {
+	if key != "reader.navigation" {
+		return value
+	}
+	var name string
+	if err := json.Unmarshal([]byte(value), &name); err != nil {
+		return value
+	}
+	renamed, ok := navigationPresetRenames[name]
+	if !ok {
+		return value
+	}
+	migrated, err := json.Marshal(renamed)
+	if err != nil {
+		return value
+	}
+	return string(migrated)
+}
+
 // listOf accepts a comma-separated selection drawn from values. An empty
 // string is a valid selection and means nothing is selected.
 func listOf(values ...string) func(any) error {
@@ -270,7 +299,7 @@ var definitionList = []Definition{
 	{Key: "reader.default_mode", Type: "string", Default: `"single"`, Description: "Default reader mode", Validate: enum("single", "double", "webtoon")},
 	{Key: "reader.direction", Type: "string", Default: `"ltr"`, Description: "Reader page direction", Validate: enum("ltr", "rtl")},
 	{Key: "reader.fit", Type: "string", Default: `"width"`, Description: "Reader image fit", Validate: enum("width", "height", "screen", "original")},
-	{Key: "reader.navigation", Type: "string", Default: `"default"`, Description: "Paged tap and click zone preset", Validate: enum("default", "l", "edge", "disabled")},
+	{Key: "reader.navigation", Type: "string", Default: `"default-manga"`, Description: "Paged tap and click zone preset", Validate: enum("default-manga", "l-shaped", "edge-only", "disabled")},
 	{Key: "reader.webtoon_gap", Type: "number", Default: "8", Description: "Gap between webtoon pages in pixels", Validate: number(0, 48)},
 	{Key: "reader.theme", Type: "string", Default: `"dark"`, Description: "Reader color theme", Validate: enum("dark", "amoled", "paper", "light")},
 	{Key: "reader.brightness", Type: "number", Default: "100", Description: "Reader image brightness in percent", Validate: number(50, 150)},

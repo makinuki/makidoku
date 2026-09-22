@@ -43,13 +43,13 @@ func TestReaderDisplaySettingsValidate(t *testing.T) {
 	defer handle.Close()
 	service := New(db.NewRepository(handle))
 	valid := map[string]string{
-		"reader.fit":        `"screen"`,
-		"reader.navigation": `"edge"`,
+		"reader.fit":         `"screen"`,
+		"reader.navigation":  `"edge-only"`,
 		"reader.webtoon_gap": "16",
-		"reader.theme":      `"paper"`,
-		"reader.brightness": "120",
-		"reader.grayscale":  "true",
-		"reader.invert":     "true",
+		"reader.theme":       `"paper"`,
+		"reader.brightness":  "120",
+		"reader.grayscale":   "true",
+		"reader.invert":      "true",
 	}
 	for key, value := range valid {
 		if err := service.Set(key, value); err != nil {
@@ -57,15 +57,46 @@ func TestReaderDisplaySettingsValidate(t *testing.T) {
 		}
 	}
 	invalid := map[string]string{
-		"reader.fit":        `"cover"`,
-		"reader.navigation": `"corners"`,
+		"reader.fit":         `"cover"`,
+		"reader.navigation":  `"corners"`,
 		"reader.webtoon_gap": "64",
-		"reader.theme":      `"sepia"`,
-		"reader.brightness": "40",
+		"reader.theme":       `"sepia"`,
+		"reader.brightness":  "40",
 	}
 	for key, value := range invalid {
 		if err := service.Set(key, value); err == nil {
 			t.Fatalf("accepted invalid %s = %s", key, value)
+		}
+	}
+	// Retired preset names no longer validate for writes.
+	for _, retired := range []string{`"default"`, `"l"`, `"edge"`} {
+		if err := service.Set("reader.navigation", retired); err == nil {
+			t.Fatalf("accepted retired navigation preset = %s", retired)
+		}
+	}
+}
+
+func TestReaderNavigationMigratesStoredPresets(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "navigation-migration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	repo := db.NewRepository(handle)
+	migrated := map[string]string{
+		`"default"`:  `"default-manga"`,
+		`"l"`:        `"l-shaped"`,
+		`"edge"`:     `"edge-only"`,
+		`"disabled"`: `"disabled"`,
+	}
+	for stored, want := range migrated {
+		if err := repo.SetSetting("reader.navigation", stored); err != nil {
+			t.Fatal(err)
+		}
+		// The service caches reads; a fresh instance observes the stored row.
+		value, err := New(repo).Get("reader.navigation")
+		if err != nil || value != want {
+			t.Fatalf("stored %s reads as %q, err = %v", stored, value, err)
 		}
 	}
 }

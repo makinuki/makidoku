@@ -1094,6 +1094,49 @@ func TestMangaReaderOverridesRoundTrip(t *testing.T) {
 	}
 }
 
+// Per-title chapter list presentation round-trips, survives an unrelated
+// metadata refresh, and resets to the client defaults with empty values.
+func TestMangaChapterViewRoundTrip(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "chapter-view", Title: "Chapter View", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manga.ChapterSort != "" || manga.ChapterFilter != "" || manga.ChapterLanguage != "" {
+		t.Fatalf("new manga carried chapter view: %+v", manga)
+	}
+	updated, err := repo.UpdateMangaChapterView(manga.ID, "number-asc", "unread", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ChapterSort != "number-asc" || updated.ChapterFilter != "unread" || updated.ChapterLanguage != "en" {
+		t.Fatalf("stored chapter view = %+v", updated)
+	}
+	refreshed, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "chapter-view", Title: "Chapter View Renamed", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.ChapterSort != "number-asc" || refreshed.ChapterFilter != "unread" || refreshed.ChapterLanguage != "en" {
+		t.Fatalf("refresh dropped the chapter view: %+v", refreshed)
+	}
+	cleared, err := repo.UpdateMangaChapterView(manga.ID, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.ChapterSort != "" || cleared.ChapterFilter != "" || cleared.ChapterLanguage != "" {
+		t.Fatalf("cleared chapter view = %+v", cleared)
+	}
+	if _, err := repo.UpdateMangaChapterView(manga.ID, "random", "", ""); err == nil {
+		t.Fatal("unsupported chapter sort was accepted")
+	}
+	if _, err := repo.UpdateMangaChapterView(manga.ID, "", "everything", ""); err == nil {
+		t.Fatal("unsupported chapter filter was accepted")
+	}
+	if _, err := repo.UpdateMangaChapterView("missing", "number-asc", "", ""); err == nil {
+		t.Fatal("chapter view for an unknown title was accepted")
+	}
+}
+
 // The statistics payload reports grouped counters built from local state, plus
 // a per-title reading breakdown ordered by recorded time.
 func TestReadingStatsGroups(t *testing.T) {

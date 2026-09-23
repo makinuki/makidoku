@@ -362,7 +362,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at,
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.chapter_sort,m.chapter_filter,m.chapter_language,m.created_at,m.updated_at,m.details_fetched_at,
 		m.custom_title,m.custom_artist,m.custom_author,m.custom_description,m.custom_genres,m.custom_status,m.custom_cover_url,
 		m.notes,m.memo,m.source_version,m.update_strategy,m.favorite_modified_at,m.initialized,m.excluded_scanlators,m.chapter_flags
 		FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
@@ -490,7 +490,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 
 func (r *Repository) ListLibraryBySource(sourceID string) ([]Manga, error) {
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.created_at,m.updated_at,m.details_fetched_at,
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.chapter_sort,m.chapter_filter,m.chapter_language,m.created_at,m.updated_at,m.details_fetched_at,
 		m.custom_title,m.custom_artist,m.custom_author,m.custom_description,m.custom_genres,m.custom_status,m.custom_cover_url,
 		m.notes,m.memo,m.source_version,m.update_strategy,m.favorite_modified_at,m.initialized,m.excluded_scanlators,m.chapter_flags
 		FROM manga m WHERE m.in_library=1 AND m.source_id=? ORDER BY m.title`, strings.TrimSpace(sourceID))
@@ -756,7 +756,7 @@ func (r *Repository) GetManga(id string) (Manga, error) {
 	var manga Manga
 	err := r.db.Get(&manga, `SELECT id, source_id, title,
 		alt_titles, description, authors, artists, genres, status, cover_url,
-		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, reader_mode, reader_direction, reader_fit, created_at, updated_at,
+		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, reader_mode, reader_direction, reader_fit, chapter_sort, chapter_filter, chapter_language, created_at, updated_at,
 		details_fetched_at,
 		custom_title, custom_artist, custom_author, custom_description, custom_genres, custom_status, custom_cover_url,
 		notes, memo, source_version, update_strategy, favorite_modified_at, initialized, excluded_scanlators, chapter_flags
@@ -803,6 +803,44 @@ func validateReaderValue(value *string, allowed ...string) error {
 		}
 	}
 	return fmt.Errorf("unsupported reader value %q", *value)
+}
+
+// UpdateMangaChapterView records the per-title chapter list presentation. An
+// empty value clears the field so the client falls back to its defaults.
+func (r *Repository) UpdateMangaChapterView(id, sort, filter, language string) (Manga, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Manga{}, errors.New("manga id is required")
+	}
+	if err := validateChapterViewValue(sort, "", "number-desc", "number-asc", "source"); err != nil {
+		return Manga{}, err
+	}
+	if err := validateChapterViewValue(filter, "", "all", "unread", "downloaded", "bookmarked"); err != nil {
+		return Manga{}, err
+	}
+	if len(language) > 32 {
+		return Manga{}, fmt.Errorf("unsupported chapter language %q", language)
+	}
+	result, err := r.db.Exec(`UPDATE manga SET chapter_sort=?, chapter_filter=?, chapter_language=?, updated_at=? WHERE id=?`,
+		strings.TrimSpace(sort), strings.TrimSpace(filter), strings.TrimSpace(language), time.Now().Unix(), id)
+	if err != nil {
+		return Manga{}, err
+	}
+	if err := requireChange(result, "update chapter view"); err != nil {
+		return Manga{}, err
+	}
+	return r.GetManga(id)
+}
+
+// validateChapterViewValue reports whether a chapter list presentation value
+// is permitted. An empty value is always permitted and clears the field.
+func validateChapterViewValue(value string, allowed ...string) error {
+	for _, item := range allowed {
+		if value == item {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported chapter view value %q", value)
 }
 
 // SetMangaDetailsFetched stamps the last successful full-details fetch.

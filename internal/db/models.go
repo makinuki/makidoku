@@ -74,8 +74,13 @@ type Manga struct {
 	ReaderMode      *string `db:"reader_mode" json:"readerMode,omitempty"`
 	ReaderDirection *string `db:"reader_direction" json:"readerDirection,omitempty"`
 	ReaderFit       *string `db:"reader_fit" json:"readerFit,omitempty"`
-	CreatedAt       int64   `db:"created_at" json:"createdAt"`
-	UpdatedAt       int64   `db:"updated_at" json:"updatedAt"`
+	// Chapter list presentation persists per title. An empty column means
+	// unset, and the client falls back to its defaults.
+	ChapterSort     string `db:"chapter_sort" json:"chapterSort,omitempty"`
+	ChapterFilter   string `db:"chapter_filter" json:"chapterFilter,omitempty"`
+	ChapterLanguage string `db:"chapter_language" json:"chapterLanguage,omitempty"`
+	CreatedAt       int64  `db:"created_at" json:"createdAt"`
+	UpdatedAt       int64  `db:"updated_at" json:"updatedAt"`
 	// DetailsFetchedAt records when full details were last pulled from the
 	// plugin. Search-level records stay NULL until the first details read.
 	DetailsFetchedAt *int64 `db:"details_fetched_at" json:"detailsFetchedAt,omitempty"`

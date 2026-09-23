@@ -27,6 +27,10 @@ type fakeDownloads struct {
 	canceledID int64
 	retriedID  int64
 	cleared    int64
+	pausedAll  bool
+	cancelAll  int64
+	cancelIDs  []int64
+	order      []int64
 	events     chan downloader.Event
 }
 
@@ -42,8 +46,20 @@ func (f *fakeDownloads) EnqueueManga(ctx context.Context, mangaID string, select
 }
 func (f *fakeDownloads) Pause(id int64) error  { f.pausedID = id; return nil }
 func (f *fakeDownloads) Resume(id int64) error { f.resumedID = id; return nil }
-func (f *fakeDownloads) Cancel(id int64) error { f.canceledID = id; return nil }
-func (f *fakeDownloads) Retry(id int64) error  { f.retriedID = id; return nil }
+func (f *fakeDownloads) Cancel(id int64) error {
+	f.canceledID = id
+	f.cancelIDs = append(f.cancelIDs, id)
+	return nil
+}
+func (f *fakeDownloads) Retry(id int64) error      { f.retriedID = id; return nil }
+func (f *fakeDownloads) PauseAll()                 { f.pausedAll = true }
+func (f *fakeDownloads) ResumeAll()                { f.pausedAll = false }
+func (f *fakeDownloads) Paused() bool              { return f.pausedAll }
+func (f *fakeDownloads) CancelAll() (int64, error) { return f.cancelAll, nil }
+func (f *fakeDownloads) Reorder(ids []int64) error {
+	f.order = append([]int64(nil), ids...)
+	return nil
+}
 func (f *fakeDownloads) ClearFinished() (int64, error) {
 	f.items = nil
 	return f.cleared, nil
@@ -131,6 +147,91 @@ func TestClearFinishedDownloads(t *testing.T) {
 	}
 	if payload.Removed != 3 {
 		t.Fatalf("removed = %d", payload.Removed)
+	}
+}
+
+func TestDownloadPauseAllRoutes(t *testing.T) {
+	downloads := newFakeDownloads()
+	downloads.items = []db.DownloadQueueItem{{DownloadQueue: db.DownloadQueue{ID: 7, Status: db.QueuePending}}}
+	handler := downloadRouter(downloads)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/pause-all", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("pause-all status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var snapshot downloadSnapshot
+	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if !downloads.pausedAll || !snapshot.Paused || len(snapshot.Items) != 1 {
+		t.Fatalf("pause-all = %+v, paused flag = %v", snapshot, downloads.pausedAll)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/resume-all", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("resume-all status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if downloads.pausedAll || snapshot.Paused {
+		t.Fatalf("resume-all = %+v, paused flag = %v", snapshot, downloads.pausedAll)
+	}
+}
+
+func TestDownloadCancelRoutes(t *testing.T) {
+	downloads := newFakeDownloads()
+	downloads.cancelAll = 3
+	handler := downloadRouter(downloads)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/cancel-all", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cancel-all status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/cancel", strings.NewReader(`{"itemIds":[4,5]}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if len(downloads.cancelIDs) != 2 || downloads.cancelIDs[0] != 4 || downloads.cancelIDs[1] != 5 {
+		t.Fatalf("cancel ids = %v", downloads.cancelIDs)
+	}
+
+	// Empty, non-positive, and malformed batches are rejected before the queue
+	// is touched.
+	for _, body := range []string{`{"itemIds":[]}`, `{"itemIds":[0]}`, `{"itemIds":["x"]}`} {
+		recorder = httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/cancel", strings.NewReader(body)))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("body %s status = %d", body, recorder.Code)
+		}
+	}
+}
+
+func TestDownloadReorderRoute(t *testing.T) {
+	downloads := newFakeDownloads()
+	handler := downloadRouter(downloads)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/reorder", strings.NewReader(`{"itemIds":[9,3,7]}`)))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("reorder status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if len(downloads.order) != 3 || downloads.order[0] != 9 || downloads.order[1] != 3 || downloads.order[2] != 7 {
+		t.Fatalf("order = %v", downloads.order)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/reorder", strings.NewReader(`{"itemIds":[]}`)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("empty reorder status = %d", recorder.Code)
+	}
+	if len(downloads.order) != 3 {
+		t.Fatalf("rejected reorder changed the order: %v", downloads.order)
 	}
 }
 

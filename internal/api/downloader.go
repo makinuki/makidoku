@@ -15,14 +15,20 @@ import (
 )
 
 type downloadSnapshot struct {
-	Items []db.DownloadQueueItem `json:"items"`
-	Stats downloader.Stats       `json:"stats"`
+	Items  []db.DownloadQueueItem `json:"items"`
+	Stats  downloader.Stats       `json:"stats"`
+	Paused bool                   `json:"paused"`
 }
 
 func (s *Server) mountDownloads(r chi.Router) {
 	r.Get("/download", s.downloadSnapshot)
 	r.Post("/download", s.enqueueDownload)
 	r.Post("/download/clear", s.clearFinishedDownloads)
+	r.Post("/download/pause-all", s.pauseAllDownloads)
+	r.Post("/download/resume-all", s.resumeAllDownloads)
+	r.Post("/download/cancel-all", s.cancelAllDownloads)
+	r.Post("/download/cancel", s.cancelDownloads)
+	r.Post("/download/reorder", s.reorderDownloads)
 	r.Get("/download/events", s.downloadEvents)
 	r.Route("/download/{itemID}", func(item chi.Router) {
 		item.Post("/pause", s.pauseDownload)
@@ -45,7 +51,81 @@ func (s *Server) clearFinishedDownloads(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]int64{"removed": removed})
 }
 
-func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {
+// pauseAllDownloads and resumeAllDownloads control the downloader itself: a
+// paused worker stops claiming items and returns the one it was working on to
+// the queue with its progress.
+func (s *Server) pauseAllDownloads(w http.ResponseWriter, r *http.Request) {
+	s.downloads.PauseAll()
+	s.writeDownloadSnapshot(w)
+}
+
+func (s *Server) resumeAllDownloads(w http.ResponseWriter, r *http.Request) {
+	s.downloads.ResumeAll()
+	s.writeDownloadSnapshot(w)
+}
+
+// cancelAllDownloads cancels every row that is still active and answers with
+// the updated queue so the client does not need a follow-up read.
+func (s *Server) cancelAllDownloads(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.downloads.CancelAll(); err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeDownloadSnapshot(w)
+}
+
+// cancelDownloads cancels the listed queue items. The batch is best effort:
+// rows that finished or were cleared meanwhile are skipped instead of failing
+// the whole request.
+func (s *Server) cancelDownloads(w http.ResponseWriter, r *http.Request) {
+	ids, ok := decodeQueueItemIDs(w, r)
+	if !ok {
+		return
+	}
+	for _, id := range ids {
+		_ = s.downloads.Cancel(id)
+	}
+	s.writeDownloadSnapshot(w)
+}
+
+// reorderDownloads stores the queue order given as item ids in display order.
+func (s *Server) reorderDownloads(w http.ResponseWriter, r *http.Request) {
+	ids, ok := decodeQueueItemIDs(w, r)
+	if !ok {
+		return
+	}
+	if err := s.downloads.Reorder(ids); err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// decodeQueueItemIDs reads and validates the {itemIds: [...]} body shared by
+// the batch download endpoints.
+func decodeQueueItemIDs(w http.ResponseWriter, r *http.Request) ([]int64, bool) {
+	var body struct {
+		ItemIDs []int64 `json:"itemIds"`
+	}
+	if !decodeBody(w, r, &body) {
+		return nil, false
+	}
+	if len(body.ItemIDs) == 0 {
+		writeBadRequest(w, "itemIds must list at least one queue item")
+		return nil, false
+	}
+	for _, id := range body.ItemIDs {
+		if id < 1 {
+			writeBadRequest(w, "itemIds must be positive integers")
+			return nil, false
+		}
+	}
+	return body.ItemIDs, true
+}
+
+// writeDownloadSnapshot answers with the queue screen payload: every queue row,
+// the aggregate counters, and the downloader paused state.
+func (s *Server) writeDownloadSnapshot(w http.ResponseWriter) {
 	items, err := s.downloads.List()
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
@@ -54,7 +134,13 @@ func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []db.DownloadQueueItem{}
 	}
-	writeJSON(w, http.StatusOK, downloadSnapshot{Items: items, Stats: s.downloads.Stats()})
+	writeJSON(w, http.StatusOK, downloadSnapshot{
+		Items: items, Stats: s.downloads.Stats(), Paused: s.downloads.Paused(),
+	})
+}
+
+func (s *Server) downloadSnapshot(w http.ResponseWriter, r *http.Request) {
+	s.writeDownloadSnapshot(w)
 }
 
 // EnqueueNewChapters queues newly discovered chapters for a title that opted
@@ -106,7 +192,9 @@ func (s *Server) enqueueDownload(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []db.DownloadQueueItem{}
 	}
-	writeJSON(w, http.StatusCreated, downloadSnapshot{Items: items, Stats: s.downloads.Stats()})
+	writeJSON(w, http.StatusCreated, downloadSnapshot{
+		Items: items, Stats: s.downloads.Stats(), Paused: s.downloads.Paused(),
+	})
 }
 
 func (s *Server) pauseDownload(w http.ResponseWriter, r *http.Request) {

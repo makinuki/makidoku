@@ -29,6 +29,11 @@ type downloadQueue interface {
 	Cancel(int64) error
 	Retry(int64) error
 	ClearFinished() (int64, error)
+	PauseAll()
+	ResumeAll()
+	Paused() bool
+	CancelAll() (int64, error)
+	Reorder([]int64) error
 	Subscribe() (<-chan downloader.Event, func())
 }
 

@@ -527,6 +527,9 @@ type DownloadQueue struct {
 	DownloadedPages int     `db:"downloaded_pages" json:"downloadedPages"`
 	ErrorMessage    *string `db:"error_message" json:"errorMessage"`
 	QueuedAt        int64   `db:"queued_at" json:"queuedAt"`
+	// Position is the user-visible queue order; the worker claims the lowest
+	// position first.
+	Position int64 `db:"position" json:"position"`
 }
 
 // DownloadQueueItem includes the source, manga and chapter data needed by a
@@ -547,6 +550,7 @@ type DownloadQueueItem struct {
 	Volume           *int64   `db:"volume" json:"volume,omitempty"`
 	ChapterTitle     *string  `db:"chapter_title" json:"chapterTitle,omitempty"`
 	Language         *string  `db:"language" json:"language,omitempty"`
+	UploadedAt       *int64   `db:"uploaded_at" json:"uploadedAt,omitempty"`
 	Scanlator        *string  `db:"scanlator" json:"scanlator,omitempty"`
 	// DonePagesJSON holds the JSON-encoded page indexes already persisted in
 	// a previous pass so an interrupted download resumes instead of

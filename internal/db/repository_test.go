@@ -1190,3 +1190,270 @@ func TestReadingStatsGroups(t *testing.T) {
 		t.Fatalf("top titles = %+v", stats.TopTitles)
 	}
 }
+
+func TestQueueOrderMigrationKeepsExistingRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "makidoku.db")
+	handle, err := Open(path)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if _, err := handle.Exec(`INSERT INTO sources(
+		id, name, version, abi_version, lang, base_url, wasm_path, installed_at
+	) VALUES('mangadex', 'MangaDex', '1.0.0', 1, 'multi', 'https://mangadex.org', 'mangadex.wasm', ?)`, time.Now().Unix()); err != nil {
+		t.Fatalf("insert source: %v", err)
+	}
+	repo := NewRepository(handle)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "queue-upgrade", Title: "Queue Upgrade",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstChapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "upgrade-0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.EnqueueChapter(firstChapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondChapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "upgrade-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.EnqueueChapter(secondChapter.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Roll the schema back to its state before the ordering migration and
+	// reopen the file: applying the migration again must backfill the existing
+	// rows in place instead of failing or resetting the queue.
+	if _, err := handle.Exec(`ALTER TABLE download_queue DROP COLUMN position`); err != nil {
+		t.Fatalf("drop position: %v", err)
+	}
+	if _, err := handle.Exec(`DELETE FROM _migrations WHERE name = 'migrations/000021_download_queue_order.up.sql'`); err != nil {
+		t.Fatalf("clear migration record: %v", err)
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+
+	handle, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen database: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	repo = NewRepository(handle)
+	items, err := repo.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].ID != first.ID || items[1].ID != second.ID {
+		t.Fatalf("queue items = %+v", items)
+	}
+	for _, item := range items {
+		if item.Position != item.ID {
+			t.Fatalf("position = %d, want %d", item.Position, item.ID)
+		}
+	}
+}
+
+// listQueueIDs returns the queue row ids in stored order, the order both the
+// queue screen and the worker follow.
+func listQueueIDs(t *testing.T, repo *Repository) []int64 {
+	t.Helper()
+	items, err := repo.ListQueue()
+	if err != nil {
+		t.Fatalf("list queue: %v", err)
+	}
+	ids := make([]int64, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+func assertIDOrder(t *testing.T, ids, want []int64) {
+	t.Helper()
+	if len(ids) != len(want) {
+		t.Fatalf("queue ids = %v, want %v", ids, want)
+	}
+	for index := range want {
+		if ids[index] != want[index] {
+			t.Fatalf("queue ids = %v, want %v", ids, want)
+		}
+	}
+}
+
+func TestQueueOrderIsExplicitAndPersisted(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "queue-order", Title: "Queue Order",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := make([]DownloadQueueItem, 0, 3)
+	for index, sourceID := range []string{"order-0", "order-1", "order-2"} {
+		chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: sourceID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		item, err := repo.EnqueueChapter(chapter.ID)
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		// Every enqueue appends behind the existing rows.
+		if item.Position != int64(index+1) {
+			t.Fatalf("position = %d, want %d", item.Position, index+1)
+		}
+		items = append(items, item)
+	}
+	assertIDOrder(t, listQueueIDs(t, repo), []int64{items[0].ID, items[1].ID, items[2].ID})
+
+	// Reordering rewrites the listing order and the claim order together.
+	if err := repo.SetQueueOrder([]int64{items[2].ID, items[0].ID, items[1].ID}); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	assertIDOrder(t, listQueueIDs(t, repo), []int64{items[2].ID, items[0].ID, items[1].ID})
+	claimed, err := repo.ClaimNextQueueItem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != items[2].ID {
+		t.Fatalf("claimed = %+v", claimed)
+	}
+
+	// A canceled row that is queued again moves to the end of the queue.
+	if err := repo.CancelQueueItem(items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := repo.EnqueueChapter(items[0].ChapterID)
+	if err != nil {
+		t.Fatalf("re-enqueue: %v", err)
+	}
+	if requeued.Status != QueuePending || requeued.Position <= claimed.Position {
+		t.Fatalf("re-enqueued = %+v", requeued)
+	}
+	assertIDOrder(t, listQueueIDs(t, repo), []int64{items[2].ID, items[1].ID, requeued.ID})
+}
+
+func TestCancelAllQueueItemsAndRelease(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "queue-cancel", Title: "Queue Cancel",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapterOne, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "cancel-0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.EnqueueChapter(chapterOne.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chapterTwo, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: "cancel-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.EnqueueChapter(chapterTwo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Releasing a claimed item returns it to the queue with its progress.
+	claimed, err := repo.ClaimNextQueueItem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != first.ID {
+		t.Fatalf("claimed = %+v", claimed)
+	}
+	if err := repo.UpdateQueueProgress(claimed.ID, 4, 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReleaseQueueItem(claimed.ID); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	released, err := repo.GetQueueItem(claimed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.Status != QueuePending || released.Progress != 50 || released.DownloadedPages != 2 {
+		t.Fatalf("released = %+v", released)
+	}
+
+	// Cancel all flips every active row and reports them in queue order.
+	ids, err := repo.CancelAllQueueItems()
+	if err != nil {
+		t.Fatalf("cancel all: %v", err)
+	}
+	assertIDOrder(t, ids, []int64{first.ID, second.ID})
+	items, err := repo.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Status != QueueCanceled {
+			t.Fatalf("status = %q, want %q", item.Status, QueueCanceled)
+		}
+	}
+
+	// A release must not resurrect a canceled row, and a second cancel-all
+	// with nothing active reports no ids.
+	if err := repo.ReleaseQueueItem(claimed.ID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetQueueItem(claimed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != QueueCanceled {
+		t.Fatalf("status = %q, want %q", stored.Status, QueueCanceled)
+	}
+	ids, err = repo.CancelAllQueueItems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("second cancel all = %v", ids)
+	}
+}
+
+func TestListQueueCarriesChapterUploadDate(t *testing.T) {
+	repo := testRepository(t)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "queue-upload", Title: "Queue Upload",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded := time.Now().Add(-2 * time.Hour).Unix()
+	chapter, err := repo.UpsertChapter(Chapter{
+		MangaID: manga.ID, SourceChapterID: "uploaded", UploadedAt: &uploaded,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := repo.EnqueueChapter(chapter.ID)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if item.UploadedAt == nil || *item.UploadedAt != uploaded {
+		t.Fatalf("enqueue upload date = %v, want %d", item.UploadedAt, uploaded)
+	}
+	items, err := repo.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].UploadedAt == nil || *items[0].UploadedAt != uploaded {
+		t.Fatalf("queue items = %+v", items)
+	}
+}

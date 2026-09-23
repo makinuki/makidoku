@@ -1506,8 +1506,9 @@ func (r *Repository) EnqueueChapter(chapterID string) (DownloadQueueItem, error)
 	now := time.Now().Unix()
 	_, err := r.db.Exec(`INSERT INTO download_queue(
 		chapter_id, status, progress, total_pages, downloaded_pages,
-		error_message, queued_at
-	) VALUES(?, ?, 0, 0, 0, NULL, ?)
+		error_message, queued_at, position
+	) VALUES(?, ?, 0, 0, 0, NULL, ?,
+		(SELECT COALESCE(MAX(position), 0) + 1 FROM download_queue))
 	ON CONFLICT(chapter_id) DO UPDATE SET
 		status = CASE
 			WHEN download_queue.status IN (?, ?) THEN excluded.status
@@ -1532,11 +1533,16 @@ func (r *Repository) EnqueueChapter(chapterID string) (DownloadQueueItem, error)
 		queued_at = CASE
 			WHEN download_queue.status IN (?, ?) THEN excluded.queued_at
 			ELSE download_queue.queued_at
+		END,
+		position = CASE
+			WHEN download_queue.status IN (?, ?) THEN excluded.position
+			ELSE download_queue.position
 		END`,
 		chapterID, QueuePending, now,
 		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled,
 		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled,
-		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled)
+		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled,
+		QueueFailed, QueueCanceled)
 	if err != nil {
 		return DownloadQueueItem{}, fmt.Errorf("enqueue chapter %s: %w", chapterID, err)
 	}
@@ -1662,6 +1668,16 @@ func (r *Repository) RetryQueueItem(id int64) error {
 	return r.transitionQueueItem(id, QueuePending, QueueFailed)
 }
 
+// ReleaseQueueItem returns a claimed item to the pending state so it can be
+// picked up later. Progress columns stay untouched, which lets a released item
+// resume from its staged pages. Rows that are no longer downloading (for
+// example canceled meanwhile) are left as they are.
+func (r *Repository) ReleaseQueueItem(id int64) error {
+	_, err := r.db.Exec(`UPDATE download_queue SET status = ? WHERE id = ? AND status = ?`,
+		QueuePending, id, QueueDownloading)
+	return err
+}
+
 // ClearFinishedQueueItems deletes terminal rows (completed, canceled and
 // failed). Terminal rows are history only; deleting them touches no
 // downloaded chapter state.
@@ -1672,6 +1688,58 @@ func (r *Repository) ClearFinishedQueueItems() (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// CancelAllQueueItems cancels every row that is still active and returns the
+// affected ids in queue order, so callers can publish one event per item.
+func (r *Repository) CancelAllQueueItems() ([]int64, error) {
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ids []int64
+	if err := tx.Select(&ids, `SELECT id FROM download_queue
+		WHERE status IN (?, ?, ?, ?) ORDER BY position, queued_at, id`,
+		QueuePending, QueueDownloading, QueuePaused, QueueFailed); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := tx.Exec(`UPDATE download_queue SET status = ?
+		WHERE status IN (?, ?, ?, ?)`,
+		QueueCanceled, QueuePending, QueueDownloading, QueuePaused, QueueFailed); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// SetQueueOrder rewrites the claim order from the given item ids in display
+// order. Ids that no longer exist are skipped so a client working from a
+// slightly stale snapshot cannot fail the whole reorder.
+func (r *Repository) SetQueueOrder(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for position, id := range ids {
+		if id < 1 {
+			return fmt.Errorf("set queue order: invalid item id %d", id)
+		}
+		if _, err := tx.Exec(`UPDATE download_queue SET position = ? WHERE id = ?`, position, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) transitionQueueItem(id int64, target string, allowed ...string) error {
@@ -1701,7 +1769,7 @@ func (r *Repository) ClaimNextQueueItem() (*DownloadQueueItem, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	var id int64
-	if err := tx.Get(&id, `SELECT id FROM download_queue WHERE status = ? ORDER BY queued_at, id LIMIT 1`, QueuePending); err != nil {
+	if err := tx.Get(&id, `SELECT id FROM download_queue WHERE status = ? ORDER BY position, queued_at, id LIMIT 1`, QueuePending); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -1739,15 +1807,16 @@ func (r *Repository) GetQueueItemByChapter(chapterID string) (DownloadQueueItem,
 
 func (r *Repository) ListQueue() ([]DownloadQueueItem, error) {
 	var items []DownloadQueueItem
-	err := r.db.Select(&items, queueSelect+` ORDER BY q.queued_at, q.id`)
+	err := r.db.Select(&items, queueSelect+` ORDER BY q.position, q.queued_at, q.id`)
 	return items, err
 }
 
 const queueSelect = `SELECT
 	q.id, q.chapter_id, q.status, q.progress, q.total_pages,
 	q.downloaded_pages, q.done_pages, q.error_message, q.queued_at,
+	q.position,
 	c.manga_id, cs.source_chapter_id, c.chapter_number, c.volume,
-	c.title AS chapter_title, c.language, c.scanlator,
+	c.title AS chapter_title, c.language, c.uploaded_at, c.scanlator,
 	c.source_id, m.title AS manga_title,
 	m.description AS manga_description, m.authors AS manga_authors,
 	m.artists AS manga_artists, m.genres AS manga_genres, m.download_format,

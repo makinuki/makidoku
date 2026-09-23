@@ -37,7 +37,8 @@ pnpm run build         # refresh web/dist before Go embedding
 ```
 
 The UI provides library categories, cross-source browsing, manga details,
-chapter downloads, tracker-aware title actions, reading history, backup
+chapter downloads, a source-grouped download queue with drag reordering and
+downloader controls, tracker-aware title actions, reading history, backup
 import/export, and paged or virtualized webtoon reading. Reader images are
 served through the daemon image proxy, which reuses source cookies, headers,
 anti-bot clearance, and optional unscrambling rather than exposing those
@@ -109,6 +110,8 @@ Requests run through the daemon's own network stack, so plugins are not subject 
 
 The downloader stores its queue in SQLite and resumes items that were interrupted while downloading. Image requests use the same per-source HTTP client, cookie jar and anti-bot clearance as plugin requests. Scrambled pages are passed through the source's `unscramble_image` export before they are written.
 
+Every queue entry carries a position and workers claim the lowest position first, so the order a client shows is the order downloads start in. Clients rewrite that order through the reorder endpoint and it is kept across restarts. The downloader itself can be paused: a paused downloader claims nothing, and the chapter it was fetching returns to the queue with the pages it already saved. Pausing lasts for the session, so a restart resumes downloads.
+
 Downloaded chapters are stored under `<data-dir>/downloads/<source>/<title>/` by default. CBZ archives contain zero-padded page names and `ComicInfo.xml`. A title can instead use an extracted chapter directory.
 
 ```bash
@@ -133,9 +136,24 @@ curl -X POST http://127.0.0.1:6254/api/download \
 curl -X POST http://127.0.0.1:6254/api/download/1/pause
 curl -X POST http://127.0.0.1:6254/api/download/1/resume
 curl -X POST http://127.0.0.1:6254/api/download/1/cancel
+
+# Control the downloader itself. Both answer with the queue snapshot.
+curl -X POST http://127.0.0.1:6254/api/download/pause-all
+curl -X POST http://127.0.0.1:6254/api/download/resume-all
+
+# Cancel every active entry, or a chosen set of them.
+curl -X POST http://127.0.0.1:6254/api/download/cancel-all
+curl -X POST http://127.0.0.1:6254/api/download/cancel \
+  -H 'Content-Type: application/json' -d '{"itemIds":[1,2]}'
+
+# Store the queue order as the item ids in display order. Answers 204.
+curl -X POST http://127.0.0.1:6254/api/download/reorder \
+  -H 'Content-Type: application/json' -d '{"itemIds":[2,1,3]}'
 ```
 
-Connect to `ws://127.0.0.1:6254/api/download/events` for queued, progress, paused, resumed, canceled, completed and failed events. Each event includes the current queue item and aggregate downloader counters.
+`GET /api/download` answers with the queue rows, the aggregate counters, and the downloader paused flag; the enqueue, pause-all, resume-all, cancel-all and cancel endpoints answer with the same payload so a client does not need a follow-up read.
+
+Connect to `ws://127.0.0.1:6254/api/download/events` for queued, progress, pending, paused, resumed, canceled, completed and failed events, and for the item-less state and reordered events. Every event includes the aggregate counters and the paused flag, and an item event also carries the queue row it concerns. A state event announces that the downloader was paused or resumed; a reordered event announces that the order changed, so clients refetch the snapshot for the order.
 
 ## Anti-bot challenges
 

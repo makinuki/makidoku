@@ -6,6 +6,20 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
 
 ## [Unreleased]
 
+- Rebuild the downloads page as a download queue. Entries are grouped by
+  source with expandable headers, rows carry a drag handle and can be
+  reordered by mouse or keyboard, the queue sorts by upload date or chapter
+  number inside each source, and the row menu offers move to top, move series
+  to top, move to bottom, move series to bottom, retry on failure, cancel,
+  cancel all for this series, and a link to the title. A floating control
+  pauses and resumes the downloader, and the queue overflow holds cancel all
+  and clear finished. Completed and canceled entries leave the view.
+- Order the download queue and expose downloader controls. Queue entries carry
+  a position and workers claim the lowest position first, so the order a
+  client shows is the order downloads start in. The API gains pause-all,
+  resume-all, cancel-all, cancel by item ids, and reorder, the queue snapshot
+  reports whether the downloader is paused, and pausing returns the chapter
+  being fetched to the queue with the pages it already saved.
 - Import a backup exported by the Android app. A .tachibk file is validated
   against the installed sources before anything is written, sources can be
   mapped by hand, and titles whose source has no match are kept against a

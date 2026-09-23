@@ -50,9 +50,10 @@ type Stats struct {
 }
 
 type Event struct {
-	Type  string               `json:"type"`
-	Item  db.DownloadQueueItem `json:"item"`
-	Stats Stats                `json:"stats"`
+	Type   string               `json:"type"`
+	Item   db.DownloadQueueItem `json:"item"`
+	Stats  Stats                `json:"stats"`
+	Paused bool                 `json:"paused"`
 }
 
 type Queue struct {
@@ -63,6 +64,7 @@ type Queue struct {
 	limiter  *DomainLimiter
 	events   *eventBroker
 	wake     chan struct{}
+	paused   atomic.Bool
 
 	downloadedPages atomic.Int64
 	retriedRequests atomic.Int64
@@ -93,6 +95,24 @@ func (q *Queue) Stats() Stats {
 		RetriedRequests:   q.retriedRequests.Load(),
 		ThrottledRequests: q.limiter.WaitCount(),
 	}
+}
+
+// PauseAll stops the workers from claiming more work. An item that is already
+// in flight is returned to the queue as it reaches its next boundary, so its
+// fetched pages and progress carry over to the resume.
+func (q *Queue) PauseAll() {
+	q.paused.Store(true)
+}
+
+// ResumeAll lets the workers claim queued items again.
+func (q *Queue) ResumeAll() {
+	q.paused.Store(false)
+	q.notify()
+}
+
+// Paused reports whether the downloader is paused.
+func (q *Queue) Paused() bool {
+	return q.paused.Load()
 }
 
 func (q *Queue) Subscribe() (<-chan Event, func()) {
@@ -225,6 +245,9 @@ func (q *Queue) Drain(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return
 				}
+				if q.paused.Load() {
+					return
+				}
 				item, err := q.repo.ClaimNextQueueItem()
 				if err != nil {
 					errs <- err
@@ -254,6 +277,10 @@ func (q *Queue) runWorker(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		if q.paused.Load() {
+			q.wait(ctx)
+			continue
 		}
 		item, err := q.repo.ClaimNextQueueItem()
 		if err != nil {
@@ -298,7 +325,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		return q.fail(item, err)
 	}
 	if err := q.repo.UpdateQueueProgress(item.ID, len(pages), len(done), nil); err != nil {
-		if q.stopped(item.ID) {
+		if q.interrupted(item) {
 			return nil
 		}
 		return q.fail(item, err)
@@ -310,7 +337,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 			downloaded = append(downloaded, PageData{Bytes: data, Extension: ext})
 			continue
 		}
-		if q.stopped(item.ID) {
+		if q.interrupted(item) {
 			return nil
 		}
 		data, err := retryFetch(ctx, q.options.MaxRetries, func(fetchCtx context.Context) ([]byte, error) {
@@ -325,7 +352,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		if err != nil {
 			return q.fail(item, err)
 		}
-		if q.stopped(item.ID) {
+		if q.interrupted(item) {
 			return nil
 		}
 		if page.IsScrambled {
@@ -341,20 +368,20 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		done = append(done, index)
 		q.downloadedPages.Add(1)
 		if err := q.repo.UpdateQueueProgress(item.ID, len(pages), len(done), nil); err != nil {
-			if q.stopped(item.ID) {
+			if q.interrupted(item) {
 				return nil
 			}
 			return q.fail(item, err)
 		}
 		if err := q.repo.SaveQueuePageProgress(item.ID, len(pages), done); err != nil {
-			if q.stopped(item.ID) {
+			if q.interrupted(item) {
 				return nil
 			}
 			return q.fail(item, err)
 		}
 		q.publishCurrent("progress", item.ID)
 	}
-	if q.stopped(item.ID) {
+	if q.interrupted(item) {
 		return nil
 	}
 
@@ -488,6 +515,24 @@ func (q *Queue) stopped(id int64) bool {
 	return item.Status == db.QueuePaused || item.Status == db.QueueCanceled
 }
 
+// interrupted reports whether work on the item must stop. A canceled or
+// removed row stops as before; a paused downloader returns the item to the
+// pending state with its progress and staged pages intact, so the resume
+// continues from where it stopped instead of restarting the chapter.
+func (q *Queue) interrupted(item db.DownloadQueueItem) bool {
+	if q.stopped(item.ID) {
+		return true
+	}
+	if !q.paused.Load() {
+		return false
+	}
+	if err := q.repo.ReleaseQueueItem(item.ID); err != nil {
+		slog.Warn("downloader releasing paused item failed", "chapter", item.ChapterID, "err", err)
+	}
+	q.publishCurrent("pending", item.ID)
+	return true
+}
+
 func (q *Queue) Pause(id int64) error {
 	if err := q.repo.PauseQueueItem(id); err != nil {
 		return err
@@ -533,6 +578,30 @@ func (q *Queue) ClearFinished() (int64, error) {
 	return removed, nil
 }
 
+// CancelAll cancels every active queue row and reports how many were affected.
+// Each row is published so open clients drop it as soon as the event arrives.
+func (q *Queue) CancelAll() (int64, error) {
+	ids, err := q.repo.CancelAllQueueItems()
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		q.publishCurrent("canceled", id)
+	}
+	return int64(len(ids)), nil
+}
+
+// Reorder persists the queue order given as item ids in display order and
+// announces the change, so clients can refetch the snapshot instead of trying
+// to merge the ordering into their local state.
+func (q *Queue) Reorder(ids []int64) error {
+	if err := q.repo.SetQueueOrder(ids); err != nil {
+		return err
+	}
+	q.events.publish(Event{Type: "reordered", Stats: q.Stats(), Paused: q.Paused()})
+	return nil
+}
+
 func (q *Queue) publishCurrent(eventType string, id int64) {
 	item, err := q.repo.GetQueueItem(id)
 	if err == nil {
@@ -541,7 +610,7 @@ func (q *Queue) publishCurrent(eventType string, id int64) {
 }
 
 func (q *Queue) publish(eventType string, item db.DownloadQueueItem) {
-	q.events.publish(Event{Type: eventType, Item: item, Stats: q.Stats()})
+	q.events.publish(Event{Type: eventType, Item: item, Stats: q.Stats(), Paused: q.Paused()})
 }
 
 func (q *Queue) notify() {

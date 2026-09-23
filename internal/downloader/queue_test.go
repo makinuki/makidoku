@@ -228,6 +228,184 @@ func TestQueueStopsBetweenPagesWhenPaused(t *testing.T) {
 	}
 }
 
+// Pausing the downloader leaves queued items untouched, and resuming lets the
+// worker pick them up again.
+func TestQueuePauseAllStopsClaiming(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.PauseAll()
+	if !queue.Paused() {
+		t.Fatal("queue did not report the paused state")
+	}
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.QueuePending {
+		t.Fatalf("status = %s, want %s", stored.Status, db.QueuePending)
+	}
+	if eng.fetches != 0 {
+		t.Fatalf("fetches = %d, want 0", eng.fetches)
+	}
+
+	queue.ResumeAll()
+	if queue.Paused() {
+		t.Fatal("queue stayed paused after resume")
+	}
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	chapter, err := repo.GetChapter(items[0].ChapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chapter.Downloaded {
+		t.Fatalf("chapter after resume = %+v", chapter)
+	}
+}
+
+// Pausing while a chapter is in flight returns the item to the queue instead of
+// failing or completing it, and a later resume finishes the chapter.
+func TestQueuePauseAllReleasesInFlightItem(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.afterFirstFetch = func() { queue.PauseAll() }
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.GetQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.QueuePending || stored.TotalPages != 2 {
+		t.Fatalf("released item = %+v", stored)
+	}
+	chapter, err := repo.GetChapter(stored.ChapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chapter.Downloaded || chapter.DownloadPath != nil {
+		t.Fatalf("paused chapter has artifact: %+v", chapter)
+	}
+
+	queue.ResumeAll()
+	if err := queue.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = repo.GetQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.QueueCompleted || stored.Progress != 100 {
+		t.Fatalf("completed item = %+v", stored)
+	}
+	chapter, err = repo.GetChapter(stored.ChapterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chapter.Downloaded || chapter.DownloadPath == nil {
+		t.Fatalf("chapter after resume = %+v", chapter)
+	}
+}
+
+// Cancel all cancels every active row in one call and publishes each row so
+// open clients drop them.
+func TestQueueCancelAllCancelsActiveItems(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := queue.Subscribe()
+	defer unsubscribe()
+	canceled, err := queue.CancelAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canceled != 1 {
+		t.Fatalf("canceled = %d, want 1", canceled)
+	}
+	stored, err := repo.GetQueueItem(items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.QueueCanceled {
+		t.Fatalf("status = %s, want %s", stored.Status, db.QueueCanceled)
+	}
+	select {
+	case event := <-events:
+		if event.Type != "canceled" || event.Item.ID != items[0].ID || event.Item.Status != db.QueueCanceled {
+			t.Fatalf("event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled event was not published")
+	}
+}
+
+// A reorder rewrites the stored order the worker claims in and announces the
+// change so other clients refetch the snapshot.
+func TestQueueReorderPersistsAndAnnounces(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	second := 2.0
+	eng.details.Chapters = append(eng.details.Chapters, engine.ChapterItem{ID: "chapter-two", Number: &second, Language: "en"})
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id", "chapter-two"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].ChapterNumber == nil || *items[0].ChapterNumber != 1 {
+		t.Fatalf("queued items = %+v", items)
+	}
+	events, unsubscribe := queue.Subscribe()
+	defer unsubscribe()
+	if err := queue.Reorder([]int64{items[1].ID, items[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := repo.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 || listed[0].ID != items[1].ID || listed[1].ID != items[0].ID {
+		t.Fatalf("listed = %+v", listed)
+	}
+	select {
+	case event := <-events:
+		if event.Type != "reordered" {
+			t.Fatalf("event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reordered event was not published")
+	}
+}
+
 // A queue row that vanishes mid-download (its chapter was retired by a
 // migration, cascading the row away) must halt the worker instead of
 // completing into an orphaned artifact.

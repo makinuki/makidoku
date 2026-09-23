@@ -359,6 +359,7 @@ func (s *Server) mountLibrary(r chi.Router) {
 	r.Delete("/manga/{mangaID}/library", s.removeMangaByID)
 	r.Patch("/manga/{mangaID}/downloads", s.updateMangaDownloads)
 	r.Patch("/manga/{mangaID}/reader", s.updateMangaReader)
+	r.Patch("/manga/{mangaID}/chapter-view", s.updateMangaChapterView)
 	r.Post("/manga/{mangaID}/refresh", s.refreshManga)
 	r.Post("/manga/{mangaID}/categories/{categoryID}", s.addMangaCategoryByID)
 	r.Delete("/manga/{mangaID}/categories/{categoryID}", s.removeMangaCategoryByID)
@@ -445,6 +446,57 @@ func mergeReaderOverride(body map[string]json.RawMessage, key string, stored *st
 		return nil, nil
 	}
 	return &trimmed, nil
+}
+
+// updateMangaChapterView records the per-title chapter list presentation. A
+// field that is absent keeps its stored value; a string replaces it, and an
+// empty string resets it to the client defaults.
+func (s *Server) updateMangaChapterView(w http.ResponseWriter, r *http.Request) {
+	var body map[string]json.RawMessage
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	mangaID := chi.URLParam(r, "mangaID")
+	manga, err := s.repo.GetManga(mangaID)
+	if err != nil {
+		writeLocalError(w, http.StatusNotFound, err)
+		return
+	}
+	sort, err := mergeChapterView(body, "sort", manga.ChapterSort)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	filter, err := mergeChapterView(body, "filter", manga.ChapterFilter)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	language, err := mergeChapterView(body, "language", manga.ChapterLanguage)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	updated, err := s.repo.UpdateMangaChapterView(mangaID, sort, filter, language)
+	if err != nil {
+		writeLocalError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// mergeChapterView resolves one chapter view field from a request body. An
+// absent key keeps the stored value and a string replaces it.
+func mergeChapterView(body map[string]json.RawMessage, key, stored string) (string, error) {
+	raw, ok := body[key]
+	if !ok {
+		return stored, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("%s must be a string", key)
+	}
+	return strings.TrimSpace(value), nil
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {

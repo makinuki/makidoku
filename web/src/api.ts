@@ -240,6 +240,23 @@ export const api = {
     request(`/api/download/${id}/${action}`, { method: "POST" }),
   clearFinishedDownloads: () =>
     request<{ removed: number }>("/api/download/clear", { method: "POST" }),
+  // Pause and resume control the downloader itself: pausing stops new claims
+  // and returns the in-flight chapter to the queue with its progress kept.
+  pauseAllDownloads: () => request<DownloadSnapshot>("/api/download/pause-all", { method: "POST" }),
+  resumeAllDownloads: () =>
+    request<DownloadSnapshot>("/api/download/resume-all", { method: "POST" }),
+  cancelAllDownloads: () =>
+    request<DownloadSnapshot>("/api/download/cancel-all", { method: "POST" }),
+  // The batch cancel is best effort: rows that finished or were cleared
+  // meanwhile are skipped by the server instead of failing the request.
+  cancelDownloads: (itemIds: number[]) =>
+    request<DownloadSnapshot>("/api/download/cancel", {
+      method: "POST",
+      body: JSON.stringify({ itemIds }),
+    }),
+  // Reorder persists the queue display order as the ids of the live rows.
+  reorderDownloads: (itemIds: number[]) =>
+    request<void>("/api/download/reorder", { method: "POST", body: JSON.stringify({ itemIds }) }),
   progress: (
     mangaId: string,
     chapterId: string,

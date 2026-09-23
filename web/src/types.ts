@@ -222,15 +222,27 @@ export type QueueItem = {
   errorMessage?: string;
   mangaId: string;
   mangaTitle: string;
+  sourceId: string;
   sourceName: string;
   chapterNumber?: number;
   chapterTitle?: string;
+  uploadedAt?: number;
+  // Downloader order of the row; the worker claims the lowest position first.
+  position: number;
 };
 export type DownloadSnapshot = {
   items: QueueItem[];
   stats: { downloadedPages: number; retriedRequests: number; throttledRequests: number };
+  paused: boolean;
 };
-export type DownloadEvent = { type: string; item: QueueItem; stats: DownloadSnapshot["stats"] };
+export type DownloadEvent = {
+  type: string;
+  // Item-less events announce a downloader-level change: "state" carries the
+  // paused flag and the counters, "reordered" announces an order change.
+  item?: QueueItem;
+  stats: DownloadSnapshot["stats"];
+  paused: boolean;
+};
 export type TrackerStatus = {
   trackerType?: string;
   remoteId: string;

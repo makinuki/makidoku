@@ -61,12 +61,11 @@ export function MorePage() {
         const live = snapshot.items.filter((item) =>
           ["PENDING", "DOWNLOADING", "PAUSED"].includes(item.status),
         );
-        const paused = live.filter((item) => item.status === "PAUSED").length;
         setQueueSummary(
           live.length === 0
             ? "Queue is empty"
-            : paused > 0
-              ? `${live.length} active · ${paused} paused`
+            : snapshot.paused
+              ? `${live.length} active · downloader paused`
               : `${live.length} active`,
         );
         setCategorySummary(

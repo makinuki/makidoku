@@ -43,7 +43,7 @@ export function PageHeader({
   children,
 }: {
   eyebrow?: string;
-  title: string;
+  title: ReactNode;
   children?: ReactNode;
 }) {
   return (

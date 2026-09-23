@@ -39,6 +39,7 @@ import { TrackerLogo, trackerLabel } from "../../components/TrackerLogo";
 import { useTrackerEvents } from "../../hooks/useTrackerEvents";
 import { CustomInfoModal } from "./CustomInfoModal";
 import { SourcesMetadataModal } from "./SourcesMetadataModal";
+import { CategoryDialog } from "./CategoryDialog";
 import { resumeChapterId } from "../reader/engine/chapters";
 
 export function DetailsPage() {
@@ -47,16 +48,18 @@ export function DetailsPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<Aggregate>();
   const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryError, setCategoryError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<"tracker" | "migration" | "custom" | "sources">();
+  const [modal, setModal] = useState<
+    "tracker" | "migration" | "custom" | "sources" | "categories"
+  >();
+  const [categoryMode, setCategoryMode] = useState<"add" | "edit">("add");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
   const [actionError, setActionError] = useState("");
   const [libraryBusy, setLibraryBusy] = useState(false);
-  const [categoryBusy, setCategoryBusy] = useState<number>();
+  const [categoriesBusy, setCategoriesBusy] = useState(false);
   const [enqueueing, setEnqueueing] = useState(false);
   const [enqueueError, setEnqueueError] = useState("");
   const [queuedNote, setQueuedNote] = useState("");
@@ -107,10 +110,12 @@ export function DetailsPage() {
   };
   useEffect(() => {
     void load();
+    // A failed category fetch only means the picker is skipped: the title
+    // itself still loads and the add flow falls back to a plain add.
     void api
       .categories()
       .then(setCategories)
-      .catch((e) => setCategoryError(e instanceof Error ? e.message : "Unable to load categories"));
+      .catch(() => {});
   }, [decodedManga]);
   useEffect(() => {
     if (!queuedNote) return;
@@ -141,29 +146,66 @@ export function DetailsPage() {
       items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
     );
   // Library and category changes report failures inline: the title stays on
-  // screen and the user can retry without losing their place.
-  const toggleLibrary = async () => {
+  // screen and the user can retry without losing their place. Adding a title
+  // offers the category picker when categories exist; an in-library title
+  // opens the picker in edit mode, with removal as an explicit action.
+  const openCategories = (mode: "add" | "edit") => {
+    setCategoryMode(mode);
+    setModal("categories");
+  };
+  const handleLibraryClick = async () => {
+    if (manga.inLibrary) {
+      openCategories("edit");
+      return;
+    }
     setLibraryBusy(true);
     setActionError("");
     try {
-      await api.setLibrary(manga.id, !manga.inLibrary);
+      await api.setLibrary(manga.id, true);
       await reload();
+      if (categories.length > 0) openCategories("add");
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Unable to update the library");
     } finally {
       setLibraryBusy(false);
     }
   };
-  const toggleCategory = async (category: Category, active: boolean) => {
-    setCategoryBusy(category.id);
+  const applyCategories = async (selectedIds: number[]) => {
+    const current = new Set(data.categories.map((item) => item.id));
+    const selected = new Set(selectedIds);
+    const known = new Set(categories.map((item) => item.id));
+    const added = [...selected].filter((id) => !current.has(id));
+    // Only unassign categories the picker knows: assignments the list cannot
+    // show are kept rather than dropped.
+    const removed = [...current].filter((id) => known.has(id) && !selected.has(id));
+    if (added.length === 0 && removed.length === 0) {
+      setModal(undefined);
+      return;
+    }
+    setCategoriesBusy(true);
     setActionError("");
     try {
-      await api.setCategory(manga.id, category.id, !active);
+      for (const id of added) await api.setCategory(manga.id, id, true);
+      for (const id of removed) await api.setCategory(manga.id, id, false);
       await reload();
+      setModal(undefined);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Unable to update categories");
     } finally {
-      setCategoryBusy(undefined);
+      setCategoriesBusy(false);
+    }
+  };
+  const removeFromLibrary = async () => {
+    setLibraryBusy(true);
+    setActionError("");
+    try {
+      await api.setLibrary(manga.id, false);
+      await reload();
+      setModal(undefined);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Unable to update the library");
+    } finally {
+      setLibraryBusy(false);
     }
   };
   const enqueue = async () => {
@@ -295,7 +337,7 @@ export function DetailsPage() {
               </span>
             )}
             <button
-              onClick={() => void toggleLibrary()}
+              onClick={() => void handleLibraryClick()}
               disabled={libraryBusy}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm disabled:opacity-50"
             >
@@ -372,31 +414,6 @@ export function DetailsPage() {
           {actionError && <p className="mt-3 text-xs text-red-300">{actionError}</p>}
         </div>
       </section>
-      {categoryError && (
-        <p role="alert" className="mt-8 text-xs text-red-300">
-          {categoryError}
-        </p>
-      )}
-      {categories.length > 0 && (
-        <section className="mt-8">
-          <PageHeader title="Categories" />{" "}
-          <div className="flex flex-wrap gap-2">
-            {categories.map((category) => {
-              const active = data.categories.some((item) => item.id === category.id);
-              return (
-                <button
-                  key={category.id}
-                  onClick={() => void toggleCategory(category, active)}
-                  disabled={categoryBusy !== undefined}
-                  className={`rounded-full border px-3 py-2 text-xs disabled:opacity-50 ${active ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400"}`}
-                >
-                  {category.name}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
       <section className="mt-10">
         <PageHeader title="Chapters">
           <div className="flex flex-wrap gap-2">
@@ -637,6 +654,22 @@ export function DetailsPage() {
         <SourcesMetadataModal
           mangaId={manga.id}
           title={manga.displayTitle ?? manga.title}
+          onClose={() => setModal(undefined)}
+        />
+      )}
+      {modal === "categories" && (
+        <CategoryDialog
+          categories={categories}
+          initialSelected={data.categories.map((item) => item.id)}
+          showRemove={categoryMode === "edit"}
+          busy={categoriesBusy}
+          removing={libraryBusy}
+          onApply={(selectedIds) => void applyCategories(selectedIds)}
+          onRemove={() => void removeFromLibrary()}
+          onEditCategories={() => {
+            setModal(undefined);
+            navigate("/settings/library");
+          }}
           onClose={() => setModal(undefined)}
         />
       )}

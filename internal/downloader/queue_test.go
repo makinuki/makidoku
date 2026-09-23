@@ -327,6 +327,35 @@ func TestQueuePauseAllReleasesInFlightItem(t *testing.T) {
 	}
 }
 
+// Pausing and resuming the downloader announce the new state, so clients that
+// did not send the request update their controls.
+func TestQueuePauseAllAnnouncesState(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	queue := NewQueue(repo, queueFixture(), Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	events, unsubscribe := queue.Subscribe()
+	defer unsubscribe()
+	queue.PauseAll()
+	select {
+	case event := <-events:
+		if event.Type != "state" || !event.Paused {
+			t.Fatalf("pause event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pause was not announced")
+	}
+	queue.ResumeAll()
+	select {
+	case event := <-events:
+		if event.Type != "state" || event.Paused {
+			t.Fatalf("resume event = %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resume was not announced")
+	}
+}
+
 // Cancel all cancels every active row in one call and publishes each row so
 // open clients drop them.
 func TestQueueCancelAllCancelsActiveItems(t *testing.T) {

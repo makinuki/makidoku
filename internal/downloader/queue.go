@@ -99,15 +99,23 @@ func (q *Queue) Stats() Stats {
 
 // PauseAll stops the workers from claiming more work. An item that is already
 // in flight is returned to the queue as it reaches its next boundary, so its
-// fetched pages and progress carry over to the resume.
+// fetched pages and progress carry over to the resume. The new state is
+// announced, so clients that did not send the request follow along.
 func (q *Queue) PauseAll() {
 	q.paused.Store(true)
+	q.publishState()
 }
 
 // ResumeAll lets the workers claim queued items again.
 func (q *Queue) ResumeAll() {
 	q.paused.Store(false)
 	q.notify()
+	q.publishState()
+}
+
+// publishState announces a downloader-level change that carries no queue item.
+func (q *Queue) publishState() {
+	q.events.publish(Event{Type: "state", Stats: q.Stats(), Paused: q.Paused()})
 }
 
 // Paused reports whether the downloader is paused.

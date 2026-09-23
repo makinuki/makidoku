@@ -10,6 +10,8 @@ import {
   libraryViewSettings,
   naturalDirection,
   invertSelection,
+  retainLibrary,
+  retainedLibrarySnapshot,
   selectAllIds,
   sourceDisplayName,
   toggleRangeSelection,
@@ -345,5 +347,21 @@ describe("library selection", () => {
   it("inverts and selects within the visible list only", () => {
     expect([...selectAllIds(["a", "b"])].sort()).toEqual(["a", "b"]);
     expect([...invertSelection(new Set(["a", "hidden"]), ["a", "b"])].sort()).toEqual(["b"]);
+  });
+
+  it("retains the last library snapshot for the return visit", () => {
+    expect(retainedLibrarySnapshot()).toBeUndefined();
+    const first = {
+      view: { ...defaultLibraryView, sort: "title" as const },
+      items: [manga({ id: "a" })],
+      categories: [category(1, "manga")],
+      randomSeed: 2,
+      scrollY: 120,
+    };
+    retainLibrary(first);
+    expect(retainedLibrarySnapshot()).toBe(first);
+    const second = { ...first, scrollY: 0 };
+    retainLibrary(second);
+    expect(retainedLibrarySnapshot()).toBe(second);
   });
 });

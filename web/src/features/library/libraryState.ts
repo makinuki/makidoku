@@ -259,6 +259,28 @@ export function mergeLibraryView(view: LibraryView, patch: Partial<LibraryView>)
   return { ...view, ...patch, filters: { ...view.filters, ...patch.filters } };
 }
 
+// RetainedLibrary is the last rendered library snapshot. It survives an
+// unmount so a trip to a title and back restores the tab, filters, list, and
+// scroll position without a loading flash; a background refresh still runs on
+// return. Selection and open dialogs are transient and never retained.
+export type RetainedLibrary = {
+  view: LibraryView;
+  items: LibraryManga[];
+  categories: Category[];
+  randomSeed: number;
+  scrollY: number;
+};
+
+let retainedLibrary: RetainedLibrary | undefined;
+
+export function retainLibrary(snapshot: RetainedLibrary): void {
+  retainedLibrary = snapshot;
+}
+
+export function retainedLibrarySnapshot(): RetainedLibrary | undefined {
+  return retainedLibrary;
+}
+
 function altTitles(item: LibraryManga): string[] {
   if (!item.altTitles) return [];
   try {

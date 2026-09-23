@@ -44,6 +44,8 @@ import {
   libraryViewSettings,
   mergeLibraryView,
   naturalDirection,
+  retainLibrary,
+  retainedLibrarySnapshot,
   selectAllIds,
   sortLabels,
   sourceDisplayName,
@@ -56,11 +58,14 @@ import {
 } from "./libraryState";
 
 export function LibraryPage() {
-  const [items, setItems] = useState<LibraryManga[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [view, setView] = useState<LibraryView>(defaultLibraryView);
+  // A retained snapshot from the previous visit restores the tab, filters,
+  // list, and scroll position instantly; a background refresh still runs.
+  const retained = useRef(retainedLibrarySnapshot()).current;
+  const [items, setItems] = useState<LibraryManga[]>(retained?.items ?? []);
+  const [categories, setCategories] = useState<Category[]>(retained?.categories ?? []);
+  const [view, setView] = useState<LibraryView>(retained?.view ?? defaultLibraryView);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(retained === undefined);
   const [error, setError] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionActive, setSelectionActive] = useState(false);
@@ -69,14 +74,38 @@ export function LibraryPage() {
   const [notice, setNotice] = useState("");
   const [categoryOpen, setCategoryOpen] = useState(false);
   // randomSeed re-rolls the random sort without storing a permutation.
-  const [randomSeed, setRandomSeed] = useState(1);
+  const [randomSeed, setRandomSeed] = useState(retained?.randomSeed ?? 1);
   // persisted mirrors the view last written to the settings service, so a
   // change writes only the keys that actually differ.
-  const persisted = useRef<LibraryView>(defaultLibraryView);
-  const loaded = useRef(false);
+  const persisted = useRef<LibraryView>(retained?.view ?? defaultLibraryView);
+  const loaded = useRef(retained !== undefined);
+  // latest mirrors the render state for the unmount snapshot below.
+  const latest = useRef({ view, items, categories, randomSeed });
+  latest.current = { view, items, categories, randomSeed };
 
   useEffect(() => {
     let active = true;
+    if (retained) {
+      // Return visit: cached content stays visible with no loading flash while
+      // fresh items load underneath; the scroll position restores on paint.
+      Promise.all([api.library(), api.categories()])
+        .then(([library, categoryList]) => {
+          if (!active) return;
+          setItems(library);
+          setCategories(categoryList);
+        })
+        .catch((e) => {
+          if (active) setError(e instanceof Error ? e.message : "Could not load the library");
+        });
+      if (retained.scrollY > 0) {
+        const y = retained.scrollY;
+        requestAnimationFrame(() => window.scrollTo(0, y));
+      }
+      return () => {
+        active = false;
+        retainLibrary({ ...latest.current, scrollY: window.scrollY });
+      };
+    }
     setLoading(true);
     Promise.all([api.library(), api.categories(), api.settings()])
       .then(([library, categoryList, settings]) => {
@@ -96,8 +125,9 @@ export function LibraryPage() {
       });
     return () => {
       active = false;
+      retainLibrary({ ...latest.current, scrollY: window.scrollY });
     };
-  }, []);
+  }, [retained]);
 
   useEffect(() => {
     if (!loaded.current) return;

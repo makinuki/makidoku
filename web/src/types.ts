@@ -17,6 +17,11 @@ export type Manga = {
   readerMode?: "single" | "double" | "webtoon" | null;
   readerDirection?: "ltr" | "rtl" | null;
   readerFit?: "width" | "height" | "original" | null;
+  // Per-title chapter list presentation. An absent value means unset and the
+  // client falls back to its defaults.
+  chapterSort?: "number-desc" | "number-asc" | "source";
+  chapterFilter?: "all" | "unread" | "downloaded" | "bookmarked";
+  chapterLanguage?: string;
   createdAt: number;
   updatedAt: number;
   detailsFetchedAt?: number;

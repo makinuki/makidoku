@@ -2972,6 +2972,47 @@ describe("details page action feedback", () => {
     expect(screen.getByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
   });
 
+  // Stored chapter presentation initializes the controls and a change writes
+  // through to the title so the next visit restores it.
+  it("restores and persists the per-title chapter view", async () => {
+    window.history.pushState({}, "", `/manga/${mangaId}`);
+    const writes: Array<{ path: string; body: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === `/api/manga/${mangaId}` && !init?.method) {
+          return Response.json(aggregate({ chapterSort: "number-asc", chapterFilter: "unread" }));
+        }
+        if (path === `/api/manga/${mangaId}/chapter-view`) {
+          writes.push({ path, body: JSON.parse(String(init?.body)) });
+          return Response.json({});
+        }
+        if (path === "/api/categories") {
+          return Response.json([]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { name: "Yosuga no Sora" })).toBeInTheDocument();
+
+    expect(await screen.findByDisplayValue("Number, oldest first")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Unread only")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Chapter sort" }), "source");
+    await waitFor(() =>
+      expect(writes.some((write) => (write.body as { sort?: string }).sort === "source")).toBe(
+        true,
+      ),
+    );
+  });
+
   it("shows busy and confirmation states when queueing downloads", async () => {
     window.history.pushState({}, "", `/manga/${mangaId}`);
     let resolveQueue!: (value: Response) => void;
@@ -3107,6 +3148,106 @@ describe("library layout", () => {
       expect(write).toBeTruthy();
       expect(JSON.parse(write!.body)).toEqual({ value: false });
     });
+  });
+
+  // A trip to a title and back restores the filters and list from the
+  // retained snapshot while fresh items load underneath.
+  it("retains the library view across a detail visit", async () => {
+    window.history.pushState({}, "", "/");
+    let libraryCalls = 0;
+    const titles = [
+      {
+        id: "alpha",
+        title: "Alpha",
+        coverUrl: "",
+        updatedAt: 3,
+        status: "ongoing",
+        sourceId: "source-one",
+        sourceName: "Source One",
+        categories: [],
+        unreadChapters: 0,
+        downloadedChapters: 2,
+      },
+      {
+        id: "beta",
+        title: "Beta",
+        coverUrl: "",
+        updatedAt: 1,
+        status: "completed",
+        sourceId: "source-one",
+        sourceName: "Source One",
+        categories: [],
+        unreadChapters: 0,
+        downloadedChapters: 0,
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/health") return Response.json({ ok: true });
+        if (path.startsWith("/api/library") && !init?.method) {
+          libraryCalls++;
+          return Response.json(titles);
+        }
+        if (path === "/api/manga/alpha" && !init?.method) {
+          return Response.json({
+            manga: {
+              id: "alpha",
+              sourceId: "source-one",
+              title: "Alpha",
+              status: "ongoing",
+              coverUrl: "",
+              inLibrary: true,
+              downloadFormat: "cbz",
+              createdAt: 1,
+              updatedAt: 3,
+            },
+            categories: [],
+            chapters: [],
+            trackers: [],
+          });
+        }
+        if (path === "/api/categories") {
+          return Response.json([{ id: 1, name: "manga", sortOrder: 0 }]);
+        }
+        if (path === "/api/settings" && !init?.method) return Response.json([]);
+        if (path.startsWith("/api/settings/") && init?.method === "PUT") {
+          return Response.json({});
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
+    // findBy (not getBy): a snapshot retained by an earlier test may render
+    // first, so wait for this test's own background refresh to land.
+    expect(await screen.findByText("Beta")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Downloaded" }));
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    await user.click(screen.getByRole("heading", { name: "Alpha" }).closest("a") as HTMLElement);
+    expect(await screen.findByRole("heading", { name: "Alpha" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    await waitFor(() => expect(libraryCalls).toBeGreaterThanOrEqual(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Downloaded" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });
 

@@ -107,6 +107,16 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(overrides),
     }),
+  // setMangaChapterView records the per-title chapter list presentation. A
+  // field left out is unchanged; an empty string resets it to the defaults.
+  setMangaChapterView: (
+    mangaId: string,
+    view: { sort?: string; filter?: string; language?: string },
+  ) =>
+    request<Manga>(`/api/manga/${idPath(mangaId)}/chapter-view`, {
+      method: "PATCH",
+      body: JSON.stringify(view),
+    }),
   // updateMangaCustom sends the custom-info overrides to change. A field left
   // out is unchanged; an empty string clears the override.
   updateMangaCustom: (

@@ -70,6 +70,10 @@ export function DetailsPage() {
   const [chapterFilter, setChapterFilter] = useState<
     "all" | "unread" | "downloaded" | "bookmarked"
   >("all");
+  // chapterViewSynced records the title whose stored chapter presentation
+  // already reached the local controls, so the initial sync never writes back
+  // and a title without stored values resets to the defaults.
+  const chapterViewSynced = useRef("");
   const [autoDownloadBusy, setAutoDownloadBusy] = useState(false);
   const [suggestions, setSuggestions] = useState<Recommendation[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
@@ -122,6 +126,16 @@ export function DetailsPage() {
     const timer = window.setTimeout(() => setQueuedNote(""), 4000);
     return () => window.clearTimeout(timer);
   }, [queuedNote]);
+  // The stored chapter presentation applies once per title: later visits start
+  // where the previous one left off instead of resetting to the defaults.
+  useEffect(() => {
+    const stored = data?.manga;
+    if (!stored || chapterViewSynced.current === stored.id) return;
+    chapterViewSynced.current = stored.id;
+    setChapterSort(stored.chapterSort ?? "number-desc");
+    setChapterFilter(stored.chapterFilter ?? "all");
+    setLanguageFilter(stored.chapterLanguage || undefined);
+  }, [data]);
   if (loading) return <LoadingState label="Loading title" />;
   if (error || !data)
     return (
@@ -242,6 +256,18 @@ export function DetailsPage() {
     } finally {
       setAutoDownloadBusy(false);
     }
+  };
+  // Chapter presentation writes through on every change so the next visit
+  // restores it. Writes only start after the stored values arrive, and a
+  // failed write reports inline like the other mutations on this page.
+  const persistChapterView = (patch: { sort?: string; filter?: string; language?: string }) => {
+    if (chapterViewSynced.current !== manga.id) return;
+    setActionError("");
+    void api
+      .setMangaChapterView(manga.id, patch)
+      .catch((e) =>
+        setActionError(e instanceof Error ? e.message : "Unable to save the chapter view"),
+      );
   };
   const loadSuggestions = async () => {
     setSuggestionsLoading(true);
@@ -451,7 +477,11 @@ export function DetailsPage() {
             <select
               aria-label="Chapter sort"
               value={chapterSort}
-              onChange={(event) => setChapterSort(event.target.value as typeof chapterSort)}
+              onChange={(event) => {
+                const next = event.target.value as typeof chapterSort;
+                setChapterSort(next);
+                persistChapterView({ sort: next });
+              }}
               className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
             >
               <option value="number-desc">Number, newest first</option>
@@ -464,7 +494,11 @@ export function DetailsPage() {
             <select
               aria-label="Chapter filter"
               value={chapterFilter}
-              onChange={(event) => setChapterFilter(event.target.value as typeof chapterFilter)}
+              onChange={(event) => {
+                const next = event.target.value as typeof chapterFilter;
+                setChapterFilter(next);
+                persistChapterView({ filter: next });
+              }}
               className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
             >
               <option value="all">All chapters</option>
@@ -483,7 +517,10 @@ export function DetailsPage() {
         {languages.length > 1 && (
           <div className="mb-5 flex flex-wrap gap-2">
             <button
-              onClick={() => setLanguageFilter(undefined)}
+              onClick={() => {
+                setLanguageFilter(undefined);
+                persistChapterView({ language: "" });
+              }}
               className={`min-h-11 rounded-full border px-4 py-1.5 text-xs ${languageFilter === undefined ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
             >
               All languages
@@ -491,7 +528,10 @@ export function DetailsPage() {
             {languages.map((code) => (
               <button
                 key={code}
-                onClick={() => setLanguageFilter(code)}
+                onClick={() => {
+                  setLanguageFilter(code);
+                  persistChapterView({ language: code });
+                }}
                 className={`min-h-11 rounded-full border px-4 py-1.5 text-xs ${languageFilter === code ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-800 text-zinc-400 hover:border-zinc-600"}`}
               >
                 {languageLabel(code)}

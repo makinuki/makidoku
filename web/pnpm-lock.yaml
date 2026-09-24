@@ -70,6 +70,9 @@ importers:
       vite-plus:
         specifier: 0.2.9
         version: 0.2.9(@voidzero-dev/vite-plus-core@0.2.9(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(typescript@7.0.2))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@26.1.0)(terser@5.51.2)(typescript@7.0.2)
+      workbox-window:
+        specifier: ^7.4.1
+        version: 7.4.1
 
 packages:
 

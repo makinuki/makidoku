@@ -12,6 +12,21 @@ export default defineConfig({
       devOptions: { enabled: false },
       workbox: {
         navigateFallbackDenylist: [/^\/api\//],
+        runtimeCaching: [
+          {
+            // Same-origin cover and page image GETs only; every other /api/
+            // request (JSON, CBZ downloads, non-GET) falls through to the
+            // network untouched. Only 200 responses enter the cache so a
+            // transient upstream error is never served back later.
+            urlPattern: /\/api\/(manga\/[^/?]+\/cover|pages\/[^/?]+\/image)/,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "makidoku-images",
+              cacheableResponse: { statuses: [200] },
+              expiration: { maxEntries: 300, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            },
+          },
+        ],
       },
       manifest: {
         name: "MakiDoku",
@@ -43,7 +58,12 @@ export default defineConfig({
   ],
   build: { outDir: "dist", emptyOutDir: true },
   server: { port: 5173, proxy: { "/api": "http://127.0.0.1:8080" } },
-  test: { environment: "jsdom", setupFiles: "./src/vitest.setup.ts", css: true },
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/vitest.setup.ts",
+    css: true,
+    alias: { "virtual:pwa-register": "/src/test-stubs/pwaRegister.ts" },
+  },
   lint: { ignorePatterns: ["dist/**", "node_modules/**"] },
   fmt: {
     ignorePatterns: [

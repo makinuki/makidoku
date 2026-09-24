@@ -24,6 +24,7 @@ import { GlobalSearch } from "./features/search/GlobalSearch";
 import { RecommendationsPage } from "./features/manga/RecommendationsPage";
 import { StatsPage } from "./features/stats/StatsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { UpdateBanner } from "./components/UpdateBanner";
 
 export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -74,6 +75,7 @@ export default function App() {
         </Routes>
         {searchOpen && <GlobalSearch mode={searchMode} onClose={() => setSearchOpen(false)} />}
       </ErrorBoundary>
+      <UpdateBanner />
     </AppShell>
   );
 }

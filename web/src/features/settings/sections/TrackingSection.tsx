@@ -163,8 +163,8 @@ export function TrackingSection() {
                     {tracker.authType === "oauth" && (
                       <>
                         {" "}
-                        Register <code className="text-zinc-400">{callbackUrl}</code> as the
-                        redirect URI.
+                        Register <code className="break-all text-zinc-400">{callbackUrl}</code> as
+                        the redirect URI.
                       </>
                     )}
                   </p>
@@ -177,7 +177,7 @@ export function TrackingSection() {
                         placeholder="Email or username"
                         aria-label={`${tracker.name} username`}
                         autoComplete="off"
-                        className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                        className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
                       />
                       <input
                         type="password"
@@ -186,7 +186,7 @@ export function TrackingSection() {
                         placeholder="Password"
                         aria-label={`${tracker.name} password`}
                         autoComplete="new-password"
-                        className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                        className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
                       />
                     </div>
                     <button
@@ -233,7 +233,7 @@ export function TrackingSection() {
                       onChange={(e) => setToken(e.target.value)}
                       placeholder={`${tracker.name} access token`}
                       aria-label={`${tracker.name} access token`}
-                      className="min-w-55 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                      className="min-w-55 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
                     />
                     <button
                       onClick={() => void saveToken(tracker.name)}

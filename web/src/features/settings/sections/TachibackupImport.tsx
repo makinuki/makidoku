@@ -165,7 +165,7 @@ export function TachibackupImport() {
                             [source.backupSourceId]: event.target.value,
                           }))
                         }
-                        className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
+                        className="max-w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-base sm:text-xs"
                       >
                         <option value="">No source (keep for later)</option>
                         {sources.map((candidate) => (

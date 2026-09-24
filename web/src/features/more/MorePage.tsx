@@ -15,6 +15,7 @@ import { api } from "../../api";
 import { Logo } from "../../components/Logo";
 import { ErrorState, LoadingState } from "../../components/States";
 import { Switch } from "../../components/Switch";
+import { InstallAppRow } from "./InstallAppRow";
 import { formatTimestamp } from "../../time";
 import { useDateFormat } from "../../hooks/useDateFormat";
 
@@ -123,6 +124,7 @@ export function MorePage() {
               </span>
             </Switch>
           </section>
+          <InstallAppRow />
           <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
             <MoreRow
               to="/downloads"

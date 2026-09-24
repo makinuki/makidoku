@@ -48,6 +48,19 @@ func Mount(r chi.Router) {
 
 		trimmed := strings.TrimPrefix(cleanPath, "/")
 		if _, err := fs.Stat(sub, trimmed); err == nil {
+			switch cleanPath {
+			case "/manifest.webmanifest":
+				// .webmanifest is absent from Go's builtin MIME table and from
+				// the Windows registry fallback, so ServeContent would sniff
+				// the manifest as text/plain. Set the type explicitly; no-cache
+				// keeps installs reading the manifest from the current binary.
+				w.Header().Set("Content-Type", "application/manifest+json")
+				w.Header().Set("Cache-Control", "no-cache")
+			case "/sw.js", "/registerSW.js":
+				// Revalidate on every load so a new binary's worker takes
+				// effect instead of a stale script from the HTTP cache.
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			if strings.HasPrefix(cleanPath, "/assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}

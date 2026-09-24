@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { DragDropProvider } from "@dnd-kit/react";
+import { DragDropProvider, KeyboardSensor, PointerSensor } from "@dnd-kit/react";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/react";
 import { isSortableOperation, useSortable } from "@dnd-kit/react/sortable";
+import { PointerActivationConstraints } from "@dnd-kit/dom";
 import { ArrowUpDown, ChevronDown, Ellipsis, GripVertical, Pause, Play } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "../../api";
@@ -37,6 +38,19 @@ import {
 // dropped on another chapter of the same source.
 const chapterType = "chapter";
 const sourceType = "source";
+
+// Touch drags start only after a short hold within a small movement budget,
+// so scrolling the queue past a grip handle never activates a drag. Mouse and
+// pen presses stay immediate: only the handles act as activators.
+const queueSensors = [
+  PointerSensor.configure({
+    activationConstraints: (event: PointerEvent) =>
+      event.pointerType === "touch"
+        ? [new PointerActivationConstraints.Delay({ value: 200, tolerance: 8 })]
+        : undefined,
+  }),
+  KeyboardSensor,
+];
 
 type RowAction =
   | "move-top"
@@ -307,7 +321,11 @@ export function DownloadsPage() {
       ) : queuedCount === 0 ? (
         <EmptyState title="No downloads" text="Select chapters from a title to start a download." />
       ) : (
-        <DragDropProvider onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <DragDropProvider
+          sensors={queueSensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
           <div className="space-y-5">
             {sections.map((section, index) => (
               <SourceSection

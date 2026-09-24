@@ -143,7 +143,7 @@ export function AppShell({
         </>
       )}
       <div className="min-w-0 flex-1 md:pl-[76px] lg:pl-0">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-zinc-800 bg-zinc-950/90 px-4 backdrop-blur lg:px-8">
+        <header className="sticky top-0 z-20 flex h-[calc(4rem+var(--sat-top))] items-center gap-3 border-b border-zinc-800 bg-zinc-950/90 px-4 pt-(--sat-top) backdrop-blur lg:px-8">
           <Logo className="size-7 shrink-0 md:hidden" />
           <button
             onClick={onSearch}

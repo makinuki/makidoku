@@ -142,7 +142,7 @@ export function CustomInfoModal({
                     setValues((current) => ({ ...current, [field.key]: event.target.value }))
                   }
                   rows={3}
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
                 />
               ) : (
                 <input
@@ -151,7 +151,7 @@ export function CustomInfoModal({
                   onChange={(event) =>
                     setValues((current) => ({ ...current, [field.key]: event.target.value }))
                   }
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
                 />
               )}
               <button

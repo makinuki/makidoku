@@ -100,7 +100,7 @@ function SettingRow({ setting }: { setting: RuntimeSetting }) {
         />
       ) : setting.type === "duration" ? (
         <select
-          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           value={String(parsed)}
           disabled={disabled}
           onChange={(event) => void save(setting, Number(event.target.value))}
@@ -116,7 +116,7 @@ function SettingRow({ setting }: { setting: RuntimeSetting }) {
         </select>
       ) : options ? (
         <select
-          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           value={String(parsed)}
           disabled={disabled}
           onChange={(event) => void save(setting, event.target.value)}
@@ -130,7 +130,7 @@ function SettingRow({ setting }: { setting: RuntimeSetting }) {
       ) : (
         <input
           type="number"
-          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           defaultValue={String(parsed)}
           disabled={disabled}
           onBlur={(event) => {

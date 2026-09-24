@@ -3,11 +3,16 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  /* Interactive elements keep their active-state styles as tap feedback. */
+  -webkit-tap-highlight-color: transparent;
   /* Bottom navigation tokens. --nav-height matches the mobile bottom bar
      height; --sat-bottom carries the safe-area inset. Main content reserves
      this space only when a bottom bar is present (see .has-bottom-nav). */
   --nav-height: 64px;
   --sat-bottom: env(safe-area-inset-bottom, 0px);
+  /* Top inset token: the sticky header grows into the notch area in
+     standalone display mode (viewport-fit=cover). */
+  --sat-top: env(safe-area-inset-top, 0px);
 }
 body {
   margin: 0;

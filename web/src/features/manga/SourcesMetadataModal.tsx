@@ -126,7 +126,7 @@ export function SourcesMetadataModal({
           aria-label="Merge source"
           value={sourceId}
           onChange={(event) => setSourceId(event.target.value)}
-          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
         >
           <option value="">Choose a source</option>
           {sources.map((source) => (
@@ -140,7 +140,7 @@ export function SourcesMetadataModal({
           value={sourceMangaId}
           onChange={(event) => setSourceMangaId(event.target.value)}
           placeholder="Title ID or link"
-          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
         />
         <button
           onClick={() => void add()}
@@ -156,7 +156,7 @@ export function SourcesMetadataModal({
         value={url}
         onChange={(event) => setUrl(event.target.value)}
         placeholder="Series page link (optional)"
-        className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+        className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
       />
 
       <h3 className="mt-6 mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">

@@ -383,7 +383,7 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
                 onChange={(event) => setSaveName(event.target.value)}
                 placeholder={query.trim()}
                 aria-label="Saved search name"
-                className="min-h-11 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm outline-none"
+                className="min-h-11 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-base outline-none sm:text-sm"
               />
               <button
                 type="submit"
@@ -792,7 +792,7 @@ function PluginsTab() {
             value={cookieSource}
             onChange={(event) => setCookieSource(event.target.value)}
             aria-label="Plugin"
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           >
             <option value="">Plugin</option>
             {sources.map((source) => (
@@ -805,13 +805,13 @@ function PluginsTab() {
             value={cookie}
             onChange={(event) => setCookie(event.target.value)}
             placeholder="Clearance cookie"
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           />
           <input
             value={userAgent}
             onChange={(event) => setUserAgent(event.target.value)}
             placeholder="Browser user agent"
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           />
         </div>
         <button
@@ -1068,7 +1068,7 @@ function FilterControl({
           aria-label={schema.title}
           value={typeof value === "string" ? value : ""}
           onChange={(event) => onChange(event.target.value)}
-          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base text-zinc-100 sm:text-sm"
         >
           {schema.options.map((option) => (
             <option key={option.value} value={option.value}>
@@ -1096,7 +1096,7 @@ function FilterControl({
                 else delete next[option.value];
                 onChange(next);
               }}
-              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100"
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-base text-zinc-100 sm:text-xs"
             >
               <option value="">Any</option>
               <option value="+">Include</option>
@@ -1115,7 +1115,7 @@ function FilterControl({
         value={typeof value === "string" ? value : ""}
         placeholder={schema.placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+        className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base text-zinc-100 sm:text-sm"
       />
     </label>
   );

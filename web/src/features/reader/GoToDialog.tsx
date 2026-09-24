@@ -40,7 +40,7 @@ export function GoToDialog({
             inputMode="numeric"
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1.5 text-sm"
+            className="min-w-0 flex-1 rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1.5 text-base sm:text-sm"
           />
           <button
             type="submit"

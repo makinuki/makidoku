@@ -72,7 +72,7 @@ export function LibrarySection() {
             onChange={(e) => setName(e.target.value)}
             placeholder="New category"
             aria-label="New category"
-            className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+            className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
           />
           <button
             onClick={() => void addCategory()}

@@ -482,7 +482,7 @@ export function DetailsPage() {
                 setChapterSort(next);
                 persistChapterView({ sort: next });
               }}
-              className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+              className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-base text-zinc-200 sm:text-xs"
             >
               <option value="number-desc">Number, newest first</option>
               <option value="number-asc">Number, oldest first</option>
@@ -499,7 +499,7 @@ export function DetailsPage() {
                 setChapterFilter(next);
                 persistChapterView({ filter: next });
               }}
-              className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+              className="min-h-11 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-base text-zinc-200 sm:text-xs"
             >
               <option value="all">All chapters</option>
               <option value="unread">Unread only</option>

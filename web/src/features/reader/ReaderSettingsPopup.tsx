@@ -54,7 +54,7 @@ export function ReaderSettingsPopup({
                 mode: (event.target.value || null) as ReaderMode | null,
               })
             }
-            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
+            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-base text-(--reader-text) sm:text-sm"
           >
             <option value="">Default ({globals.mode})</option>
             <option value="single">Single</option>
@@ -71,7 +71,7 @@ export function ReaderSettingsPopup({
                 direction: (event.target.value || null) as ReaderDirection | null,
               })
             }
-            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
+            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-base text-(--reader-text) sm:text-sm"
           >
             <option value="">Default ({globals.direction})</option>
             <option value="ltr">Left to right</option>
@@ -87,7 +87,7 @@ export function ReaderSettingsPopup({
                 fit: (event.target.value || null) as ReaderFit | null,
               })
             }
-            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
+            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-base text-(--reader-text) sm:text-sm"
           >
             <option value="">Default ({globals.fit})</option>
             <option value="width">Fit width</option>
@@ -107,7 +107,7 @@ export function ReaderSettingsPopup({
             onChange={(event) =>
               onDisplaySetting("reader.navigation", event.target.value as ReaderNavigation)
             }
-            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
+            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-base text-(--reader-text) sm:text-sm"
           >
             <option value="default-manga">Default manga</option>
             <option value="l-shaped">L-shaped</option>
@@ -132,7 +132,7 @@ export function ReaderSettingsPopup({
             onChange={(event) =>
               onDisplaySetting("reader.theme", event.target.value as ReaderTheme)
             }
-            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-sm text-(--reader-text)"
+            className="mt-1 w-full rounded-lg border border-(--reader-border) bg-(--reader-canvas) px-2 py-1 text-base text-(--reader-text) sm:text-sm"
           >
             <option value="dark">Dark</option>
             <option value="amoled">AMOLED black</option>

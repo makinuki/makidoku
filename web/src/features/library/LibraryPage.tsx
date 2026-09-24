@@ -296,7 +296,7 @@ export function LibraryPage() {
             const sort = event.target.value as LibrarySort;
             updateView({ sort, direction: naturalDirection(sort) });
           }}
-          className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm"
+          className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-base sm:text-sm"
         >
           {librarySorts.map((sort) => (
             <option key={sort} value={sort}>

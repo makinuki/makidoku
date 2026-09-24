@@ -114,17 +114,20 @@ func TestNetworkMangaDexDownload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if err := queue.Drain(ctx); err != nil {
+	if _, err := queue.Drain(ctx); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	stored, err := db.NewRepository(handle).GetQueueItem(items[0].ID)
+	pages, err := db.NewRepository(handle).ListPages(items[0].ChapterID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != db.QueueCompleted || stored.TotalPages < 1 {
-		t.Fatalf("queue item = %+v", stored)
+	if len(pages) < 1 {
+		t.Fatalf("chapter pages = %d", len(pages))
 	}
-	chapter, err := db.NewRepository(handle).GetChapter(stored.ChapterID)
+	if _, err := db.NewRepository(handle).GetQueueItem(items[0].ID); err == nil {
+		t.Fatal("finished row survived the drain")
+	}
+	chapter, err := db.NewRepository(handle).GetChapter(items[0].ChapterID)
 	if err != nil || chapter.DownloadPath == nil {
 		t.Fatalf("chapter = %+v, err = %v", chapter, err)
 	}
@@ -133,8 +136,8 @@ func TestNetworkMangaDexDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	if len(reader.File) != stored.TotalPages+1 {
-		t.Fatalf("archive entries = %d, want %d pages plus ComicInfo.xml", len(reader.File), stored.TotalPages)
+	if len(reader.File) != len(pages)+1 {
+		t.Fatalf("archive entries = %d, want %d pages plus ComicInfo.xml", len(reader.File), len(pages))
 	}
 	foundComicInfo := false
 	for _, file := range reader.File {

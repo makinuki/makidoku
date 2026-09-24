@@ -186,19 +186,6 @@ export function DownloadsPage() {
     }
   };
 
-  const clearFinished = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await api.clearFinishedDownloads();
-      await refresh();
-    } catch (e) {
-      setError(messageOf(e, "Unable to clear finished downloads"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const controlRow = async (itemId: number, action: "retry" | "cancel", fallback: string) => {
     setError("");
     try {
@@ -297,14 +284,6 @@ export function DownloadsPage() {
                   }}
                 >
                   Cancel all
-                </MenuItem>
-                <MenuItem
-                  onSelect={() => {
-                    close();
-                    void clearFinished();
-                  }}
-                >
-                  Clear finished
                 </MenuItem>
               </>
             )}

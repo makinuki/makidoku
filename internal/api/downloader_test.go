@@ -26,7 +26,6 @@ type fakeDownloads struct {
 	resumedID  int64
 	canceledID int64
 	retriedID  int64
-	cleared    int64
 	pausedAll  bool
 	cancelAll  int64
 	cancelIDs  []int64
@@ -59,10 +58,6 @@ func (f *fakeDownloads) CancelAll() (int64, error) { return f.cancelAll, nil }
 func (f *fakeDownloads) Reorder(ids []int64) error {
 	f.order = append([]int64(nil), ids...)
 	return nil
-}
-func (f *fakeDownloads) ClearFinished() (int64, error) {
-	f.items = nil
-	return f.cleared, nil
 }
 func (f *fakeDownloads) Subscribe() (<-chan downloader.Event, func()) {
 	return f.events, func() {}
@@ -125,28 +120,6 @@ func TestDownloadControlRoutes(t *testing.T) {
 		if *want != 42 {
 			t.Fatalf("%s id = %d", route, *want)
 		}
-	}
-}
-
-func TestClearFinishedDownloads(t *testing.T) {
-	downloads := newFakeDownloads()
-	downloads.cleared = 3
-	downloads.items = []db.DownloadQueueItem{{DownloadQueue: db.DownloadQueue{ID: 7, Status: db.QueueCompleted}}}
-	handler := downloadRouter(downloads)
-
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/download/clear", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
-	}
-	var payload struct {
-		Removed int64 `json:"removed"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.Removed != 3 {
-		t.Fatalf("removed = %d", payload.Removed)
 	}
 }
 

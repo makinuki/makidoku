@@ -67,7 +67,7 @@ describe("buildSections", () => {
     expect(sections.map((section) => section.sourceId)).toEqual(["s2", "s1"]);
   });
 
-  it("drops finished and canceled rows", () => {
+  it("drops terminal rows", () => {
     const sections = buildSections([
       row({ id: 1 }),
       row({ id: 2, status: "COMPLETED" }),

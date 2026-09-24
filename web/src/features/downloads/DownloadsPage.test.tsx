@@ -78,17 +78,13 @@ function stubQueue(items: QueueItem[], paused = false) {
         return snapshot();
       }
       if (path === "/api/download/cancel-all") {
-        current = current.map((item) => ({ ...item, status: "CANCELED" }));
+        current = [];
         return snapshot();
       }
       if (path === "/api/download/cancel") {
         const ids = (body as { itemIds: number[] }).itemIds;
         current = current.filter((item) => !ids.includes(item.id));
         return snapshot();
-      }
-      if (path === "/api/download/clear") {
-        current = [];
-        return Response.json({ removed: 1 });
       }
       if (path === "/api/download/reorder") {
         const ids = (body as { itemIds: number[] }).itemIds;
@@ -139,7 +135,7 @@ describe("DownloadsPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("groups the queue by source and hides finished rows", async () => {
+  it("groups the queue by source and hides terminal rows", async () => {
     stubQueue([
       row({ id: 1 }),
       row({ id: 2 }),
@@ -157,7 +153,8 @@ describe("DownloadsPage", () => {
     expect(sectionNames()).toEqual(["MangaDex", "Asura Scans"]);
     expect(screen.getByText("(2)")).toBeInTheDocument();
     expect(screen.getByText("(1)")).toBeInTheDocument();
-    // Completed rows leave the queue; the count pill follows the live rows.
+    // A terminal row is not part of the queue; the count pill follows the
+    // live rows.
     expect(screen.queryByText("Chapter 3")).not.toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
   });
@@ -289,21 +286,17 @@ describe("DownloadsPage", () => {
     );
   });
 
-  it("cancels the queue and clears finished rows from the page menu", async () => {
-    const calls = stubQueue([row({ id: 1 }), row({ id: 2, status: "COMPLETED" })]);
+  it("cancels every row from the page menu", async () => {
+    const calls = stubQueue([row({ id: 1 }), row({ id: 2, status: "FAILED" })]);
     renderPage();
     await screen.findByText("Chapter 1");
     fireEvent.click(screen.getByRole("button", { name: "Queue actions" }));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Cancel all"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Cancel all" }));
     await waitFor(() =>
       expect(calls.some((call) => call.path === "/api/download/cancel-all")).toBe(true),
     );
     await screen.findByRole("heading", { name: "No downloads" });
-    fireEvent.click(screen.getByRole("button", { name: "Queue actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Clear finished" }));
-    await waitFor(() =>
-      expect(calls.some((call) => call.path === "/api/download/clear")).toBe(true),
-    );
   });
 
   it("pauses and resumes the downloader from the queue control", async () => {

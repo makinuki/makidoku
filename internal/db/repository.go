@@ -975,8 +975,8 @@ func (r *Repository) NextChapterIDs(mangaID, chapterID string, limit int) ([]str
 	}
 	var ids []string
 	err := r.db.Select(&ids, `SELECT c.id FROM chapters c LEFT JOIN download_queue q ON q.chapter_id=c.id
-		WHERE c.manga_id=? AND c.chapter_number>? AND c.downloaded=0 AND (q.status IS NULL OR q.status IN (?,?))
-		ORDER BY c.chapter_number LIMIT ?`, mangaID, *number, QueueFailed, QueueCanceled, limit)
+		WHERE c.manga_id=? AND c.chapter_number>? AND c.downloaded=0 AND (q.status IS NULL OR q.status = ?)
+		ORDER BY c.chapter_number LIMIT ?`, mangaID, *number, QueueFailed, limit)
 	if ids == nil {
 		ids = []string{}
 	}
@@ -1502,6 +1502,9 @@ func (r *Repository) ListTrackerSyncJobs() ([]TrackerSyncJob, error) {
 	return jobs, err
 }
 
+// EnqueueChapter adds a chapter to the queue, or restarts a failed row so the
+// retry begins from scratch. Any other existing row is already queued or
+// downloading, so it keeps its position and progress.
 func (r *Repository) EnqueueChapter(chapterID string) (DownloadQueueItem, error) {
 	now := time.Now().Unix()
 	_, err := r.db.Exec(`INSERT INTO download_queue(
@@ -1511,38 +1514,36 @@ func (r *Repository) EnqueueChapter(chapterID string) (DownloadQueueItem, error)
 		(SELECT COALESCE(MAX(position), 0) + 1 FROM download_queue))
 	ON CONFLICT(chapter_id) DO UPDATE SET
 		status = CASE
-			WHEN download_queue.status IN (?, ?) THEN excluded.status
+			WHEN download_queue.status = ? THEN excluded.status
 			ELSE download_queue.status
 		END,
 		progress = CASE
-			WHEN download_queue.status IN (?, ?) THEN 0
+			WHEN download_queue.status = ? THEN 0
 			ELSE download_queue.progress
 		END,
 		total_pages = CASE
-			WHEN download_queue.status IN (?, ?) THEN 0
+			WHEN download_queue.status = ? THEN 0
 			ELSE download_queue.total_pages
 		END,
 		downloaded_pages = CASE
-			WHEN download_queue.status IN (?, ?) THEN 0
+			WHEN download_queue.status = ? THEN 0
 			ELSE download_queue.downloaded_pages
 		END,
 		error_message = CASE
-			WHEN download_queue.status IN (?, ?) THEN NULL
+			WHEN download_queue.status = ? THEN NULL
 			ELSE download_queue.error_message
 		END,
 		queued_at = CASE
-			WHEN download_queue.status IN (?, ?) THEN excluded.queued_at
+			WHEN download_queue.status = ? THEN excluded.queued_at
 			ELSE download_queue.queued_at
 		END,
 		position = CASE
-			WHEN download_queue.status IN (?, ?) THEN excluded.position
+			WHEN download_queue.status = ? THEN excluded.position
 			ELSE download_queue.position
 		END`,
 		chapterID, QueuePending, now,
-		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled,
-		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled,
-		QueueFailed, QueueCanceled, QueueFailed, QueueCanceled,
-		QueueFailed, QueueCanceled)
+		QueueFailed, QueueFailed, QueueFailed, QueueFailed,
+		QueueFailed, QueueFailed, QueueFailed)
 	if err != nil {
 		return DownloadQueueItem{}, fmt.Errorf("enqueue chapter %s: %w", chapterID, err)
 	}
@@ -1612,7 +1613,36 @@ func (r *Repository) MarkQueueFailed(id int64, queueErr error) error {
 	return requireChange(result, "mark queue item failed")
 }
 
+// MarkChapterDownloaded records a chapter artifact. The queue is left alone, so
+// this is the entry point for chapters that were never queued (imports, manual
+// records); downloads that ran through the queue go through
+// CompleteQueueDownload instead.
 func (r *Repository) MarkChapterDownloaded(chapterID, path string) error {
+	return r.writeDownloadedChapter(chapterID, path, nil)
+}
+
+// CompleteQueueDownload records a chapter artifact and drops the queue row it
+// was downloaded for, in one transaction. The delete only matches a row that is
+// still downloading, so an item canceled while the archive was being written
+// fails here instead of being marked downloaded.
+func (r *Repository) CompleteQueueDownload(chapterID, path string) error {
+	return r.writeDownloadedChapter(chapterID, path, func(tx *sqlx.Tx) error {
+		result, err := tx.Exec(`DELETE FROM download_queue WHERE chapter_id = ? AND status = ?`,
+			chapterID, QueueDownloading)
+		if err != nil {
+			return err
+		}
+		if err := requireChange(result, "complete queue item"); err != nil {
+			return fmt.Errorf("download canceled before completion")
+		}
+		return nil
+	})
+}
+
+// writeDownloadedChapter marks the chapter downloaded and then runs the
+// optional queue bookkeeping in the same transaction, so a failure there rolls
+// the chapter state back with it.
+func (r *Repository) writeDownloadedChapter(chapterID, path string, queueStep func(*sqlx.Tx) error) error {
 	tx, err := r.db.Beginx()
 	if err != nil {
 		return err
@@ -1625,25 +1655,9 @@ func (r *Repository) MarkChapterDownloaded(chapterID, path string) error {
 	if err := requireChange(result, "mark chapter downloaded"); err != nil {
 		return err
 	}
-	// The queue row only advances while still downloading: an item canceled
-	// during the archive write must not flip back to completed. Chapters
-	// without a queue row (imports, manual records) are marked regardless.
-	var queueID int64
-	hasQueue := false
-	if err := tx.Get(&queueID, `SELECT id FROM download_queue WHERE chapter_id = ?`, chapterID); err == nil {
-		hasQueue = true
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if hasQueue {
-		result, err := tx.Exec(`UPDATE download_queue SET status = ?, progress = 100,
-			downloaded_pages = total_pages, error_message = NULL WHERE chapter_id = ? AND status = ?`,
-			QueueCompleted, chapterID, QueueDownloading)
-		if err != nil {
+	if queueStep != nil {
+		if err := queueStep(tx); err != nil {
 			return err
-		}
-		if err := requireChange(result, "complete queue item"); err != nil {
-			return fmt.Errorf("download canceled before completion")
 		}
 	}
 	return tx.Commit()
@@ -1657,9 +1671,15 @@ func (r *Repository) ResumeQueueItem(id int64) error {
 	return r.transitionQueueItem(id, QueuePending, QueuePaused)
 }
 
+// CancelQueueItem drops a row from the queue. Cancelling is terminal: the row
+// has no work left to do, so nothing is kept for it to resume from.
 func (r *Repository) CancelQueueItem(id int64) error {
-	return r.transitionQueueItem(id, QueueCanceled,
-		QueuePending, QueueDownloading, QueuePaused, QueueFailed)
+	result, err := r.db.Exec(`DELETE FROM download_queue WHERE id = ? AND status IN (?, ?, ?, ?)`,
+		id, QueuePending, QueueDownloading, QueuePaused, QueueFailed)
+	if err != nil {
+		return err
+	}
+	return requireChange(result, "cancel queue item")
 }
 
 // RetryQueueItem returns a failed download to the pending state so the
@@ -1678,45 +1698,33 @@ func (r *Repository) ReleaseQueueItem(id int64) error {
 	return err
 }
 
-// ClearFinishedQueueItems deletes terminal rows (completed, canceled and
-// failed). Terminal rows are history only; deleting them touches no
-// downloaded chapter state.
-func (r *Repository) ClearFinishedQueueItems() (int64, error) {
-	result, err := r.db.Exec(`DELETE FROM download_queue WHERE status IN (?, ?, ?)`,
-		QueueCompleted, QueueCanceled, QueueFailed)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-// CancelAllQueueItems cancels every row that is still active and returns the
-// affected ids in queue order, so callers can publish one event per item.
-func (r *Repository) CancelAllQueueItems() ([]int64, error) {
+// CancelAllQueueItems removes every row that can still make progress and
+// returns them in queue order, so callers can announce one removal per row.
+func (r *Repository) CancelAllQueueItems() ([]DownloadQueueItem, error) {
 	tx, err := r.db.Beginx()
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var ids []int64
-	if err := tx.Select(&ids, `SELECT id FROM download_queue
-		WHERE status IN (?, ?, ?, ?) ORDER BY position, queued_at, id`,
+	var items []DownloadQueueItem
+	if err := tx.Select(&items, queueSelect+`
+		WHERE q.status IN (?, ?, ?, ?) ORDER BY q.position, q.queued_at, q.id`,
 		QueuePending, QueueDownloading, QueuePaused, QueueFailed); err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
+	if len(items) == 0 {
 		return nil, nil
 	}
-	if _, err := tx.Exec(`UPDATE download_queue SET status = ?
+	if _, err := tx.Exec(`DELETE FROM download_queue
 		WHERE status IN (?, ?, ?, ?)`,
-		QueueCanceled, QueuePending, QueueDownloading, QueuePaused, QueueFailed); err != nil {
+		QueuePending, QueueDownloading, QueuePaused, QueueFailed); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return ids, nil
+	return items, nil
 }
 
 // SetQueueOrder rewrites the claim order from the given item ids in display

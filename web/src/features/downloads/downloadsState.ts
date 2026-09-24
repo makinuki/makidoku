@@ -1,7 +1,8 @@
 import type { QueueItem } from "../../types";
 
-// The queue shows the rows that can still make progress. Finished and canceled
-// rows leave the view; they are purged through "Clear finished".
+// The queue shows the rows that can still make progress. A finished or
+// canceled row leaves the queue as it happens, so the filter only guards
+// against a terminal row arriving in an event.
 const liveStatuses = ["PENDING", "DOWNLOADING", "PAUSED", "FAILED"];
 
 export function isLiveRow(item: QueueItem): boolean {

@@ -23,7 +23,6 @@ type downloadSnapshot struct {
 func (s *Server) mountDownloads(r chi.Router) {
 	r.Get("/download", s.downloadSnapshot)
 	r.Post("/download", s.enqueueDownload)
-	r.Post("/download/clear", s.clearFinishedDownloads)
 	r.Post("/download/pause-all", s.pauseAllDownloads)
 	r.Post("/download/resume-all", s.resumeAllDownloads)
 	r.Post("/download/cancel-all", s.cancelAllDownloads)
@@ -40,15 +39,6 @@ func (s *Server) mountDownloads(r chi.Router) {
 
 func (s *Server) retryDownload(w http.ResponseWriter, r *http.Request) {
 	s.controlDownload(w, r, s.downloads.Retry)
-}
-
-func (s *Server) clearFinishedDownloads(w http.ResponseWriter, r *http.Request) {
-	removed, err := s.downloads.ClearFinished()
-	if err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]int64{"removed": removed})
 }
 
 // pauseAllDownloads and resumeAllDownloads control the downloader itself: a
@@ -75,7 +65,7 @@ func (s *Server) cancelAllDownloads(w http.ResponseWriter, r *http.Request) {
 }
 
 // cancelDownloads cancels the listed queue items. The batch is best effort:
-// rows that finished or were cleared meanwhile are skipped instead of failing
+// rows that finished or were canceled meanwhile are skipped instead of failing
 // the whole request.
 func (s *Server) cancelDownloads(w http.ResponseWriter, r *http.Request) {
 	ids, ok := decodeQueueItemIDs(w, r)

@@ -112,6 +112,8 @@ The downloader stores its queue in SQLite and resumes items that were interrupte
 
 Every queue entry carries a position and workers claim the lowest position first, so the order a client shows is the order downloads start in. Clients rewrite that order through the reorder endpoint and it is kept across restarts. The downloader itself can be paused: a paused downloader claims nothing, and the chapter it was fetching returns to the queue with the pages it already saved. Pausing lasts for the session, so a restart resumes downloads.
 
+The queue holds only the rows that can still make progress. A chapter leaves it when its artifact is written, cancelling removes the row outright, and a failed row stays with its error until it is retried or cancelled. Rows that finished under an earlier version are dropped when the queue is upgraded.
+
 Downloaded chapters are stored under `<data-dir>/downloads/<source>/<title>/` by default. CBZ archives contain zero-padded page names and `ComicInfo.xml`. A title can instead use an extracted chapter directory.
 
 ```bash
@@ -153,7 +155,7 @@ curl -X POST http://127.0.0.1:6254/api/download/reorder \
 
 `GET /api/download` answers with the queue rows, the aggregate counters, and the downloader paused flag; the enqueue, pause-all, resume-all, cancel-all and cancel endpoints answer with the same payload so a client does not need a follow-up read.
 
-Connect to `ws://127.0.0.1:6254/api/download/events` for queued, progress, pending, paused, resumed, canceled, completed and failed events, and for the item-less state and reordered events. Every event includes the aggregate counters and the paused flag, and an item event also carries the queue row it concerns. A state event announces that the downloader was paused or resumed; a reordered event announces that the order changed, so clients refetch the snapshot for the order.
+Connect to `ws://127.0.0.1:6254/api/download/events` for queued, progress, pending, paused, resumed, canceled, completed and failed events, and for the item-less state and reordered events. Every event includes the aggregate counters and the paused flag, and an item event also carries the queue row it concerns. The completed and canceled events announce a row that has just left the queue, so a client drops it. A state event announces that the downloader was paused or resumed; a reordered event announces that the order changed, so clients refetch the snapshot for the order.
 
 ## Anti-bot challenges
 

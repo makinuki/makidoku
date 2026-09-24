@@ -180,18 +180,20 @@ func TestQueueStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Cancelling removes the row: a canceled download has no work left, so the
+	// queue keeps nothing for it.
 	items, err := repo.ListQueue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("queue length = %d", len(items))
-	}
-	if items[0].Status != QueueCanceled || items[0].Progress != 50 {
-		t.Fatalf("queue item = %+v", items[0])
+	if len(items) != 0 {
+		t.Fatalf("queue after cancel = %+v", items)
 	}
 	if err := repo.ResumeQueueItem(item.ID); err == nil {
 		t.Fatal("a canceled item must not resume")
+	}
+	if err := repo.CancelQueueItem(item.ID); err == nil {
+		t.Fatal("cancelling a removed item must fail")
 	}
 }
 
@@ -333,8 +335,8 @@ func TestMangaDetailsFetchedAtLifecycle(t *testing.T) {
 }
 
 // A queue item canceled while the archive was being written must not flip
-// back to completed: the chapter stays unmarked and the row stays canceled.
-func TestMarkChapterDownloadedRespectsCanceledQueueItem(t *testing.T) {
+// back to completed: the chapter stays unmarked.
+func TestCompleteQueueDownloadRespectsCanceledItem(t *testing.T) {
 	repo := testRepository(t)
 	manga, err := repo.UpsertManga(Manga{SourceID: "mangadex", SourceMangaID: "title-id", Title: "Title", Status: "ongoing"})
 	if err != nil {
@@ -355,8 +357,8 @@ func TestMarkChapterDownloadedRespectsCanceledQueueItem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := repo.MarkChapterDownloaded(chapter.ID, `C:\manga\chapter.cbz`); err == nil {
-		t.Fatal("marked a chapter whose download was canceled")
+	if err := repo.CompleteQueueDownload(chapter.ID, `C:\manga\chapter.cbz`); err == nil {
+		t.Fatal("completed a chapter whose download was canceled")
 	}
 	stored, err := repo.GetChapter(chapter.ID)
 	if err != nil {
@@ -365,12 +367,8 @@ func TestMarkChapterDownloadedRespectsCanceledQueueItem(t *testing.T) {
 	if stored.Downloaded || stored.DownloadPath != nil {
 		t.Fatalf("canceled chapter kept a downloaded state: %+v", stored)
 	}
-	row, err := repo.GetQueueItem(item.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if row.Status != QueueCanceled {
-		t.Fatalf("queue status = %q, want CANCELED", row.Status)
+	if _, err := repo.GetQueueItem(item.ID); err == nil {
+		t.Fatal("cancelled row stayed in the queue")
 	}
 }
 
@@ -1260,6 +1258,73 @@ func TestQueueOrderMigrationKeepsExistingRows(t *testing.T) {
 	}
 }
 
+// The live-rows migration purges the rows an earlier version left in a terminal
+// state, so a queue snapshot never carries finished work forever.
+func TestDownloadQueueLiveRowsMigrationDropsTerminalRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "makidoku.db")
+	handle, err := Open(path)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if _, err := handle.Exec(`INSERT INTO sources(
+		id, name, version, abi_version, lang, base_url, wasm_path, installed_at
+	) VALUES('mangadex', 'MangaDex', '1.0.0', 1, 'multi', 'https://mangadex.org', 'mangadex.wasm', ?)`, time.Now().Unix()); err != nil {
+		t.Fatalf("insert source: %v", err)
+	}
+	repo := NewRepository(handle)
+	manga, err := repo.UpsertManga(Manga{
+		SourceID: "mangadex", SourceMangaID: "queue-live-rows", Title: "Queue Live Rows",
+		Status: "ongoing", CoverURL: "cover", DownloadFormat: "cbz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue := func(sourceChapterID string) DownloadQueueItem {
+		t.Helper()
+		chapter, err := repo.UpsertChapter(Chapter{MangaID: manga.ID, SourceChapterID: sourceChapterID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		item, err := repo.EnqueueChapter(chapter.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	pending := enqueue("live-0")
+	completed := enqueue("live-1")
+	canceled := enqueue("live-2")
+	failed := enqueue("live-3")
+	for status, item := range map[string]DownloadQueueItem{
+		QueueCompleted: completed,
+		QueueCanceled:  canceled,
+		QueueFailed:    failed,
+	} {
+		if _, err := handle.Exec(`UPDATE download_queue SET status = ? WHERE id = ?`, status, item.ID); err != nil {
+			t.Fatalf("seed %s row: %v", status, err)
+		}
+	}
+
+	// Roll the record back so reopening the file runs the migration again.
+	if _, err := handle.Exec(`DELETE FROM _migrations WHERE name = 'migrations/000022_download_queue_live_rows.up.sql'`); err != nil {
+		t.Fatalf("clear migration record: %v", err)
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+
+	handle, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen database: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	repo = NewRepository(handle)
+	ids := listQueueIDs(t, repo)
+	if len(ids) != 2 || ids[0] != pending.ID || ids[1] != failed.ID {
+		t.Fatalf("queue after migration = %v, want [%d %d]", ids, pending.ID, failed.ID)
+	}
+}
+
 // listQueueIDs returns the queue row ids in stored order, the order both the
 // queue screen and the worker follow.
 func listQueueIDs(t *testing.T, repo *Repository) []int64 {
@@ -1273,6 +1338,20 @@ func listQueueIDs(t *testing.T, repo *Repository) []int64 {
 		ids = append(ids, item.ID)
 	}
 	return ids
+}
+
+// assertQueueOrder checks that a slice of queue rows is in the expected id
+// order, which is how the repository reports cancelled rows.
+func assertQueueOrder(t *testing.T, items []DownloadQueueItem, want []int64) {
+	t.Helper()
+	if len(items) != len(want) {
+		t.Fatalf("queue items = %+v, want %v", items, want)
+	}
+	for index := range want {
+		if items[index].ID != want[index] {
+			t.Fatalf("queue items = %+v, want %v", items, want)
+		}
+	}
 }
 
 func assertIDOrder(t *testing.T, ids, want []int64) {
@@ -1389,40 +1468,34 @@ func TestCancelAllQueueItemsAndRelease(t *testing.T) {
 		t.Fatalf("released = %+v", released)
 	}
 
-	// Cancel all flips every active row and reports them in queue order.
-	ids, err := repo.CancelAllQueueItems()
+	// Cancel all removes every active row and reports them in queue order.
+	removed, err := repo.CancelAllQueueItems()
 	if err != nil {
 		t.Fatalf("cancel all: %v", err)
 	}
-	assertIDOrder(t, ids, []int64{first.ID, second.ID})
+	assertQueueOrder(t, removed, []int64{first.ID, second.ID})
 	items, err := repo.ListQueue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, item := range items {
-		if item.Status != QueueCanceled {
-			t.Fatalf("status = %q, want %q", item.Status, QueueCanceled)
-		}
+	if len(items) != 0 {
+		t.Fatalf("queue after cancel all = %+v", items)
 	}
 
-	// A release must not resurrect a canceled row, and a second cancel-all
-	// with nothing active reports no ids.
+	// A release must not resurrect a removed row, and a second cancel-all with
+	// nothing active reports nothing.
 	if err := repo.ReleaseQueueItem(claimed.ID); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := repo.GetQueueItem(claimed.ID)
+	if _, err := repo.GetQueueItem(claimed.ID); err == nil {
+		t.Fatal("removed row came back")
+	}
+	removed, err = repo.CancelAllQueueItems()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != QueueCanceled {
-		t.Fatalf("status = %q, want %q", stored.Status, QueueCanceled)
-	}
-	ids, err = repo.CancelAllQueueItems()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ids) != 0 {
-		t.Fatalf("second cancel all = %v", ids)
+	if len(removed) != 0 {
+		t.Fatalf("second cancel all = %+v", removed)
 	}
 }
 

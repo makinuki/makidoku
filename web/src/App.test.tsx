@@ -2805,7 +2805,7 @@ describe("settings credential feedback", () => {
     expect(screen.getByText("Yosuga no Sora")).toBeInTheDocument();
   });
 
-  it("retries failed downloads and clears finished rows", async () => {
+  it("retries failed downloads", async () => {
     const mangaId = "0198c0de-7a11-7000-8000-00000000beef";
     const chapterId = "0198c0de-7a22-7000-8000-00000000cafe";
     // jsdom has no WebSocket; a silent stub keeps the page's subscription
@@ -2819,7 +2819,6 @@ describe("settings credential feedback", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     window.history.pushState({}, "", "/downloads");
     let retries = 0;
-    let cleared = 0;
     const failedItem = {
       id: 5,
       mangaId,
@@ -2832,14 +2831,7 @@ describe("settings credential feedback", () => {
       progress: 40,
       errorMessage: "connection reset",
     };
-    const doneItem = {
-      ...failedItem,
-      id: 6,
-      status: "COMPLETED",
-      progress: 100,
-      errorMessage: null,
-    };
-    let items: Array<Record<string, unknown>> = [failedItem, doneItem];
+    let items: Array<Record<string, unknown>> = [failedItem];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2857,11 +2849,6 @@ describe("settings credential feedback", () => {
           );
           return new Response(null, { status: 204 });
         }
-        if (path === "/api/download/clear") {
-          cleared++;
-          items = [];
-          return Response.json({ removed: 1 });
-        }
         return Response.json([]);
       }),
     );
@@ -2872,8 +2859,7 @@ describe("settings credential feedback", () => {
     );
     expect(await screen.findByText("connection reset")).toBeInTheDocument();
 
-    // A failed row is retried from its own menu; the finished row is purged
-    // from the page menu.
+    // A failed row is retried from its own menu.
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Actions for Chapter 1 of Yosuga no Sora",
@@ -2882,11 +2868,6 @@ describe("settings credential feedback", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Retry" }));
     await waitFor(() => expect(retries).toBe(1));
     expect(await screen.findByText("Queued")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Queue actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Clear finished" }));
-    await waitFor(() => expect(cleared).toBe(1));
-    expect(await screen.findByRole("heading", { name: "No downloads" })).toBeInTheDocument();
   });
 });
 

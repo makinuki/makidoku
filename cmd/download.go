@@ -17,8 +17,7 @@ import (
 
 type downloadRunner interface {
 	EnqueueManga(context.Context, string, downloader.ChapterSelection, string) ([]db.DownloadQueueItem, error)
-	Drain(context.Context) error
-	List() ([]db.DownloadQueueItem, error)
+	Drain(context.Context) (int, error)
 }
 
 var downloadCmd = &cobra.Command{
@@ -62,30 +61,14 @@ var downloadCmd = &cobra.Command{
 	},
 }
 
-// executeDownload reports how many of the requested chapters actually
-// finished, even when the drain ended early: a failed run must not claim
-// every queued chapter as downloaded.
+// executeDownload reports how many chapters the drain finished, even when it
+// ended early: a failed run must not claim every queued chapter as downloaded.
+// A finished chapter leaves the queue, so the drain itself is what counts them.
 func executeDownload(ctx context.Context, runner downloadRunner, mangaID, chapterRange, format string) (int, error) {
-	items, err := runner.EnqueueManga(ctx, mangaID, downloader.ChapterSelection{Range: chapterRange}, format)
-	if err != nil {
+	if _, err := runner.EnqueueManga(ctx, mangaID, downloader.ChapterSelection{Range: chapterRange}, format); err != nil {
 		return 0, err
 	}
-	drainErr := runner.Drain(ctx)
-	wanted := make(map[int64]struct{}, len(items))
-	for _, item := range items {
-		wanted[item.ID] = struct{}{}
-	}
-	completed := 0
-	list, err := runner.List()
-	if err != nil {
-		return 0, err
-	}
-	for _, item := range list {
-		if _, ok := wanted[item.ID]; ok && item.Status == db.QueueCompleted {
-			completed++
-		}
-	}
-	return completed, drainErr
+	return runner.Drain(ctx)
 }
 
 func init() {

@@ -28,7 +28,6 @@ type downloadQueue interface {
 	Resume(int64) error
 	Cancel(int64) error
 	Retry(int64) error
-	ClearFinished() (int64, error)
 	PauseAll()
 	ResumeAll()
 	Paused() bool

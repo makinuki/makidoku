@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// Queue statuses. A stored row is PENDING, DOWNLOADING, PAUSED or FAILED;
+// COMPLETED and CANCELED mark a row that has just left the queue and travel
+// only in downloader events.
 const (
 	QueuePending     = "PENDING"
 	QueueDownloading = "DOWNLOADING"

@@ -238,13 +238,15 @@ func (q *Queue) Run(ctx context.Context) error {
 }
 
 // Drain processes the currently pending queue and returns after every worker
-// finds no more claimable items. Paused and canceled items are left untouched.
-func (q *Queue) Drain(ctx context.Context) error {
+// finds no more claimable items, reporting how many chapters finished. A paused
+// downloader leaves its items untouched.
+func (q *Queue) Drain(ctx context.Context) (int, error) {
 	if err := q.repo.ResetInterruptedQueue(); err != nil {
-		return err
+		return 0, err
 	}
 	errs := make(chan error, q.options.Workers)
 	var workers sync.WaitGroup
+	var completed atomic.Int64
 	for index := 0; index < q.options.Workers; index++ {
 		workers.Add(1)
 		go func() {
@@ -264,8 +266,13 @@ func (q *Queue) Drain(ctx context.Context) error {
 				if item == nil {
 					return
 				}
-				if err := q.process(ctx, *item); err != nil {
+				finished, err := q.process(ctx, *item)
+				if err != nil {
 					errs <- err
+					continue
+				}
+				if finished {
+					completed.Add(1)
 				}
 			}
 		}()
@@ -278,7 +285,7 @@ func (q *Queue) Drain(ctx context.Context) error {
 			first = err
 		}
 	}
-	return first
+	return int(completed.Load()), first
 }
 
 func (q *Queue) runWorker(ctx context.Context) {
@@ -300,7 +307,7 @@ func (q *Queue) runWorker(ctx context.Context) {
 			q.wait(ctx)
 			continue
 		}
-		if err := q.process(ctx, *item); err != nil {
+		if _, err := q.process(ctx, *item); err != nil {
 			slog.Warn("downloader failed", "chapter", item.ChapterID, "err", err)
 		}
 	}
@@ -316,13 +323,13 @@ func (q *Queue) wait(ctx context.Context) {
 	}
 }
 
-func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
+func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) (bool, error) {
 	pages, err := q.engine.Pages(ctx, item.SourceID, item.SourceChapterID)
 	if err != nil {
-		return q.fail(item, err)
+		return false, q.fail(item, err)
 	}
 	if len(pages) == 0 {
-		return q.fail(item, errors.New("the source returned no pages for this chapter"))
+		return false, q.fail(item, errors.New("the source returned no pages for this chapter"))
 	}
 	sort.SliceStable(pages, func(i, j int) bool { return pages[i].Index < pages[j].Index })
 	done := parseDonePages(item.DonePagesJSON)
@@ -330,13 +337,13 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 	// attempt resumes from disk instead of refetching everything.
 	tempDir := filepath.Join(q.options.DownloadDir, ".tmp", strconv.FormatInt(item.ID, 10))
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
-		return q.fail(item, err)
+		return false, q.fail(item, err)
 	}
 	if err := q.repo.UpdateQueueProgress(item.ID, len(pages), len(done), nil); err != nil {
 		if q.interrupted(item) {
-			return nil
+			return false, nil
 		}
-		return q.fail(item, err)
+		return false, q.fail(item, err)
 	}
 
 	downloaded := make([]PageData, 0, len(pages))
@@ -346,7 +353,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 			continue
 		}
 		if q.interrupted(item) {
-			return nil
+			return false, nil
 		}
 		data, err := retryFetch(ctx, q.options.MaxRetries, func(fetchCtx context.Context) ([]byte, error) {
 			if err := q.limiter.Wait(fetchCtx, page.URL); err != nil {
@@ -358,39 +365,39 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 			return sleepContext(sleepCtx, delay)
 		})
 		if err != nil {
-			return q.fail(item, err)
+			return false, q.fail(item, err)
 		}
 		if q.interrupted(item) {
-			return nil
+			return false, nil
 		}
 		if page.IsScrambled {
 			data, err = q.engine.Unscramble(ctx, item.SourceID, data)
 			if err != nil {
-				return q.fail(item, err)
+				return false, q.fail(item, err)
 			}
 		}
 		if err := stagePage(tempDir, index, data, imageExtension(page.URL, data)); err != nil {
-			return q.fail(item, err)
+			return false, q.fail(item, err)
 		}
 		downloaded = append(downloaded, PageData{Bytes: data, Extension: imageExtension(page.URL, data)})
 		done = append(done, index)
 		q.downloadedPages.Add(1)
 		if err := q.repo.UpdateQueueProgress(item.ID, len(pages), len(done), nil); err != nil {
 			if q.interrupted(item) {
-				return nil
+				return false, nil
 			}
-			return q.fail(item, err)
+			return false, q.fail(item, err)
 		}
 		if err := q.repo.SaveQueuePageProgress(item.ID, len(pages), done); err != nil {
 			if q.interrupted(item) {
-				return nil
+				return false, nil
 			}
-			return q.fail(item, err)
+			return false, q.fail(item, err)
 		}
 		q.publishCurrent("progress", item.ID)
 	}
 	if q.interrupted(item) {
-		return nil
+		return false, nil
 	}
 
 	archivePath, err := q.archiver.Write(ArchiveRequest{
@@ -414,7 +421,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 		},
 	})
 	if err != nil {
-		return q.fail(item, err)
+		return false, q.fail(item, err)
 	}
 	// The fetched page list is persisted with the artifact so the reader can
 	// open the chapter without contacting the source again.
@@ -437,18 +444,31 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) error {
 	}
 	if _, err := q.repo.UpsertPages(item.ChapterID, pageRows); err != nil {
 		q.removeArtifact(archivePath)
-		return q.fail(item, err)
+		return false, q.fail(item, err)
 	}
-	if err := q.repo.MarkChapterDownloaded(item.ChapterID, archivePath); err != nil {
+	if err := q.repo.CompleteQueueDownload(item.ChapterID, archivePath); err != nil {
 		q.removeArtifact(archivePath)
-		return q.fail(item, err)
+		return false, q.fail(item, err)
 	}
 	// The archive is final; staged pages are no longer needed.
 	if err := os.RemoveAll(tempDir); err != nil {
 		slog.Warn("downloader removing staged pages failed", "chapter", item.ChapterID, "err", err)
 	}
-	q.publishCurrent("completed", item.ID)
-	return nil
+	// The row left the queue when the chapter was marked downloaded, so the
+	// event carries the finished item itself: clients drop a terminal row.
+	item.Status = db.QueueCompleted
+	item.Progress = 100
+	q.publish("completed", item)
+	return true, nil
+}
+
+// removeStaged deletes the staging directory of a row that will not resume, so
+// a removed row cannot leave fetched pages behind.
+func (q *Queue) removeStaged(id int64) {
+	staged := filepath.Join(q.options.DownloadDir, ".tmp", strconv.FormatInt(id, 10))
+	if err := os.RemoveAll(staged); err != nil {
+		slog.Warn("downloader removing staged pages failed", "queue", id, "err", err)
+	}
 }
 
 // removeArtifact deletes an archive that was written but never registered, so
@@ -516,11 +536,12 @@ func (q *Queue) fail(item db.DownloadQueueItem, cause error) error {
 func (q *Queue) stopped(id int64) bool {
 	item, err := q.repo.GetQueueItem(id)
 	if err != nil {
-		// A missing row means the item no longer exists (for example its
-		// chapter was retired by a migration): stop working on it.
+		// A missing row means the item is no longer queued: it finished, was
+		// canceled, or its chapter was retired. Either way there is nothing
+		// left to work on.
 		return true
 	}
-	return item.Status == db.QueuePaused || item.Status == db.QueueCanceled
+	return item.Status == db.QueuePaused
 }
 
 // interrupted reports whether work on the item must stop. A canceled or
@@ -529,6 +550,9 @@ func (q *Queue) stopped(id int64) bool {
 // continues from where it stopped instead of restarting the chapter.
 func (q *Queue) interrupted(item db.DownloadQueueItem) bool {
 	if q.stopped(item.ID) {
+		// The row is gone or canceled, so its staged pages can never resume:
+		// they are dropped together with the row.
+		q.removeStaged(item.ID)
 		return true
 	}
 	if !q.paused.Load() {
@@ -558,11 +582,19 @@ func (q *Queue) Resume(id int64) error {
 	return nil
 }
 
+// Cancel removes a row from the queue. The removed row is published so open
+// clients drop it, and its staged pages are discarded with it.
 func (q *Queue) Cancel(id int64) error {
+	item, err := q.repo.GetQueueItem(id)
+	if err != nil {
+		return err
+	}
 	if err := q.repo.CancelQueueItem(id); err != nil {
 		return err
 	}
-	q.publishCurrent("canceled", id)
+	q.removeStaged(id)
+	item.Status = db.QueueCanceled
+	q.publish("canceled", item)
 	return nil
 }
 
@@ -576,27 +608,20 @@ func (q *Queue) Retry(id int64) error {
 	return nil
 }
 
-// ClearFinished deletes terminal queue rows. It reports how many rows went
-// away so the caller can answer with the removed count.
-func (q *Queue) ClearFinished() (int64, error) {
-	removed, err := q.repo.ClearFinishedQueueItems()
-	if err != nil {
-		return 0, err
-	}
-	return removed, nil
-}
-
-// CancelAll cancels every active queue row and reports how many were affected.
-// Each row is published so open clients drop it as soon as the event arrives.
+// CancelAll removes every row that can still make progress and reports how
+// many were affected. Each removed row is published so open clients drop it,
+// and any staged pages go with it.
 func (q *Queue) CancelAll() (int64, error) {
-	ids, err := q.repo.CancelAllQueueItems()
+	items, err := q.repo.CancelAllQueueItems()
 	if err != nil {
 		return 0, err
 	}
-	for _, id := range ids {
-		q.publishCurrent("canceled", id)
+	for _, item := range items {
+		q.removeStaged(item.ID)
+		item.Status = db.QueueCanceled
+		q.publish("canceled", item)
 	}
-	return int64(len(ids)), nil
+	return int64(len(items)), nil
 }
 
 // Reorder persists the queue order given as item ids in display order and

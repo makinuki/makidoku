@@ -103,18 +103,20 @@ func TestQueueDownloadsChapterAndMarksArtifact(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("queued = %d", len(items))
 	}
-	if err := queue.Drain(context.Background()); err != nil {
-		t.Fatalf("drain: %v", err)
+	finished, err := queue.Drain(context.Background())
+	if err != nil || finished != 1 {
+		t.Fatalf("drain: %v (finished %d)", err, finished)
 	}
 
-	stored, err := repo.GetQueueItem(items[0].ID)
+	// A finished chapter leaves the queue, so only its chapter record remains.
+	listed, err := repo.ListQueue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != db.QueueCompleted || stored.Progress != 100 {
-		t.Fatalf("queue item = %+v", stored)
+	if len(listed) != 0 {
+		t.Fatalf("queue after drain = %+v", listed)
 	}
-	chapter, err := repo.GetChapter(stored.ChapterID)
+	chapter, err := repo.GetChapter(items[0].ChapterID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,14 +173,10 @@ func TestQueuePersistsPageListOnCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if err := queue.Drain(context.Background()); err != nil {
+	if _, err := queue.Drain(context.Background()); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	stored, err := repo.GetQueueItem(items[0].ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pages, err := repo.ListPages(stored.ChapterID)
+	pages, err := repo.ListPages(items[0].ChapterID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +207,7 @@ func TestQueueStopsBetweenPagesWhenPaused(t *testing.T) {
 			t.Errorf("pause: %v", err)
 		}
 	}
-	if err := queue.Drain(context.Background()); err != nil {
+	if _, err := queue.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := repo.GetQueueItem(items[0].ID)
@@ -245,7 +243,7 @@ func TestQueuePauseAllStopsClaiming(t *testing.T) {
 	if !queue.Paused() {
 		t.Fatal("queue did not report the paused state")
 	}
-	if err := queue.Drain(context.Background()); err != nil {
+	if _, err := queue.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := repo.GetQueueItem(items[0].ID)
@@ -263,7 +261,7 @@ func TestQueuePauseAllStopsClaiming(t *testing.T) {
 	if queue.Paused() {
 		t.Fatal("queue stayed paused after resume")
 	}
-	if err := queue.Drain(context.Background()); err != nil {
+	if _, err := queue.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	chapter, err := repo.GetChapter(items[0].ChapterID)
@@ -289,7 +287,7 @@ func TestQueuePauseAllReleasesInFlightItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	eng.afterFirstFetch = func() { queue.PauseAll() }
-	if err := queue.Drain(context.Background()); err != nil {
+	if _, err := queue.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := repo.GetQueueItem(items[0].ID)
@@ -308,17 +306,14 @@ func TestQueuePauseAllReleasesInFlightItem(t *testing.T) {
 	}
 
 	queue.ResumeAll()
-	if err := queue.Drain(context.Background()); err != nil {
-		t.Fatal(err)
+	if finished, err := queue.Drain(context.Background()); err != nil || finished != 1 {
+		t.Fatalf("resume drain: %v (finished %d)", err, finished)
 	}
-	stored, err = repo.GetQueueItem(items[0].ID)
-	if err != nil {
-		t.Fatal(err)
+	// The resumed chapter finishes and its row leaves the queue.
+	if _, err := repo.GetQueueItem(items[0].ID); err == nil {
+		t.Fatal("finished row survived the drain")
 	}
-	if stored.Status != db.QueueCompleted || stored.Progress != 100 {
-		t.Fatalf("completed item = %+v", stored)
-	}
-	chapter, err = repo.GetChapter(stored.ChapterID)
+	chapter, err = repo.GetChapter(items[0].ChapterID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,12 +373,13 @@ func TestQueueCancelAllCancelsActiveItems(t *testing.T) {
 	if canceled != 1 {
 		t.Fatalf("canceled = %d, want 1", canceled)
 	}
-	stored, err := repo.GetQueueItem(items[0].ID)
+	// Cancelling removes the rows: the event is what tells a client they went.
+	listed, err := repo.ListQueue()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != db.QueueCanceled {
-		t.Fatalf("status = %s, want %s", stored.Status, db.QueueCanceled)
+	if len(listed) != 0 {
+		t.Fatalf("queue after cancel all = %+v", listed)
 	}
 	select {
 	case event := <-events:
@@ -454,7 +450,7 @@ func TestQueueStopsWhenQueueRowVanishes(t *testing.T) {
 			t.Errorf("delete queue row: %v", err)
 		}
 	}
-	if err := queue.Drain(context.Background()); err != nil {
+	if _, err := queue.Drain(context.Background()); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
 	chapter, err := repo.GetChapter(items[0].ChapterID)
@@ -501,18 +497,13 @@ func TestResumeContinuesFromStagedPages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := queue.Drain(context.Background()); err != nil {
-		t.Fatalf("drain after restart: %v", err)
+	if finished, err := queue.Drain(context.Background()); err != nil || finished != 1 {
+		t.Fatalf("drain after restart: %v (finished %d)", err, finished)
 	}
-
-	stored, err := repo.GetQueueItem(items[0].ID)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := repo.GetQueueItem(items[0].ID); err == nil {
+		t.Fatal("finished row survived the drain")
 	}
-	if stored.Status != db.QueueCompleted {
-		t.Fatalf("status = %s", stored.Status)
-	}
-	chapter, err := repo.GetChapter(stored.ChapterID)
+	chapter, err := repo.GetChapter(items[0].ChapterID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,9 +552,9 @@ func TestEnqueueMangaRejectsEmptySelection(t *testing.T) {
 	}
 }
 
-// A failed download can be returned to the queue and completed on retry, and
-// terminal rows can be cleared without touching downloaded chapters.
-func TestRetryAndClearFinishedDownloads(t *testing.T) {
+// A failed download can be returned to the queue and completed on retry; the
+// finished row then leaves the queue without touching the chapter record.
+func TestRetryThenDrainFinishesDownload(t *testing.T) {
 	repo, dataDir := downloaderRepository(t)
 	eng := queueFixture()
 	queue := NewQueue(repo, eng, Options{
@@ -589,26 +580,14 @@ func TestRetryAndClearFinishedDownloads(t *testing.T) {
 		t.Fatalf("retried status = %+v, err = %v", retried.Status, err)
 	}
 
-	if err := queue.Drain(context.Background()); err != nil {
-		t.Fatalf("drain after retry: %v", err)
+	if finished, err := queue.Drain(context.Background()); err != nil || finished != 1 {
+		t.Fatalf("drain after retry: %v (finished %d)", err, finished)
 	}
-	completed, err := repo.GetQueueItem(items[0].ID)
-	if err != nil || completed.Status != db.QueueCompleted {
-		t.Fatalf("status after drain = %+v, err = %v", completed.Status, err)
+	if _, err := repo.GetQueueItem(items[0].ID); err == nil {
+		t.Fatal("finished row survived the drain")
 	}
 	chapter, err := repo.GetChapter(items[0].ChapterID)
 	if err != nil || !chapter.Downloaded {
 		t.Fatalf("chapter after retry = %+v, err = %v", chapter.Downloaded, err)
-	}
-
-	removed, err := queue.ClearFinished()
-	if err != nil || removed != 1 {
-		t.Fatalf("clear finished = %d, err = %v", removed, err)
-	}
-	if _, err := repo.GetQueueItem(items[0].ID); err == nil {
-		t.Fatal("terminal row survived the clear")
-	}
-	if !chapter.Downloaded {
-		t.Fatal("cleared row must not affect downloaded chapter state")
 	}
 }

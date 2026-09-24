@@ -238,8 +238,6 @@ export const api = {
   downloads: () => request<DownloadSnapshot>("/api/download"),
   controlDownload: (id: number, action: "pause" | "resume" | "cancel" | "retry") =>
     request(`/api/download/${id}/${action}`, { method: "POST" }),
-  clearFinishedDownloads: () =>
-    request<{ removed: number }>("/api/download/clear", { method: "POST" }),
   // Pause and resume control the downloader itself: pausing stops new claims
   // and returns the in-flight chapter to the queue with its progress kept.
   pauseAllDownloads: () => request<DownloadSnapshot>("/api/download/pause-all", { method: "POST" }),

@@ -12,8 +12,10 @@ The format is based on Keep a Changelog and this project adheres to Semantic Ver
   number inside each source, and the row menu offers move to top, move series
   to top, move to bottom, move series to bottom, retry on failure, cancel,
   cancel all for this series, and a link to the title. A floating control
-  pauses and resumes the downloader, and the queue overflow holds cancel all
-  and clear finished. Completed and canceled entries leave the view.
+  pauses and resumes the downloader, and the queue overflow holds cancel all.
+  The queue keeps only the entries that can still make progress: a chapter
+  leaves it as its artifact is written, cancelling removes the row, and a
+  migration drops the finished rows an earlier version left behind.
 - Order the download queue and expose downloader controls. Queue entries carry
   a position and workers claim the lowest position first, so the order a
   client shows is the order downloads start in. The API gains pause-all,

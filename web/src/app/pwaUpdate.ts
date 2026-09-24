@@ -24,6 +24,9 @@ function emit(): void {
 
 export function initPwaUpdate(): void {
   if (initialized || typeof window === "undefined") return;
+  // The generated registerSW performs the same check; keeping it here makes
+  // the inert-without-service-worker behavior a property of this store.
+  if (!("serviceWorker" in window.navigator)) return;
   initialized = true;
   reloadWithUpdate = registerSW({
     onNeedRefresh() {

@@ -13,6 +13,10 @@ import (
 
 const DefaultPageInterval = 500 * time.Millisecond
 
+// DefaultRetryBackoff is the base delay between retries when a source
+// declares no retry hint.
+const DefaultRetryBackoff = time.Second
+
 type DomainLimiter struct {
 	interval time.Duration
 	mu       sync.Mutex
@@ -30,6 +34,16 @@ func NewDomainLimiter(interval time.Duration) *DomainLimiter {
 // Wait reserves the next request slot for the URL host. Separate hosts do not
 // block each other.
 func (l *DomainLimiter) Wait(ctx context.Context, rawURL string) error {
+	return l.WaitWithInterval(ctx, rawURL, l.interval)
+}
+
+// WaitWithInterval reserves the next request slot for the URL host using the
+// caller's interval, so a source that asks for its own pacing does not fall
+// back to the host default.
+func (l *DomainLimiter) WaitWithInterval(ctx context.Context, rawURL string, interval time.Duration) error {
+	if interval < 0 {
+		interval = 0
+	}
 	target, err := url.Parse(rawURL)
 	if err != nil || target.Hostname() == "" {
 		return errors.New("page URL has no host")
@@ -41,7 +55,7 @@ func (l *DomainLimiter) Wait(ctx context.Context, rawURL string) error {
 	if ready.Before(now) {
 		ready = now
 	}
-	l.next[host] = ready.Add(l.interval)
+	l.next[host] = ready.Add(interval)
 	l.mu.Unlock()
 
 	delay := time.Until(ready)
@@ -62,13 +76,23 @@ func (l *DomainLimiter) Wait(ctx context.Context, rawURL string) error {
 func (l *DomainLimiter) WaitCount() int64 { return l.waits.Load() }
 
 func retryDelay(attempt int) time.Duration {
+	return retryDelayFor(DefaultRetryBackoff, attempt)
+}
+
+// retryDelayFor returns base doubled once per attempt, capped after three
+// doublings so a source that declares a large base cannot stall a download
+// indefinitely.
+func retryDelayFor(base time.Duration, attempt int) time.Duration {
+	if base < 0 {
+		base = 0
+	}
 	if attempt < 0 {
 		attempt = 0
 	}
 	if attempt > 3 {
 		attempt = 3
 	}
-	return time.Second << attempt
+	return base << attempt
 }
 
 type sleepFunc func(context.Context, time.Duration) error
@@ -85,6 +109,12 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 }
 
 func retryFetch(ctx context.Context, retries int, fetch func(context.Context) ([]byte, error), sleep sleepFunc) ([]byte, error) {
+	return retryFetchWith(ctx, retries, DefaultRetryBackoff, fetch, sleep)
+}
+
+// retryFetchWith retries a fetch up to retries times, spacing attempts by the
+// caller's base backoff.
+func retryFetchWith(ctx context.Context, retries int, backoff time.Duration, fetch func(context.Context) ([]byte, error), sleep sleepFunc) ([]byte, error) {
 	if retries < 0 {
 		retries = 0
 	}
@@ -96,7 +126,7 @@ func retryFetch(ctx context.Context, retries int, fetch func(context.Context) ([
 		if attempt >= retries || !retryable(err) {
 			return nil, err
 		}
-		if err := sleep(ctx, retryDelay(attempt)); err != nil {
+		if err := sleep(ctx, retryDelayFor(backoff, attempt)); err != nil {
 			return nil, err
 		}
 	}

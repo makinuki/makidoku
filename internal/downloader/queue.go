@@ -29,6 +29,7 @@ type Engine interface {
 	Pages(ctx context.Context, sourceID, chapterID string) ([]engine.PageItem, error)
 	FetchImage(ctx context.Context, sourceID, target string, headers map[string]string) ([]byte, error)
 	Unscramble(ctx context.Context, sourceID string, data []byte) ([]byte, error)
+	TransferHints(ctx context.Context, sourceID string) (engine.RateLimitHints, engine.RetryHints, error)
 }
 
 type Options struct {
@@ -68,6 +69,18 @@ type Queue struct {
 
 	downloadedPages atomic.Int64
 	retriedRequests atomic.Int64
+	// policies caches the per-source pacing and retry policy derived from the
+	// source's own transfer hints, which do not change while installed.
+	policies sync.Map
+}
+
+// sourcePolicy is the effective pacing and retry policy for one source. A
+// hint the source declares replaces the host default; an absent hint leaves
+// the default in place.
+type sourcePolicy struct {
+	interval time.Duration
+	retries  int
+	backoff  time.Duration
 }
 
 func NewQueue(repo *db.Repository, sourceEngine Engine, options Options) *Queue {
@@ -95,6 +108,33 @@ func (q *Queue) Stats() Stats {
 		RetriedRequests:   q.retriedRequests.Load(),
 		ThrottledRequests: q.limiter.WaitCount(),
 	}
+}
+
+// policyFor returns the effective pacing and retry policy for a source. The
+// source's own hints replace the host defaults; the result is cached because
+// the hints do not change while the source is installed.
+func (q *Queue) policyFor(ctx context.Context, sourceID string) sourcePolicy {
+	if cached, ok := q.policies.Load(sourceID); ok {
+		return cached.(sourcePolicy)
+	}
+	policy := sourcePolicy{
+		interval: q.options.PageInterval,
+		retries:  q.options.MaxRetries,
+		backoff:  DefaultRetryBackoff,
+	}
+	if rate, retry, err := q.engine.TransferHints(ctx, sourceID); err == nil {
+		if rate.IntervalMs != nil && *rate.IntervalMs > 0 {
+			policy.interval = time.Duration(*rate.IntervalMs) * time.Millisecond
+		}
+		if retry.MaxAttempts != nil && *retry.MaxAttempts > 0 {
+			policy.retries = int(*retry.MaxAttempts)
+		}
+		if retry.BackoffMs != nil && *retry.BackoffMs > 0 {
+			policy.backoff = time.Duration(*retry.BackoffMs) * time.Millisecond
+		}
+	}
+	q.policies.Store(sourceID, policy)
+	return policy
 }
 
 // PauseAll stops the workers from claiming more work. An item that is already
@@ -348,6 +388,7 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) (bool, e
 	}
 
 	downloaded := make([]PageData, 0, len(pages))
+	policy := q.policyFor(ctx, item.SourceID)
 	for index, page := range pages {
 		if data, ext, ok := readStagedPage(tempDir, index); ok {
 			downloaded = append(downloaded, PageData{Bytes: data, Extension: ext})
@@ -356,8 +397,8 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) (bool, e
 		if q.interrupted(item) {
 			return false, nil
 		}
-		data, err := retryFetch(ctx, q.options.MaxRetries, func(fetchCtx context.Context) ([]byte, error) {
-			if err := q.limiter.Wait(fetchCtx, page.URL); err != nil {
+		data, err := retryFetchWith(ctx, policy.retries, policy.backoff, func(fetchCtx context.Context) ([]byte, error) {
+			if err := q.limiter.WaitWithInterval(fetchCtx, page.URL, policy.interval); err != nil {
 				return nil, err
 			}
 			return q.engine.FetchImage(fetchCtx, item.SourceID, page.URL, page.Headers)

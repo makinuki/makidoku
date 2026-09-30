@@ -43,6 +43,10 @@ func (f *fakeEngine) Unscramble(ctx context.Context, sourceID string, data []byt
 	return append([]byte("plain-"), data...), nil
 }
 
+func (f *fakeEngine) TransferHints(ctx context.Context, sourceID string) (engine.RateLimitHints, engine.RetryHints, error) {
+	return engine.RateLimitHints{}, engine.RetryHints{}, nil
+}
+
 func downloaderRepository(t *testing.T) (*db.Repository, string) {
 	t.Helper()
 	dataDir := t.TempDir()

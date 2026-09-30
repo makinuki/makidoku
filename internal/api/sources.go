@@ -35,6 +35,8 @@ func (s *Server) mountSources(r chi.Router) {
 		source.Get("/icon", s.sourceIcon)
 		source.Post("/update", s.updateSourcePlugin)
 		source.Get("/filters", s.sourceFilters)
+		source.Get("/settings", s.sourceSettings)
+		source.Put("/settings/{key}", s.putSourceSetting)
 		source.Get("/search", s.search)
 		source.Post("/clearance", s.submitClearance)
 	})

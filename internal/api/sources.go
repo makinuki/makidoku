@@ -37,6 +37,7 @@ func (s *Server) mountSources(r chi.Router) {
 		source.Get("/filters", s.sourceFilters)
 		source.Get("/settings", s.sourceSettings)
 		source.Put("/settings/{key}", s.putSourceSetting)
+		source.Put("/languages", s.putSourceLanguages)
 		source.Get("/search", s.search)
 		source.Post("/clearance", s.submitClearance)
 	})
@@ -181,6 +182,7 @@ func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	s.annotateAvailableLanguages(installed)
 	writeJSON(w, http.StatusOK, installed)
 }
 
@@ -199,7 +201,9 @@ func (s *Server) getSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, source)
+	annotated := []engine.InstalledSource{source}
+	s.annotateAvailableLanguages(annotated)
+	writeJSON(w, http.StatusOK, annotated[0])
 }
 
 // installSource installs a catalog source by id, or a locally built binary by

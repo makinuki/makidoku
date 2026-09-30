@@ -287,6 +287,33 @@ func identifierList() func(any) error {
 	}
 }
 
+// languageList accepts a comma-separated selection of ISO 639-1 codes with an
+// optional region, for example "en,pt-br". An empty string selects nothing.
+func languageList() func(any) error {
+	return func(value any) error {
+		text, ok := value.(string)
+		if !ok {
+			return errors.New("value must be a string")
+		}
+		for _, item := range strings.Split(text, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			for _, char := range item {
+				valid := char == '-' ||
+					(char >= '0' && char <= '9') ||
+					(char >= 'a' && char <= 'z') ||
+					(char >= 'A' && char <= 'Z')
+				if !valid {
+					return errors.New("value must be a list of language codes")
+				}
+			}
+		}
+		return nil
+	}
+}
+
 var definitionList = []Definition{
 	{Key: "appearance.date_format", Type: "string", Default: `"relative"`, Description: "How dates and times are shown", Validate: enum("relative", "absolute")},
 	{Key: "library.update_interval", Type: "duration", Default: "86400000000000", Description: "How often the library checks for new chapters", Validate: number(0, 30*24*60*60*1e9)},
@@ -327,6 +354,7 @@ var definitionList = []Definition{
 		}
 		return nil
 	}},
+	{Key: "browse.chapter_languages", Type: "string", Default: `""`, Description: "Default chapter languages for sources without their own selection", Validate: languageList()},
 	{Key: "privacy.incognito", Type: "boolean", Default: "false", Description: "Start in incognito mode, which does not record reading activity", Validate: boolean},
 	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "How much detail is written to the log", Validate: enum("debug", "info", "warn", "error")},
 	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Days to keep processed page images", Validate: number(1, 3650)},

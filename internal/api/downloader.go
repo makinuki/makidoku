@@ -148,6 +148,15 @@ func (s *Server) EnqueueNewChapters(ctx context.Context, mangaID string, chapter
 	if !manga.DownloadNewChapters {
 		return nil
 	}
+	if selection := s.chapterLanguages(manga.SourceID); len(selection) > 0 {
+		chapterIDs, err = s.filterChapterIDs(mangaID, chapterIDs, selection)
+		if err != nil {
+			return err
+		}
+		if len(chapterIDs) == 0 {
+			return nil
+		}
+	}
 	_, err = s.downloads.EnqueueManga(ctx, mangaID, downloader.ChapterSelection{IDs: chapterIDs}, "")
 	return err
 }

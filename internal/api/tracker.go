@@ -562,7 +562,11 @@ func (s *Server) enqueueAhead(ctx context.Context, progress db.ReadingProgress) 
 	if err != nil || count <= 0 {
 		return
 	}
-	chapterIDs, err := s.repo.NextChapterIDs(progress.MangaID, progress.LastReadChapterID, count)
+	manga, err := s.repo.GetManga(progress.MangaID)
+	if err != nil {
+		return
+	}
+	chapterIDs, err := s.repo.NextChapterIDs(progress.MangaID, progress.LastReadChapterID, count, s.chapterLanguages(manga.SourceID))
 	if err != nil || len(chapterIDs) == 0 {
 		return
 	}

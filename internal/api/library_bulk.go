@@ -73,6 +73,12 @@ func (s *Server) bulkSetRead(w http.ResponseWriter, r *http.Request) {
 			result.Failed = append(result.Failed, bulkFailure{ID: mangaID, Error: err.Error()})
 			continue
 		}
+		manga, err := s.repo.GetManga(mangaID)
+		if err != nil {
+			result.Failed = append(result.Failed, bulkFailure{ID: mangaID, Error: err.Error()})
+			continue
+		}
+		chapters = filterChapters(chapters, s.chapterLanguages(manga.SourceID))
 		failed := false
 		for _, chapter := range chapters {
 			if err := s.repo.SetChapterRead(chapter.ID, mangaID, body.Read); err != nil {
@@ -204,11 +210,12 @@ func (s *Server) bulkDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	result := bulkResult{Failed: []bulkFailure{}}
 	for _, mangaID := range ids {
-		if _, err := s.repo.GetManga(mangaID); err != nil {
+		manga, err := s.repo.GetManga(mangaID)
+		if err != nil {
 			result.Failed = append(result.Failed, bulkFailure{ID: mangaID, Error: err.Error()})
 			continue
 		}
-		chapterIDs, err := s.repo.BulkChapterIDs(mangaID, chapters == "unread")
+		chapterIDs, err := s.repo.BulkChapterIDs(mangaID, chapters == "unread", s.chapterLanguages(manga.SourceID))
 		if err != nil {
 			result.Failed = append(result.Failed, bulkFailure{ID: mangaID, Error: err.Error()})
 			continue

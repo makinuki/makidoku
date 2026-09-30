@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/languages"
 )
 
 type updateResponse struct {
@@ -32,6 +33,7 @@ func (s *Server) listUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	responses := make([]updateResponse, 0, len(items))
+	selections := make(map[string][]string)
 	for _, item := range items {
 		manga, err := s.repo.GetManga(item.MangaID)
 		if err != nil {
@@ -39,6 +41,14 @@ func (s *Server) listUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 		chapter, err := s.repo.GetChapter(item.ChapterID)
 		if err != nil {
+			continue
+		}
+		selection, ok := selections[manga.SourceID]
+		if !ok {
+			selection = s.chapterLanguages(manga.SourceID)
+			selections[manga.SourceID] = selection
+		}
+		if !languages.Allows(selection, chapterLanguage(chapter)) {
 			continue
 		}
 		responses = append(responses, updateResponse{ID: item.ID, Manga: manga, Chapter: chapter, SeenAt: item.SeenAt, Acknowledged: item.Acknowledged})

@@ -791,6 +791,7 @@ func (s *Server) getManga(w http.ResponseWriter, r *http.Request) {
 			aggregate = refreshed
 		}
 	}
+	aggregate = applyLanguageFilter(aggregate, s.chapterLanguages(aggregate.Manga.SourceID))
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
 	aggregate.SourceURL = s.sourceSeriesURL(r.Context(), aggregate.Manga)
 	writeJSON(w, http.StatusOK, aggregate)
@@ -819,6 +820,7 @@ func (s *Server) refreshManga(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusInternalServerError, err)
 		return
 	}
+	aggregate = applyLanguageFilter(aggregate, s.chapterLanguages(aggregate.Manga.SourceID))
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
 	aggregate.SourceURL = s.sourceSeriesURL(r.Context(), aggregate.Manga)
 	writeJSON(w, http.StatusOK, aggregate)

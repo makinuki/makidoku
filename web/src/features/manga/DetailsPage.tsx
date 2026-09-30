@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../../api";
+import { languageLabel } from "../../languages";
 import type {
   Aggregate,
   Binding,
@@ -529,6 +530,12 @@ export function DetailsPage() {
           </p>
         )}
         {queuedNote && <p className="mb-4 text-xs text-emerald-300">{queuedNote}</p>}
+        {data.languageFilter && data.languageFilter.length > 0 && (
+          <p className="mb-4 text-xs text-zinc-500">
+            Showing {data.languageFilter.map((code) => languageLabel(code)).join(", ")} chapters.
+            Change this in the source settings.
+          </p>
+        )}
         {languages.length > 1 && (
           <div className="mb-5 flex flex-wrap gap-2">
             <button
@@ -801,53 +808,6 @@ function groupByVolume(
 // The reader engine owns the resume entry point so details, history, and
 // the reader resolve the same chapter: saved progress, else first unread in
 // reading order.
-
-const LANGUAGE_NAMES: Record<string, string> = {
-  ar: "Arabic",
-  bg: "Bulgarian",
-  bn: "Bengali",
-  ca: "Catalan",
-  cs: "Czech",
-  da: "Danish",
-  de: "German",
-  el: "Greek",
-  en: "English",
-  es: "Spanish",
-  "es-la": "Spanish (Latin America)",
-  fa: "Persian",
-  fi: "Finnish",
-  fr: "French",
-  he: "Hebrew",
-  hi: "Hindi",
-  hr: "Croatian",
-  hu: "Hungarian",
-  id: "Indonesian",
-  it: "Italian",
-  ja: "Japanese",
-  ko: "Korean",
-  ms: "Malay",
-  nl: "Dutch",
-  no: "Norwegian",
-  pl: "Polish",
-  pt: "Portuguese",
-  "pt-br": "Portuguese (Brazil)",
-  ro: "Romanian",
-  ru: "Russian",
-  sv: "Swedish",
-  ta: "Tamil",
-  th: "Thai",
-  tl: "Tagalog",
-  tr: "Turkish",
-  uk: "Ukrainian",
-  vi: "Vietnamese",
-  zh: "Chinese",
-  "zh-cn": "Chinese (Simplified)",
-  "zh-tw": "Chinese (Traditional)",
-};
-
-function languageLabel(code: string) {
-  return LANGUAGE_NAMES[code.toLowerCase()] || code;
-}
 
 function chapterMeta(chapter: Chapter) {
   return [

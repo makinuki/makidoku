@@ -104,4 +104,52 @@ describe("SourceSettingsDialog", () => {
       expect(put?.body).toEqual({ value: null });
     });
   });
+
+  it("offers a language choice only when the source returns more than one", async () => {
+    const calls = stubLanguages();
+    const multi: Source = {
+      ...source,
+      hasSettings: false,
+      availableLanguages: ["en", "ja", "pt-br"],
+      languages: [],
+    };
+    const { rerender } = render(<SourceSettingsDialog source={multi} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("Chapter languages")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Japanese"));
+    await waitFor(() => {
+      const put = calls.find((call) => call.method === "PUT");
+      expect(put?.url).toBe("/api/sources/demo/languages");
+      expect(put?.body).toEqual({ languages: ["ja"] });
+    });
+
+    // A single-language source has no language choice to offer.
+    rerender(
+      <SourceSettingsDialog
+        source={{ ...multi, availableLanguages: ["en"] }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Chapter languages")).not.toBeInTheDocument();
+  });
 });
+
+// stubLanguages serves an empty settings list and echoes the posted language
+// selection back as the updated source.
+function stubLanguages() {
+  const calls: { url: string; method: string; body: unknown }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
+      if (url.includes("/languages") && method === "PUT") {
+        return Response.json({ ...source, languages: body?.languages ?? [] });
+      }
+      return Response.json([]);
+    }),
+  );
+  return calls;
+}

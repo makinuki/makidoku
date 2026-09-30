@@ -228,6 +228,11 @@ export const api = {
       `/api/sources/${encodeURIComponent(id)}/settings/${encodeURIComponent(key)}`,
       { method: "PUT", body: JSON.stringify({ value }) },
     ),
+  setSourceLanguages: (id: string, languages: string[] | null) =>
+    request<Source>(`/api/sources/${encodeURIComponent(id)}/languages`, {
+      method: "PUT",
+      body: JSON.stringify({ languages: languages ?? [] }),
+    }),
   submitClearance: (id: string, cookie: string, userAgent: string) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}/clearance`, {
       method: "POST",

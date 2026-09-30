@@ -64,6 +64,29 @@ describe("BrowsePage plugins tab", () => {
     expect(await screen.findByRole("button", { name: "Settings for Alpha" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Settings for Beta" })).not.toBeInTheDocument();
   });
+
+  it("offers a settings action for a multi-language plugin without settings", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return Response.json([
+            source("a", "Alpha", { availableLanguages: ["en", "ja"] }),
+            source("b", "Beta", { availableLanguages: ["en"] }),
+          ]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/browse?tab=plugins"]}>
+        <BrowsePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Settings for Alpha" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings for Beta" })).not.toBeInTheDocument();
+  });
 });
 
 describe("BrowsePage sources tab", () => {

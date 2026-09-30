@@ -131,6 +131,8 @@ export type Aggregate = {
   readingSeconds?: number;
   sourceName?: string;
   sourceUrl?: string;
+  // languageFilter is the chapter language selection in effect for the source.
+  languageFilter?: string[];
   // Present when a details refresh failed but the stored record was served.
   refreshError?: string;
 };
@@ -155,6 +157,11 @@ export type Source = {
   loaded: boolean;
   hasClearance: boolean;
   hasSettings?: boolean;
+  // languages is the stored per-source chapter language selection; an empty
+  // list follows the global default.
+  languages?: string[];
+  // availableLanguages lists the chapter language codes seen for the source.
+  availableLanguages?: string[];
   allowedHosts?: string[];
   pinned?: boolean;
   lastUsedAt?: number;

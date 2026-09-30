@@ -3,6 +3,7 @@ import { LoaderCircle, RotateCcw } from "lucide-react";
 import { api } from "../../api";
 import { Modal } from "../../components/Modal";
 import { ErrorState, LoadingState } from "../../components/States";
+import { languageLabel } from "../../languages";
 import type { Source, SourceSetting } from "../../types";
 
 // SourceSettingsDialog renders the settings a source declares through
@@ -20,6 +21,13 @@ export function SourceSettingsDialog({
   const [settings, setSettings] = useState<SourceSetting[]>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [languages, setLanguages] = useState<string[]>(source.languages ?? []);
+  const [languagesBusy, setLanguagesBusy] = useState(false);
+  // A source offers a language choice only once it has returned chapters in
+  // more than one language. A single-language or language-less source has
+  // nothing to filter.
+  const available = [...(source.availableLanguages ?? [])].sort();
+  const multiLanguage = available.length > 1;
 
   useEffect(() => {
     let active = true;
@@ -49,11 +57,78 @@ export function SourceSettingsDialog({
     }
   };
 
+  const saveLanguages = async (next: string[]) => {
+    setLanguagesBusy(true);
+    setError("");
+    try {
+      const updated = await api.setSourceLanguages(source.id, next.length ? next : null);
+      setLanguages(updated.languages ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save the language selection");
+    } finally {
+      setLanguagesBusy(false);
+    }
+  };
+
+  const toggleLanguage = (code: string) => {
+    void saveLanguages(
+      languages.includes(code) ? languages.filter((item) => item !== code) : [...languages, code],
+    );
+  };
+
   return (
     <Modal title={`${source.name} settings`} onClose={onClose}>
       {error && <ErrorState message={error} />}
       {!settings && !error && <LoadingState label="Loading settings" />}
-      {settings && settings.length === 0 && (
+      {multiLanguage && (
+        <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <b className="block text-sm">Chapter languages</b>
+              <span className="mt-0.5 block text-xs text-zinc-500">
+                {languages.length
+                  ? "Only these languages appear for this source."
+                  : "Empty follows the default language selection from settings."}
+              </span>
+            </div>
+            {languagesBusy && (
+              <LoaderCircle size={14} className="mt-0.5 shrink-0 animate-spin text-zinc-400" />
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {available.map((code) => (
+              <label
+                key={code}
+                className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-full border px-4 py-1.5 text-xs ${
+                  languages.includes(code)
+                    ? "border-amber-400 bg-amber-400/10 text-amber-200"
+                    : "border-zinc-800 text-zinc-400"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={languages.includes(code)}
+                  disabled={languagesBusy}
+                  onChange={() => toggleLanguage(code)}
+                  className="size-4 accent-amber-400"
+                />
+                {languageLabel(code)}
+              </label>
+            ))}
+          </div>
+          {languages.length > 0 && (
+            <button
+              type="button"
+              disabled={languagesBusy}
+              onClick={() => void saveLanguages([])}
+              className="mt-2 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-white disabled:opacity-40"
+            >
+              <RotateCcw size={12} /> Use the default
+            </button>
+          )}
+        </div>
+      )}
+      {settings && settings.length === 0 && !multiLanguage && (
         <p className="text-sm text-zinc-500">This source does not declare any settings.</p>
       )}
       {settings && settings.length > 0 && (

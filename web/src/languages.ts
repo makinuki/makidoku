@@ -1,0 +1,48 @@
+// LANGUAGE_NAMES maps the codes sources emit to display names. Unknown codes
+// fall back to the code itself.
+export const LANGUAGE_NAMES: Record<string, string> = {
+  ar: "Arabic",
+  bg: "Bulgarian",
+  bn: "Bengali",
+  ca: "Catalan",
+  cs: "Czech",
+  da: "Danish",
+  de: "German",
+  el: "Greek",
+  en: "English",
+  es: "Spanish",
+  "es-la": "Spanish (Latin America)",
+  fa: "Persian",
+  fi: "Finnish",
+  fr: "French",
+  he: "Hebrew",
+  hi: "Hindi",
+  hr: "Croatian",
+  hu: "Hungarian",
+  id: "Indonesian",
+  it: "Italian",
+  ja: "Japanese",
+  ko: "Korean",
+  ms: "Malay",
+  nl: "Dutch",
+  no: "Norwegian",
+  pl: "Polish",
+  pt: "Portuguese",
+  "pt-br": "Portuguese (Brazil)",
+  ro: "Romanian",
+  ru: "Russian",
+  sv: "Swedish",
+  ta: "Tamil",
+  th: "Thai",
+  tl: "Tagalog",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  vi: "Vietnamese",
+  zh: "Chinese",
+  "zh-cn": "Chinese (Simplified)",
+  "zh-tw": "Chinese (Traditional)",
+};
+
+export function languageLabel(code: string) {
+  return LANGUAGE_NAMES[code.toLowerCase()] || code;
+}

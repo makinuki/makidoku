@@ -715,7 +715,7 @@ function PluginsTab() {
                     <ShieldCheck size={15} />
                   </span>
                 )}
-                {source.hasSettings && (
+                {(source.hasSettings || (source.availableLanguages?.length ?? 0) > 1) && (
                   <button
                     aria-label={`Settings for ${source.name}`}
                     title={`${source.name} settings`}

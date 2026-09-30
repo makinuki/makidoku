@@ -26,6 +26,8 @@ const (
 type Storage interface {
 	Get(sourceID, key string) (string, bool, error)
 	Set(sourceID, key, value string) error
+	// Delete removes a key. Removing a missing key is not an error.
+	Delete(sourceID, key string) error
 }
 
 // SQLStorage backs plugin storage with the plugin_storage table.
@@ -69,6 +71,15 @@ func (s *SQLStorage) Set(sourceID, key, value string) error {
 	return nil
 }
 
+// Delete removes a stored key, which is how a setting is reset to its schema
+// default.
+func (s *SQLStorage) Delete(sourceID, key string) error {
+	if _, err := s.db.Exec(`DELETE FROM plugin_storage WHERE source_id = ? AND "key" = ?`, sourceID, key); err != nil {
+		return fmt.Errorf("delete plugin storage: %w", err)
+	}
+	return nil
+}
+
 // MemoryStorage is an in-process Storage used by tests and by short-lived
 // plugin calls made before a source is installed.
 type MemoryStorage struct {
@@ -91,6 +102,11 @@ func (m *MemoryStorage) Set(sourceID, key, value string) error {
 			key, len(value), StorageValueCap)
 	}
 	m.values[sourceID+":"+key] = value
+	return nil
+}
+
+func (m *MemoryStorage) Delete(sourceID, key string) error {
+	delete(m.values, sourceID+":"+key)
 	return nil
 }
 

@@ -43,6 +43,7 @@ const (
 var exportNames = []string{
 	ExportGetMetadata,
 	ExportGetFilters,
+	ExportGetSettings,
 	ExportSearch,
 	ExportGetDetails,
 	ExportGetPages,
@@ -129,17 +130,17 @@ func loadPlugin(ctx context.Context, sourceID string, wasm []byte, fetcher *Fetc
 	return p, nil
 }
 
-// probeMetadata reads the metadata of an uninstalled module. Host calls made
-// during the probe are backed by throwaway storage, so nothing the module
-// writes is persisted.
-func probeMetadata(ctx context.Context, wasm []byte) (SourceMetadata, error) {
+// probeMetadata reads the metadata of an uninstalled module and reports
+// whether it declares settings. Host calls made during the probe are backed by
+// throwaway storage, so nothing the module writes is persisted.
+func probeMetadata(ctx context.Context, wasm []byte) (SourceMetadata, bool, error) {
 	scratch := NewMemoryStorage()
 	p, err := loadPlugin(ctx, "", wasm, NewFetcher(scratch, nil), scratch)
 	if err != nil {
-		return SourceMetadata{}, err
+		return SourceMetadata{}, false, err
 	}
 	defer p.close(ctx)
-	return p.meta, nil
+	return p.meta, p.HasSettings(), nil
 }
 
 // moduleConfig supplies the real host clocks and entropy source. The wazero
@@ -355,6 +356,28 @@ func (p *loadedPlugin) Filters(ctx context.Context) (json.RawMessage, error) {
 	var filters []json.RawMessage
 	if err := json.Unmarshal(out, &filters); err != nil {
 		return nil, CodedError(CodeParsingError, "%s.%s returned unexpected data: %v", p.id, ExportGetFilters, err)
+	}
+	return json.RawMessage(out), nil
+}
+
+// HasSettings reports whether the module exports get_settings, which decides
+// whether the source exposes a settings surface at all.
+func (p *loadedPlugin) HasSettings() bool { return p.exports[ExportGetSettings] }
+
+// Settings reads the setting schemas the source declares. The payload is a
+// union of setting kinds, so it is relayed as the plugin produced it. An
+// absent export means the source declares no settings.
+func (p *loadedPlugin) Settings(ctx context.Context) (json.RawMessage, error) {
+	if !p.exports[ExportGetSettings] {
+		return json.RawMessage("[]"), nil
+	}
+	out, err := p.callRaw(ctx, ExportGetSettings, nil)
+	if err != nil {
+		return nil, err
+	}
+	var settings []json.RawMessage
+	if err := json.Unmarshal(out, &settings); err != nil {
+		return nil, CodedError(CodeParsingError, "%s.%s returned unexpected data: %v", p.id, ExportGetSettings, err)
 	}
 	return json.RawMessage(out), nil
 }

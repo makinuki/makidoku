@@ -10,6 +10,7 @@ const ABIVersion = 1
 const (
 	ExportGetMetadata     = "get_metadata"
 	ExportGetFilters      = "get_filters"
+	ExportGetSettings     = "get_settings"
 	ExportSearch          = "search"
 	ExportGetDetails      = "get_details"
 	ExportGetPages        = "get_pages"
@@ -57,15 +58,31 @@ type LogEntry struct {
 // SourceMetadata is the get_metadata payload. Static exports return raw JSON
 // and are never wrapped in the result envelope.
 type SourceMetadata struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	ABIVersion   int      `json:"abiVersion"`
-	Lang         string   `json:"lang"`
-	BaseURL      string   `json:"baseUrl"`
-	IconURL      string   `json:"iconUrl"`
-	NSFW         bool     `json:"nsfw"`
-	AllowedHosts []string `json:"allowedHosts,omitempty"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Version      string          `json:"version"`
+	ABIVersion   int             `json:"abiVersion"`
+	Lang         string          `json:"lang"`
+	BaseURL      string          `json:"baseUrl"`
+	IconURL      string          `json:"iconUrl"`
+	NSFW         bool            `json:"nsfw"`
+	AllowedHosts []string        `json:"allowedHosts,omitempty"`
+	RateLimit    *RateLimitHints `json:"rateLimit,omitempty"`
+	Retry        *RetryHints     `json:"retry,omitempty"`
+}
+
+// RateLimitHints is the request pacing policy a source suggests. Absent
+// fields leave the host default in place; hosts may honor, cap, or let users
+// override the values.
+type RateLimitHints struct {
+	IntervalMs *int64 `json:"intervalMs,omitempty"`
+	Burst      *int64 `json:"burst,omitempty"`
+}
+
+// RetryHints is the retry policy a source suggests for failed requests.
+type RetryHints struct {
+	MaxAttempts *int64 `json:"maxAttempts,omitempty"`
+	BackoffMs   *int64 `json:"backoffMs,omitempty"`
 }
 
 // SearchQuery is the search input payload.
@@ -109,6 +126,7 @@ type MangaDetails struct {
 	Authors     []string       `json:"authors,omitempty"`
 	Artists     []string       `json:"artists,omitempty"`
 	Genres      []string       `json:"genres,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
 	Status      string         `json:"status"`
 	CoverURL    string         `json:"coverUrl,omitempty"`
 	Chapters    []ChapterItem  `json:"chapters"`
@@ -126,6 +144,7 @@ type ChapterItem struct {
 	Title      string   `json:"title,omitempty"`
 	UploadedAt *int64   `json:"uploadedAt,omitempty"`
 	Scanlator  string   `json:"scanlator,omitempty"`
+	Locked     bool     `json:"locked,omitempty"`
 	URL        string   `json:"url,omitempty"`
 }
 
@@ -148,6 +167,35 @@ type ScrambleInfo struct {
 	TileW  int    `json:"tileW"`
 	TileH  int    `json:"tileH"`
 	Order  []int  `json:"order"`
+}
+
+// SettingKind is one of the setting kinds a source may declare.
+type SettingKind string
+
+const (
+	SettingKindCheckbox SettingKind = "checkbox"
+	SettingKindSelect   SettingKind = "select"
+	SettingKindText     SettingKind = "text"
+)
+
+// SettingOption is one label/value pair of a select setting.
+type SettingOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// SettingSchema is one declared setting returned by get_settings. Default is
+// the raw JSON default value whose type depends on Type: a boolean for
+// checkbox, a string for select and text.
+type SettingSchema struct {
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Description string          `json:"description,omitempty"`
+	Type        SettingKind     `json:"type"`
+	Options     []SettingOption `json:"options,omitempty"`
+	Placeholder string          `json:"placeholder,omitempty"`
+	Default     json.RawMessage `json:"default,omitempty"`
+	Sensitive   bool            `json:"sensitive,omitempty"`
 }
 
 // pluginResult is the envelope wrapping every dynamic export payload. Success

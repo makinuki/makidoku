@@ -61,6 +61,7 @@ type InstalledSource struct {
 	InstalledAt  int64    `json:"installedAt"`
 	Loaded       bool     `json:"loaded"`
 	HasClearance bool     `json:"hasClearance"`
+	HasSettings  bool     `json:"hasSettings"`
 	AllowedHosts []string `json:"allowedHosts,omitempty"`
 	Pinned       bool     `json:"pinned"`
 	LastUsedAt   *int64   `json:"lastUsedAt,omitempty"`
@@ -185,7 +186,7 @@ func (e *Engine) Install(ctx context.Context, id string) (InstalledSource, error
 		return InstalledSource{}, err
 	}
 
-	meta, err := probeMetadata(ctx, wasm)
+	meta, hasSettings, err := probeMetadata(ctx, wasm)
 	if err != nil {
 		return InstalledSource{}, err
 	}
@@ -195,7 +196,7 @@ func (e *Engine) Install(ctx context.Context, id string) (InstalledSource, error
 		return InstalledSource{}, CodedError(CodeParsingError,
 			"catalog lists %q but the binary identifies as %q", entry.ID, meta.ID)
 	}
-	return e.register(ctx, meta, path)
+	return e.register(ctx, meta, path, hasSettings)
 }
 
 // InstallFile registers a locally built binary. The file is copied into the
@@ -205,7 +206,7 @@ func (e *Engine) InstallFile(ctx context.Context, path string) (InstalledSource,
 	if err != nil {
 		return InstalledSource{}, CodedError(CodeNotFound, "reading %s failed: %v", path, err)
 	}
-	meta, err := probeMetadata(ctx, wasm)
+	meta, hasSettings, err := probeMetadata(ctx, wasm)
 	if err != nil {
 		return InstalledSource{}, err
 	}
@@ -214,12 +215,12 @@ func (e *Engine) InstallFile(ctx context.Context, path string) (InstalledSource,
 	if err := writeFileAtomic(dest, wasm); err != nil {
 		return InstalledSource{}, err
 	}
-	return e.register(ctx, meta, dest)
+	return e.register(ctx, meta, dest, hasSettings)
 }
 
 // register records the source and drops any previously loaded instance so the
 // next call compiles the new binary.
-func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath string) (InstalledSource, error) {
+func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath string, hasSettings bool) (InstalledSource, error) {
 	var icon *string
 	if meta.IconURL != "" {
 		icon = &meta.IconURL
@@ -236,8 +237,8 @@ func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath str
 		}
 	}
 	_, err := e.db.Exec(
-		`INSERT INTO sources(id, plugin_key, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed, nsfw, installed_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		`INSERT INTO sources(id, plugin_key, name, version, abi_version, lang, base_url, icon_url, wasm_path, installed, nsfw, has_settings, installed_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
 		 ON CONFLICT(plugin_key) DO UPDATE SET
 		   id = excluded.id,
 		   name = excluded.name,
@@ -248,8 +249,9 @@ func (e *Engine) register(ctx context.Context, meta SourceMetadata, wasmPath str
 		   icon_url = excluded.icon_url,
 		   wasm_path = excluded.wasm_path,
 		   nsfw = excluded.nsfw,
+		   has_settings = excluded.has_settings,
 		   installed = 1`,
-		sourceID, meta.ID, meta.Name, meta.Version, meta.ABIVersion, meta.Lang, meta.BaseURL, icon, wasmPath, meta.NSFW, time.Now().Unix())
+		sourceID, meta.ID, meta.Name, meta.Version, meta.ABIVersion, meta.Lang, meta.BaseURL, icon, wasmPath, meta.NSFW, hasSettings, time.Now().Unix())
 	if err != nil {
 		return InstalledSource{}, fmt.Errorf("record source %s: %w", meta.ID, err)
 	}
@@ -290,6 +292,25 @@ func (e *Engine) Metadata(ctx context.Context, sourceID string) (SourceMetadata,
 	return p.meta, nil
 }
 
+// TransferHints returns the pacing and retry policy a source suggests. A
+// source that declares neither yields zero values, which the caller treats as
+// the host default.
+func (e *Engine) TransferHints(ctx context.Context, sourceID string) (RateLimitHints, RetryHints, error) {
+	meta, err := e.Metadata(ctx, sourceID)
+	if err != nil {
+		return RateLimitHints{}, RetryHints{}, err
+	}
+	var rate RateLimitHints
+	if meta.RateLimit != nil {
+		rate = *meta.RateLimit
+	}
+	var retry RetryHints
+	if meta.Retry != nil {
+		retry = *meta.Retry
+	}
+	return rate, retry, nil
+}
+
 // Filters returns the source's search filter schemas.
 func (e *Engine) Filters(ctx context.Context, sourceID string) (json.RawMessage, error) {
 	p, err := e.plugin(ctx, sourceID)
@@ -297,6 +318,112 @@ func (e *Engine) Filters(ctx context.Context, sourceID string) (json.RawMessage,
 		return nil, err
 	}
 	return p.Filters(ctx)
+}
+
+// Settings returns the decoded setting schemas a source declares. A source
+// without get_settings yields an empty slice.
+func (e *Engine) Settings(ctx context.Context, sourceID string) ([]SettingSchema, error) {
+	p, err := e.plugin(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := p.Settings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var schemas []SettingSchema
+	if err := json.Unmarshal(payload, &schemas); err != nil {
+		return nil, CodedError(CodeParsingError, "%s.%s returned unexpected data: %v", sourceID, ExportGetSettings, err)
+	}
+	return schemas, nil
+}
+
+// SettingValue returns the raw stored value for a declared setting and
+// whether a value is stored. A missing value means the schema default
+// applies.
+func (e *Engine) SettingValue(ctx context.Context, sourceID, key string) (string, bool, error) {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return "", false, err
+	}
+	return e.storage.Get(row.ID, key)
+}
+
+// SetSettingValue validates a decoded setting value against the declared
+// schema, serializes it per the contract, and writes it into the plugin
+// storage namespace. A nil value deletes the key, restoring the schema
+// default.
+func (e *Engine) SetSettingValue(ctx context.Context, sourceID, key string, value any) error {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return err
+	}
+	schemas, err := e.Settings(ctx, row.ID)
+	if err != nil {
+		return err
+	}
+	schema, ok := FindSetting(schemas, key)
+	if !ok {
+		return CodedError(CodeNotFound, "source %s declares no setting %q", sourceID, key)
+	}
+	if value == nil {
+		return e.storage.Delete(row.ID, key)
+	}
+	serialized, err := SerializeSettingValue(schema, value)
+	if err != nil {
+		return err
+	}
+	return e.storage.Set(row.ID, key, serialized)
+}
+
+// FindSetting returns the declared schema for key.
+func FindSetting(schemas []SettingSchema, key string) (SettingSchema, bool) {
+	for _, schema := range schemas {
+		if schema.ID == key {
+			return schema, true
+		}
+	}
+	return SettingSchema{}, false
+}
+
+// SerializeSettingValue validates a decoded value against schema and renders
+// it into the storage form: "true"/"false" for a checkbox, the option value
+// for a select, and the raw string for text.
+func SerializeSettingValue(schema SettingSchema, value any) (string, error) {
+	switch schema.Type {
+	case SettingKindCheckbox:
+		flag, ok := value.(bool)
+		if !ok {
+			return "", CodedError(CodeParsingError, "setting %q expects a boolean", schema.ID)
+		}
+		if flag {
+			return "true", nil
+		}
+		return "false", nil
+	case SettingKindSelect:
+		text, ok := value.(string)
+		if !ok {
+			return "", CodedError(CodeParsingError, "setting %q expects a string", schema.ID)
+		}
+		for _, option := range schema.Options {
+			if option.Value == text {
+				return text, nil
+			}
+		}
+		return "", CodedError(CodeParsingError, "setting %q has no option %q", schema.ID, text)
+	case SettingKindText:
+		text, ok := value.(string)
+		if !ok {
+			return "", CodedError(CodeParsingError, "setting %q expects a string", schema.ID)
+		}
+		if len(text) > StorageValueCap {
+			return "", CodedError(CodeMemoryLimitExceeded,
+				"setting %q is %d bytes, above the %d byte cap", schema.ID, len(text), StorageValueCap)
+		}
+		return text, nil
+	default:
+		return "", CodedError(CodeParsingError, "setting %q has an unsupported type %q", schema.ID, schema.Type)
+	}
 }
 
 // Search runs a source search.
@@ -488,6 +615,13 @@ func (e *Engine) load(ctx context.Context, sourceID string) (*loadedPlugin, erro
 	if err != nil {
 		return nil, err
 	}
+	// Record the settings surface on first load so a source installed before
+	// the flag existed reports it in the source list afterwards.
+	if p.HasSettings() && !row.HasSettings {
+		if _, err := e.db.Exec(`UPDATE sources SET has_settings=1 WHERE id=?`, sourceID); err != nil {
+			slog.Warn("engine recording settings flag failed", "source", sourceID, "err", err)
+		}
+	}
 	slog.Info("engine loaded", "plugin", p)
 	return p, nil
 }
@@ -521,9 +655,10 @@ type sourceRow struct {
 	Pinned      bool    `db:"pinned"`
 	LastUsedAt  *int64  `db:"last_used_at"`
 	NSFW        bool    `db:"nsfw"`
+	HasSettings bool    `db:"has_settings"`
 }
 
-const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at, pinned, last_used_at, nsfw`
+const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at, pinned, last_used_at, nsfw, has_settings`
 
 func (e *Engine) rows() ([]sourceRow, error) {
 	var out []sourceRow
@@ -557,6 +692,7 @@ func (e *Engine) describe(row sourceRow) InstalledSource {
 		BaseURL:      row.BaseURL,
 		InstalledAt:  row.InstalledAt,
 		HasClearance: e.clearance.HasClearance(row.ID),
+		HasSettings:  row.HasSettings,
 		Pinned:       row.Pinned,
 		LastUsedAt:   row.LastUsedAt,
 		NSFW:         row.NSFW,
@@ -572,6 +708,9 @@ func (e *Engine) describe(row sourceRow) InstalledSource {
 		out.Loaded = true
 		out.NSFW = p.meta.NSFW
 		out.AllowedHosts = p.meta.AllowedHosts
+		// A source installed before the has_settings column existed still
+		// reports its settings surface once it has been loaded once.
+		out.HasSettings = out.HasSettings || p.HasSettings()
 	}
 	return out
 }

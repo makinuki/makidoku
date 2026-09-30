@@ -48,7 +48,7 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 	// instead of forking a duplicate or reporting a new release.
 	chapters := withDerivedChapterNumbers(details.Title, details.Chapters)
 	adopted := adoptedChapterIDs(before, chapters)
-	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: resolution.linkLocator(source.SourceMangaID), Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: resolution.linkLocator(source.SourceMangaID), Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Tags: jsonString(details.Tags), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +65,7 @@ func (s *Server) RefreshManga(ctx context.Context, mangaID string) ([]string, er
 			Language:        stringPointer(item.Language),
 			UploadedAt:      chapterUploadedAt(item.UploadedAt),
 			Scanlator:       stringPointer(item.Scanlator),
+			Locked:          item.Locked,
 		})
 		if err != nil {
 			return nil, err
@@ -831,7 +832,7 @@ func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (d
 		return db.MangaAggregate{}, err
 	}
 	details := resolution.details
-	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: resolution.linkLocator(source.SourceMangaID), Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
+	updated, err := s.repo.UpsertManga(db.Manga{ID: source.MangaID, SourceID: source.SourceID, SourceMangaID: resolution.linkLocator(source.SourceMangaID), Title: details.Title, AltTitles: jsonString(details.AltTitles), Description: stringPointer(details.Description), Authors: jsonString(details.Authors), Artists: jsonString(details.Artists), Genres: jsonString(details.Genres), Tags: jsonString(details.Tags), Status: details.Status, CoverURL: engine.SelectCover(details.CoverURL, details.Covers, engine.PreferredCoverWidth)})
 	if err != nil {
 		return db.MangaAggregate{}, err
 	}
@@ -841,7 +842,7 @@ func (s *Server) fetchAndStoreDetails(r *http.Request, source db.MangaSource) (d
 	}
 	adopted := adoptedChapterIDs(before, details.Chapters)
 	for _, item := range details.Chapters {
-		if _, err := s.repo.UpsertChapter(db.Chapter{ID: adopted[item.ID], MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: chapterUploadedAt(item.UploadedAt), Scanlator: stringPointer(item.Scanlator)}); err != nil {
+		if _, err := s.repo.UpsertChapter(db.Chapter{ID: adopted[item.ID], MangaID: updated.ID, SourceID: source.SourceID, SourceChapterID: item.ID, ChapterNumber: item.Number, Volume: item.Volume, Title: stringPointer(item.Title), Language: stringPointer(item.Language), UploadedAt: chapterUploadedAt(item.UploadedAt), Scanlator: stringPointer(item.Scanlator), Locked: item.Locked}); err != nil {
 			return db.MangaAggregate{}, err
 		}
 	}

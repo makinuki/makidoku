@@ -1,0 +1,2 @@
+ALTER TABLE chapters DROP COLUMN locked;
+ALTER TABLE manga DROP COLUMN tags;

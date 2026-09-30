@@ -362,7 +362,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 		args = append(args, categoryID)
 	}
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.chapter_sort,m.chapter_filter,m.chapter_language,m.created_at,m.updated_at,m.details_fetched_at,
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.tags,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.chapter_sort,m.chapter_filter,m.chapter_language,m.created_at,m.updated_at,m.details_fetched_at,
 		m.custom_title,m.custom_artist,m.custom_author,m.custom_description,m.custom_genres,m.custom_status,m.custom_cover_url,
 		m.notes,m.memo,m.source_version,m.update_strategy,m.favorite_modified_at,m.initialized,m.excluded_scanlators,m.chapter_flags
 		FROM manga m `+where+` ORDER BY m.updated_at DESC,m.title`, args...)
@@ -490,7 +490,7 @@ func (r *Repository) ListLibrary(query string, categoryID int64) ([]LibraryManga
 
 func (r *Repository) ListLibraryBySource(sourceID string) ([]Manga, error) {
 	var manga []Manga
-	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.chapter_sort,m.chapter_filter,m.chapter_language,m.created_at,m.updated_at,m.details_fetched_at,
+	err := r.db.Select(&manga, `SELECT m.id,m.source_id,m.title,m.alt_titles,m.description,m.authors,m.artists,m.genres,m.tags,m.status,m.cover_url,m.cover_cache_path,m.cover_content_type,m.cover_fetched_at,m.in_library,m.download_format,m.download_new_chapters,m.reader_mode,m.reader_direction,m.reader_fit,m.chapter_sort,m.chapter_filter,m.chapter_language,m.created_at,m.updated_at,m.details_fetched_at,
 		m.custom_title,m.custom_artist,m.custom_author,m.custom_description,m.custom_genres,m.custom_status,m.custom_cover_url,
 		m.notes,m.memo,m.source_version,m.update_strategy,m.favorite_modified_at,m.initialized,m.excluded_scanlators,m.chapter_flags
 		FROM manga m WHERE m.in_library=1 AND m.source_id=? ORDER BY m.title`, strings.TrimSpace(sourceID))
@@ -673,9 +673,9 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 
 	_, err = r.db.Exec(`INSERT INTO manga(
 		id, source_id, title, alt_titles, description,
-		authors, artists, genres, status, cover_url, in_library,
+		authors, artists, genres, tags, status, cover_url, in_library,
 		download_format, download_new_chapters, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		title = excluded.title,
 		alt_titles = excluded.alt_titles,
@@ -683,13 +683,14 @@ func (r *Repository) UpsertManga(manga Manga) (Manga, error) {
 		authors = excluded.authors,
 		artists = excluded.artists,
 		genres = excluded.genres,
+		tags = excluded.tags,
 		status = excluded.status,
 		cover_url = excluded.cover_url,
 		download_format = excluded.download_format,
 		updated_at = excluded.updated_at`,
 		manga.ID, manga.SourceID, manga.Title,
 		manga.AltTitles, manga.Description, manga.Authors, manga.Artists,
-		manga.Genres, manga.Status, manga.CoverURL, manga.InLibrary,
+		manga.Genres, manga.Tags, manga.Status, manga.CoverURL, manga.InLibrary,
 		manga.DownloadFormat, manga.DownloadNewChapters, manga.CreatedAt, manga.UpdatedAt)
 	if err != nil {
 		return Manga{}, fmt.Errorf("upsert manga %s: %w", manga.ID, err)
@@ -755,7 +756,7 @@ func (r *Repository) SetMangaCover(id, path, contentType string, fetchedAt int64
 func (r *Repository) GetManga(id string) (Manga, error) {
 	var manga Manga
 	err := r.db.Get(&manga, `SELECT id, source_id, title,
-		alt_titles, description, authors, artists, genres, status, cover_url,
+		alt_titles, description, authors, artists, genres, tags, status, cover_url,
 		cover_cache_path, cover_content_type, cover_fetched_at, in_library, download_format, download_new_chapters, reader_mode, reader_direction, reader_fit, chapter_sort, chapter_filter, chapter_language, created_at, updated_at,
 		details_fetched_at,
 		custom_title, custom_artist, custom_author, custom_description, custom_genres, custom_status, custom_cover_url,
@@ -881,11 +882,11 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 		}
 		_, err = r.db.Exec(`INSERT INTO chapters(
 			id, manga_id, source_id, chapter_number, volume, title, language,
-			uploaded_at, scanlator, downloaded, download_path
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			uploaded_at, scanlator, locked, downloaded, download_path
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			chapter.ID, chapter.MangaID, chapter.SourceID,
 			chapter.ChapterNumber, chapter.Volume, chapter.Title, chapter.Language,
-			chapter.UploadedAt, chapter.Scanlator, chapter.Downloaded,
+			chapter.UploadedAt, chapter.Scanlator, chapter.Locked, chapter.Downloaded,
 			chapter.DownloadPath)
 		if err != nil {
 			return Chapter{}, fmt.Errorf("create chapter %s: %w", chapter.ID, err)
@@ -899,10 +900,10 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 		// manga_id is part of the update: a source may re-parent an external
 		// chapter to another series, and the canonical record must follow.
 		_, err = r.db.Exec(`UPDATE chapters SET
-			manga_id=?, chapter_number=?, volume=?, title=?, language=?, uploaded_at=?, scanlator=?
+			manga_id=?, chapter_number=?, volume=?, title=?, language=?, uploaded_at=?, scanlator=?, locked=?
 			WHERE id=?`,
 			chapter.MangaID, chapter.ChapterNumber, chapter.Volume, chapter.Title,
-			chapter.Language, chapter.UploadedAt, chapter.Scanlator, chapter.ID)
+			chapter.Language, chapter.UploadedAt, chapter.Scanlator, chapter.Locked, chapter.ID)
 		if err != nil {
 			return Chapter{}, fmt.Errorf("update chapter %s: %w", chapter.ID, err)
 		}
@@ -924,8 +925,8 @@ func (r *Repository) UpsertChapter(chapter Chapter) (Chapter, error) {
 // representation alongside the canonical record. The owning representation is
 // authoritative; a missing row leaves the external id empty.
 const chapterSelect = `SELECT c.id, c.manga_id, c.source_id,
-		cs.source_chapter_id, c.chapter_number, c.volume, c.title, c.language,
-		c.uploaded_at, c.scanlator, c.downloaded, c.download_path,
+	cs.source_chapter_id, c.chapter_number, c.volume, c.title, c.language,
+		c.uploaded_at, c.scanlator, c.locked, c.downloaded, c.download_path,
 		COALESCE((SELECT q.status FROM download_queue q WHERE q.chapter_id=c.id), '') AS download_status
 	FROM chapters c
 	LEFT JOIN chapter_sources cs ON cs.chapter_id = c.id AND cs.source_id = c.source_id`

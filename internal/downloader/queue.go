@@ -195,6 +195,7 @@ func (q *Queue) EnqueueManga(ctx context.Context, mangaID string, selection Chap
 			Language:        stringPointer(item.Language),
 			UploadedAt:      item.UploadedAt,
 			Scanlator:       stringPointer(item.Scanlator),
+			Locked:          item.Locked,
 		})
 		if err != nil {
 			return nil, err

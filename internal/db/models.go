@@ -64,6 +64,7 @@ type Manga struct {
 	Authors             *string `db:"authors" json:"authors"`
 	Artists             *string `db:"artists" json:"artists"`
 	Genres              *string `db:"genres" json:"genres"`
+	Tags                *string `db:"tags" json:"tags,omitempty"`
 	Status              string  `db:"status" json:"status"`
 	CoverURL            string  `db:"cover_url" json:"-"`
 	CoverCachePath      *string `db:"cover_cache_path" json:"-"`
@@ -328,6 +329,7 @@ type Chapter struct {
 	Language        *string  `db:"language" json:"language"`
 	UploadedAt      *int64   `db:"uploaded_at" json:"uploadedAt"`
 	Scanlator       *string  `db:"scanlator" json:"scanlator"`
+	Locked          bool     `db:"locked" json:"locked"`
 	Downloaded      bool     `db:"downloaded" json:"downloaded"`
 	DownloadPath    *string  `db:"download_path" json:"downloadPath"`
 	// Bookmark is the user-facing flag. The remaining source fields mirror the

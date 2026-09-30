@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -28,6 +29,9 @@ type downloadQueue interface {
 	Resume(int64) error
 	Cancel(int64) error
 	Retry(int64) error
+	RetryFailedItems(sourceID string) (int, error)
+	InvalidateSourcePolicy(sourceID string)
+	Defaults() (interval time.Duration, maxAttempts int, backoff time.Duration)
 	PauseAll()
 	ResumeAll()
 	Paused() bool

@@ -1813,6 +1813,72 @@ func (r *Repository) ResetInterruptedQueue() error {
 	return err
 }
 
+// RetryFailedQueueItemsBySource moves every failed item downloaded from one
+// source back to the pending state and returns the affected ids in queue
+// order, so callers can announce one transition per row. Progress and staged
+// pages are kept, matching the per-item retry.
+func (r *Repository) RetryFailedQueueItemsBySource(sourceID string) ([]int64, error) {
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ids []int64
+	if err := tx.Select(&ids, `SELECT q.id FROM download_queue q
+		JOIN chapters c ON c.id = q.chapter_id
+		WHERE q.status = ? AND c.source_id = ? ORDER BY q.position, q.queued_at, q.id`,
+		QueueFailed, sourceID); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := tx.Exec(`UPDATE download_queue SET status = ?
+		WHERE status = ? AND chapter_id IN (SELECT id FROM chapters WHERE source_id = ?)`,
+		QueuePending, QueueFailed, sourceID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// GetSourceDownloadPrefs returns the pacing override stored for a source, or
+// nil when the user has set none.
+func (r *Repository) GetSourceDownloadPrefs(sourceID string) (*SourceDownloadPrefs, error) {
+	var prefs SourceDownloadPrefs
+	err := r.db.Get(&prefs, `SELECT source_id, interval_ms, max_attempts, backoff_ms
+		FROM source_download_prefs WHERE source_id = ?`, sourceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &prefs, nil
+}
+
+// SetSourceDownloadPrefs stores the pacing override for a source. A row whose
+// fields are all nil is deleted, which returns the source to following its
+// own suggestions and the global defaults.
+func (r *Repository) SetSourceDownloadPrefs(prefs SourceDownloadPrefs) error {
+	if prefs.IntervalMs == nil && prefs.MaxAttempts == nil && prefs.BackoffMs == nil {
+		_, err := r.db.Exec(`DELETE FROM source_download_prefs WHERE source_id = ?`, prefs.SourceID)
+		return err
+	}
+	_, err := r.db.Exec(`INSERT INTO source_download_prefs (source_id, interval_ms, max_attempts, backoff_ms, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(source_id) DO UPDATE SET
+			interval_ms = excluded.interval_ms,
+			max_attempts = excluded.max_attempts,
+			backoff_ms = excluded.backoff_ms,
+			updated_at = excluded.updated_at`,
+		prefs.SourceID, prefs.IntervalMs, prefs.MaxAttempts, prefs.BackoffMs, time.Now().UnixMilli())
+	return err
+}
+
 func (r *Repository) ClaimNextQueueItem() (*DownloadQueueItem, error) {
 	tx, err := r.db.Beginx()
 	if err != nil {

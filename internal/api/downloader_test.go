@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -17,20 +18,23 @@ import (
 )
 
 type fakeDownloads struct {
-	items      []db.DownloadQueueItem
-	stats      downloader.Stats
-	selection  downloader.ChapterSelection
-	format     string
-	mangaID    string
-	pausedID   int64
-	resumedID  int64
-	canceledID int64
-	retriedID  int64
-	pausedAll  bool
-	cancelAll  int64
-	cancelIDs  []int64
-	order      []int64
-	events     chan downloader.Event
+	items             []db.DownloadQueueItem
+	stats             downloader.Stats
+	selection         downloader.ChapterSelection
+	format            string
+	mangaID           string
+	pausedID          int64
+	resumedID         int64
+	canceledID        int64
+	retriedID         int64
+	retryFailed       int
+	retryFailedSource string
+	invalidated       string
+	pausedAll         bool
+	cancelAll         int64
+	cancelIDs         []int64
+	order             []int64
+	events            chan downloader.Event
 }
 
 func newFakeDownloads() *fakeDownloads {
@@ -51,7 +55,15 @@ func (f *fakeDownloads) Cancel(id int64) error {
 	return nil
 }
 func (f *fakeDownloads) Retry(id int64) error      { f.retriedID = id; return nil }
-func (f *fakeDownloads) PauseAll()                 { f.pausedAll = true }
+func (f *fakeDownloads) RetryFailedItems(sourceID string) (int, error) {
+	f.retryFailedSource = sourceID
+	return f.retryFailed, nil
+}
+func (f *fakeDownloads) InvalidateSourcePolicy(sourceID string) { f.invalidated = sourceID }
+func (f *fakeDownloads) Defaults() (time.Duration, int, time.Duration) {
+	return 500 * time.Millisecond, 3, time.Second
+}
+func (f *fakeDownloads) PauseAll() { f.pausedAll = true }
 func (f *fakeDownloads) ResumeAll()                { f.pausedAll = false }
 func (f *fakeDownloads) Paused() bool              { return f.pausedAll }
 func (f *fakeDownloads) CancelAll() (int64, error) { return f.cancelAll, nil }

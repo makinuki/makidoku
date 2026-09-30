@@ -90,7 +90,7 @@ func NewQueue(repo *db.Repository, sourceEngine Engine, options Options) *Queue 
 	if options.PageInterval < 0 {
 		options.PageInterval = 0
 	}
-	if options.MaxRetries <= 0 {
+	if options.MaxRetries < 0 {
 		options.MaxRetries = 3
 	}
 	return &Queue{
@@ -110,9 +110,10 @@ func (q *Queue) Stats() Stats {
 	}
 }
 
-// policyFor returns the effective pacing and retry policy for a source. The
-// source's own hints replace the host defaults; the result is cached because
-// the hints do not change while the source is installed.
+// policyFor returns the effective pacing and retry policy for a source. A
+// user override replaces the source's own hints, which in turn replace the
+// host defaults. The result is cached until the override changes or the
+// source is reinstalled, both of which call InvalidateSourcePolicy.
 func (q *Queue) policyFor(ctx context.Context, sourceID string) sourcePolicy {
 	if cached, ok := q.policies.Load(sourceID); ok {
 		return cached.(sourcePolicy)
@@ -122,6 +123,7 @@ func (q *Queue) policyFor(ctx context.Context, sourceID string) sourcePolicy {
 		retries:  q.options.MaxRetries,
 		backoff:  DefaultRetryBackoff,
 	}
+	rated := true
 	if rate, retry, err := q.engine.TransferHints(ctx, sourceID); err == nil {
 		if rate.IntervalMs != nil && *rate.IntervalMs > 0 {
 			policy.interval = time.Duration(*rate.IntervalMs) * time.Millisecond
@@ -132,9 +134,39 @@ func (q *Queue) policyFor(ctx context.Context, sourceID string) sourcePolicy {
 		if retry.BackoffMs != nil && *retry.BackoffMs > 0 {
 			policy.backoff = time.Duration(*retry.BackoffMs) * time.Millisecond
 		}
+	} else {
+		rated = false
 	}
-	q.policies.Store(sourceID, policy)
+	// A stored override wins over both the suggestion and the default. It is
+	// applied even when reading the hints failed, so the user stays in control
+	// of a source whose plugin cannot be loaded right now.
+	if prefs, err := q.repo.GetSourceDownloadPrefs(sourceID); err == nil && prefs != nil {
+		if prefs.IntervalMs != nil {
+			policy.interval = time.Duration(*prefs.IntervalMs) * time.Millisecond
+		}
+		if prefs.MaxAttempts != nil {
+			policy.retries = int(*prefs.MaxAttempts)
+		}
+		if prefs.BackoffMs != nil {
+			policy.backoff = time.Duration(*prefs.BackoffMs) * time.Millisecond
+		}
+	}
+	if rated {
+		q.policies.Store(sourceID, policy)
+	}
 	return policy
+}
+
+// InvalidateSourcePolicy drops the cached policy of one source so a changed
+// override takes effect on the item that runs next.
+func (q *Queue) InvalidateSourcePolicy(sourceID string) {
+	q.policies.Delete(sourceID)
+}
+
+// Defaults reports the global pacing and retry policy applied when a source
+// suggests nothing and the user has set no override.
+func (q *Queue) Defaults() (interval time.Duration, maxAttempts int, backoff time.Duration) {
+	return q.options.PageInterval, q.options.MaxRetries, DefaultRetryBackoff
 }
 
 // PauseAll stops the workers from claiming more work. An item that is already
@@ -648,6 +680,24 @@ func (q *Queue) Retry(id int64) error {
 	q.publishCurrent("pending", id)
 	q.notify()
 	return nil
+}
+
+// RetryFailedItems moves every failed item of one source back to the queue
+// and returns how many were moved. Each transition is published so open
+// clients follow along, and the staged pages of every retried chapter carry
+// over as they do for a per-item retry.
+func (q *Queue) RetryFailedItems(sourceID string) (int, error) {
+	ids, err := q.repo.RetryFailedQueueItemsBySource(sourceID)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		q.publishCurrent("pending", id)
+	}
+	if len(ids) > 0 {
+		q.notify()
+	}
+	return len(ids), nil
 }
 
 // CancelAll removes every row that can still make progress and reports how

@@ -27,6 +27,7 @@ func (s *Server) mountDownloads(r chi.Router) {
 	r.Post("/download/resume-all", s.resumeAllDownloads)
 	r.Post("/download/cancel-all", s.cancelAllDownloads)
 	r.Post("/download/cancel", s.cancelDownloads)
+	r.Post("/download/retry-failed", s.retryFailedDownloads)
 	r.Post("/download/reorder", s.reorderDownloads)
 	r.Get("/download/events", s.downloadEvents)
 	r.Route("/download/{itemID}", func(item chi.Router) {
@@ -39,6 +40,29 @@ func (s *Server) mountDownloads(r chi.Router) {
 
 func (s *Server) retryDownload(w http.ResponseWriter, r *http.Request) {
 	s.controlDownload(w, r, s.downloads.Retry)
+}
+
+// retryFailedDownloads moves every failed item of one source back to the
+// queue. Source identifiers are stored on the queue rows themselves, so a
+// request for an unknown source simply retries nothing. The response carries
+// the number of items moved.
+func (s *Server) retryFailedDownloads(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SourceID string `json:"sourceId"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.SourceID) == "" {
+		writeBadRequest(w, "sourceId is required")
+		return
+	}
+	retried, err := s.downloads.RetryFailedItems(body.SourceID)
+	if err != nil {
+		writeLocalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"retried": retried})
 }
 
 // pauseAllDownloads and resumeAllDownloads control the downloader itself: a

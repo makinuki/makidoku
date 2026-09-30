@@ -91,9 +91,17 @@ func New(cfg config.Config) (*Server, error) {
 	if configuredWorkers, settingErr := preferences.Int("downloads.concurrent"); settingErr == nil && configuredWorkers > 0 {
 		workers = configuredWorkers
 	}
+	pageInterval := cfg.PageInterval
+	if intervalMs, settingErr := preferences.Int("downloads.page_interval"); settingErr == nil && intervalMs >= 0 {
+		pageInterval = time.Duration(intervalMs) * time.Millisecond
+	}
+	maxRetries := 3
+	if attempts, settingErr := preferences.Int("downloads.retry_attempts"); settingErr == nil && attempts >= 0 {
+		maxRetries = attempts
+	}
 	downloads := downloader.NewQueue(db.NewRepository(database), eng, downloader.Options{
-		Workers: workers, PageInterval: cfg.PageInterval,
-		DownloadDir: cfg.DownloadDir, MaxRetries: 3,
+		Workers: workers, PageInterval: pageInterval,
+		DownloadDir: cfg.DownloadDir, MaxRetries: maxRetries,
 	})
 
 	router := chi.NewRouter()

@@ -20,6 +20,9 @@ type fakeEngine struct {
 	fetches         int
 	unscrambles     int
 	afterFirstFetch func()
+	rateHints       engine.RateLimitHints
+	retryHints      engine.RetryHints
+	hintsErr        error
 }
 
 func (f *fakeEngine) Details(ctx context.Context, sourceID, mangaID string) (engine.MangaDetails, error) {
@@ -44,7 +47,10 @@ func (f *fakeEngine) Unscramble(ctx context.Context, sourceID string, data []byt
 }
 
 func (f *fakeEngine) TransferHints(ctx context.Context, sourceID string) (engine.RateLimitHints, engine.RetryHints, error) {
-	return engine.RateLimitHints{}, engine.RetryHints{}, nil
+	if f.hintsErr != nil {
+		return engine.RateLimitHints{}, engine.RetryHints{}, f.hintsErr
+	}
+	return f.rateHints, f.retryHints, nil
 }
 
 func downloaderRepository(t *testing.T) (*db.Repository, string) {

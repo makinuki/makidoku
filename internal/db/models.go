@@ -565,3 +565,13 @@ type DownloadQueueItem struct {
 	// restarting. It is worker bookkeeping and never leaves the backend.
 	DonePagesJSON string `db:"done_pages" json:"-"`
 }
+
+// SourceDownloadPrefs is the per-source download pacing override the user has
+// set. A nil field means that field follows the source's own suggestion and
+// then the global default. The row itself is removed once every field is nil.
+type SourceDownloadPrefs struct {
+	SourceID    string `db:"source_id" json:"sourceId"`
+	IntervalMs  *int64 `db:"interval_ms" json:"intervalMs"`
+	MaxAttempts *int64 `db:"max_attempts" json:"maxAttempts"`
+	BackoffMs   *int64 `db:"backoff_ms" json:"backoffMs"`
+}

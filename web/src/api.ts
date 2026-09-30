@@ -2,12 +2,14 @@ import type {
   Aggregate,
   BulkResult,
   Category,
+  DownloadPolicyLayer,
   DownloadSnapshot,
   LibraryManga,
   Page,
   PageResult,
   Progress,
   Source,
+  SourceDownloadsPolicy,
   Binding,
   CatalogEntry,
   MigrationCandidates,
@@ -233,6 +235,18 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ languages: languages ?? [] }),
     }),
+  // The download pacing layers for one source: the user's override, the
+  // source's own suggestion and the host defaults, all at once.
+  sourceDownloads: (id: string) =>
+    request<SourceDownloadsPolicy>(`/api/sources/${encodeURIComponent(id)}/downloads`),
+  // Storing an override replaces the affected fields outright; a field sent
+  // as null follows the source and the defaults again. The server drops the
+  // queue's cached policy, so the next chapter uses the new pacing.
+  setSourceDownloads: (id: string, prefs: DownloadPolicyLayer) =>
+    request<SourceDownloadsPolicy>(`/api/sources/${encodeURIComponent(id)}/downloads`, {
+      method: "PUT",
+      body: JSON.stringify(prefs),
+    }),
   submitClearance: (id: string, cookie: string, userAgent: string) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}/clearance`, {
       method: "POST",
@@ -268,6 +282,13 @@ export const api = {
   // Reorder persists the queue display order as the ids of the live rows.
   reorderDownloads: (itemIds: number[]) =>
     request<void>("/api/download/reorder", { method: "POST", body: JSON.stringify({ itemIds }) }),
+  // Move every failed chapter of one source back into the queue. Progress and
+  // already staged pages carry over, the same as a per-chapter retry.
+  retryFailedDownloads: (sourceId: string) =>
+    request<{ retried: number }>("/api/download/retry-failed", {
+      method: "POST",
+      body: JSON.stringify({ sourceId }),
+    }),
   progress: (
     mangaId: string,
     chapterId: string,

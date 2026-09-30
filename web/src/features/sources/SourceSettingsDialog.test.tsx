@@ -46,6 +46,12 @@ const settings: SourceSetting[] = [
 
 // stubFetch serves the settings list on GET and echoes the posted value back
 // as the updated setting on PUT.
+const emptyPacing = {
+  override: { intervalMs: null, maxAttempts: null, backoffMs: null },
+  hint: { intervalMs: null, maxAttempts: null, backoffMs: null },
+  defaults: { intervalMs: 500, maxAttempts: 3, backoffMs: 1000 },
+};
+
 function stubFetch() {
   const calls: { url: string; method: string; body: unknown }[] = [];
   vi.stubGlobal(
@@ -55,6 +61,9 @@ function stubFetch() {
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ url, method, body });
+      if (url.includes("/downloads")) {
+        return Response.json(emptyPacing);
+      }
       if (method === "PUT") {
         return Response.json({ ...settings[0], hasValue: body?.value !== null, value: body?.value ?? false });
       }
@@ -132,6 +141,39 @@ describe("SourceSettingsDialog", () => {
     );
     expect(screen.queryByText("Chapter languages")).not.toBeInTheDocument();
   });
+
+  it("saves a pacing override, warns when faster than the source suggests, and can undo it", async () => {
+    const calls = stubPacing();
+    render(<SourceSettingsDialog source={source} onClose={vi.fn()} />);
+
+    // The placeholder tells the user what the source suggests before typing.
+    const interval = await screen.findByLabelText("Page interval");
+    expect(interval).toHaveAttribute("placeholder", "Source suggests 800 ms");
+    expect(screen.getByLabelText("Retry attempts")).toHaveAttribute(
+      "placeholder",
+      "Source suggests 2 tries",
+    );
+
+    fireEvent.change(interval, { target: { value: "120" } });
+    fireEvent.blur(interval);
+    await waitFor(() => {
+      const put = calls.find((call) => call.method === "PUT" && call.url.includes("/downloads"));
+      expect(put?.body).toMatchObject({ intervalMs: 120 });
+    });
+
+    // An override more aggressive than the suggestion is kept but flagged.
+    expect(await screen.findByText("Faster than the source suggests")).toBeInTheDocument();
+
+    // Following the source again stores null and clears the warning.
+    fireEvent.click(screen.getByRole("button", { name: /Follow the source again/i }));
+    await waitFor(() => {
+      const puts = calls.filter((call) => call.method === "PUT" && call.url.includes("/downloads"));
+      expect(puts.at(-1)?.body).toMatchObject({ intervalMs: null });
+    });
+    await waitFor(() =>
+      expect(screen.queryByText("Faster than the source suggests")).not.toBeInTheDocument(),
+    );
+  });
 });
 
 // stubLanguages serves an empty settings list and echoes the posted language
@@ -147,6 +189,37 @@ function stubLanguages() {
       calls.push({ url, method, body });
       if (url.includes("/languages") && method === "PUT") {
         return Response.json({ ...source, languages: body?.languages ?? [] });
+      }
+      if (url.includes("/downloads")) {
+        return Response.json(emptyPacing);
+      }
+      return Response.json([]);
+    }),
+  );
+  return calls;
+}
+
+// stubPacing serves one source whose hints are 800 ms, 2 tries and 1000 ms,
+// and folds each stored override back into the response it serves next.
+function stubPacing() {
+  const calls: { url: string; method: string; body: any }[] = [];
+  let policy = {
+    override: { intervalMs: null as number | null, maxAttempts: null as number | null, backoffMs: null as number | null },
+    hint: { intervalMs: 800, maxAttempts: 2, backoffMs: 1000 },
+    defaults: { intervalMs: 500, maxAttempts: 3, backoffMs: 1000 },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
+      if (url.includes("/downloads")) {
+        if (method === "PUT") {
+          policy = { ...policy, override: { ...policy.override, ...body } };
+        }
+        return Response.json(policy);
       }
       return Response.json([]);
     }),

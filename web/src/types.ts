@@ -217,6 +217,20 @@ export type SourceSetting = {
   value?: boolean | string;
   hasValue: boolean;
 };
+// One pacing layer of a source's download policy. A null field means that
+// layer stays silent and the next one decides it.
+export type DownloadPolicyLayer = {
+  intervalMs: number | null;
+  maxAttempts: number | null;
+  backoffMs: number | null;
+};
+// The three pacing layers for one source: the user's override wins over the
+// source's own suggestion, which wins over the host defaults.
+export type SourceDownloadsPolicy = {
+  override: DownloadPolicyLayer;
+  hint: DownloadPolicyLayer;
+  defaults: DownloadPolicyLayer;
+};
 export type CoverVariant = { url: string; width?: number; height?: number };
 export type Details = {
   id: string;

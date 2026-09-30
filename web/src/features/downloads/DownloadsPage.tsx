@@ -5,7 +5,7 @@ import { DragDropProvider, KeyboardSensor, PointerSensor } from "@dnd-kit/react"
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/react";
 import { isSortableOperation, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints } from "@dnd-kit/dom";
-import { ArrowUpDown, ChevronDown, Ellipsis, GripVertical, Pause, Play } from "lucide-react";
+import { ArrowUpDown, ChevronDown, Ellipsis, GripVertical, Pause, Play, RotateCcw } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "../../api";
 import type { DownloadEvent, DownloadSnapshot, QueueItem } from "../../types";
@@ -176,6 +176,17 @@ export function DownloadsPage() {
     await applyOrder(sortSections(sections, next));
   };
 
+  // Retrying a source's failures keeps each chapter's progress and staged
+  // pages; the queue events move the rows back into place as they arrive.
+  const retryFailed = async (sourceId: string) => {
+    setError("");
+    try {
+      await api.retryFailedDownloads(sourceId);
+    } catch (e) {
+      setError(messageOf(e, "Unable to retry the failed downloads"));
+    }
+  };
+
   const downloaderState = async (resume: boolean) => {
     setBusy(true);
     setError("");
@@ -342,6 +353,7 @@ export function DownloadsPage() {
                   })
                 }
                 onAction={handleRowAction}
+                onRetryFailed={retryFailed}
               />
             ))}
           </div>
@@ -357,12 +369,14 @@ function SourceSection({
   collapsed,
   onToggle,
   onAction,
+  onRetryFailed,
 }: {
   section: QueueSection;
   index: number;
   collapsed: boolean;
   onToggle: () => void;
   onAction: (action: RowAction, item: QueueItem) => void;
+  onRetryFailed: (sourceId: string) => Promise<void>;
 }) {
   const { ref, handleRef } = useSortable({
     id: sectionSortableId(section.sourceId),
@@ -370,6 +384,19 @@ function SourceSection({
     type: sourceType,
     accept: sourceType,
   });
+  // A source header offers its bulk retry only while the group holds failed
+  // rows; the button stays disabled through the request so a double press
+  // cannot queue the same transition twice.
+  const failedCount = section.rows.filter((row) => row.status === "FAILED").length;
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await onRetryFailed(section.sourceId);
+    } finally {
+      setRetrying(false);
+    }
+  };
   return (
     <section ref={ref} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
       <div className="flex items-center gap-1 px-2 py-1">
@@ -378,7 +405,7 @@ function SourceSection({
           aria-expanded={!collapsed}
           aria-label={`${section.sourceName} (${section.rows.length})`}
           onClick={onToggle}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left hover:bg-zinc-800/50 active:bg-zinc-800/50"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left hover:bg-zinc-800/50 active:bg-zinc-800/50 min-h-11"
         >
           <ChevronDown
             size={16}
@@ -389,6 +416,18 @@ function SourceSection({
           </span>
           <span className="shrink-0 text-xs text-zinc-500">({section.rows.length})</span>
         </button>
+        {failedCount > 0 && (
+          <button
+            type="button"
+            disabled={retrying}
+            onClick={() => void retry()}
+            aria-label={`Retry ${failedCount} failed downloads from ${section.sourceName}`}
+            className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-amber-400 hover:bg-zinc-800 active:bg-zinc-800 disabled:opacity-40"
+          >
+            <RotateCcw size={12} />
+            Retry {failedCount} failed
+          </button>
+        )}
         <button
           type="button"
           ref={handleRef}

@@ -18,6 +18,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/makinuki/makidoku/internal/identity"
+	"github.com/makinuki/makidoku/internal/languages"
 )
 
 // Options configures the engine.
@@ -49,22 +50,28 @@ type Engine struct {
 
 // InstalledSource describes an installed source for the local API.
 type InstalledSource struct {
-	ID           string   `json:"id"`
-	PluginKey    string   `json:"-"`
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	ABIVersion   int      `json:"abiVersion"`
-	Lang         string   `json:"lang"`
-	BaseURL      string   `json:"baseUrl"`
-	IconURL      string   `json:"iconUrl"`
-	NSFW         bool     `json:"nsfw"`
-	InstalledAt  int64    `json:"installedAt"`
-	Loaded       bool     `json:"loaded"`
-	HasClearance bool     `json:"hasClearance"`
-	HasSettings  bool     `json:"hasSettings"`
-	AllowedHosts []string `json:"allowedHosts,omitempty"`
-	Pinned       bool     `json:"pinned"`
-	LastUsedAt   *int64   `json:"lastUsedAt,omitempty"`
+	ID           string `json:"id"`
+	PluginKey    string `json:"-"`
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	ABIVersion   int    `json:"abiVersion"`
+	Lang         string `json:"lang"`
+	BaseURL      string `json:"baseUrl"`
+	IconURL      string `json:"iconUrl"`
+	NSFW         bool   `json:"nsfw"`
+	InstalledAt  int64  `json:"installedAt"`
+	Loaded       bool   `json:"loaded"`
+	HasClearance bool   `json:"hasClearance"`
+	HasSettings  bool   `json:"hasSettings"`
+	// Languages is the stored per-source chapter language selection. An empty
+	// slice means the source inherits the global default.
+	Languages []string `json:"languages"`
+	// AvailableLanguages lists the distinct chapter language codes seen for the
+	// source. It is filled by the API from stored chapters, not by the plugin.
+	AvailableLanguages []string `json:"availableLanguages,omitempty"`
+	AllowedHosts       []string `json:"allowedHosts,omitempty"`
+	Pinned             bool     `json:"pinned"`
+	LastUsedAt         *int64   `json:"lastUsedAt,omitempty"`
 }
 
 // CatalogEntry is a registry entry annotated with local state.
@@ -656,9 +663,10 @@ type sourceRow struct {
 	LastUsedAt  *int64  `db:"last_used_at"`
 	NSFW        bool    `db:"nsfw"`
 	HasSettings bool    `db:"has_settings"`
+	Languages   string  `db:"languages"`
 }
 
-const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at, pinned, last_used_at, nsfw, has_settings`
+const sourceColumns = `id, COALESCE(plugin_key, '') AS plugin_key, name, version, abi_version, lang, base_url, icon_url, COALESCE(wasm_path, '') AS wasm_path, installed, installed_at, pinned, last_used_at, nsfw, has_settings, languages`
 
 func (e *Engine) rows() ([]sourceRow, error) {
 	var out []sourceRow
@@ -693,6 +701,7 @@ func (e *Engine) describe(row sourceRow) InstalledSource {
 		InstalledAt:  row.InstalledAt,
 		HasClearance: e.clearance.HasClearance(row.ID),
 		HasSettings:  row.HasSettings,
+		Languages:    decodeLanguages(row.Languages),
 		Pinned:       row.Pinned,
 		LastUsedAt:   row.LastUsedAt,
 		NSFW:         row.NSFW,
@@ -724,6 +733,56 @@ func (e *Engine) SetSourcePinned(id string, pinned bool) (InstalledSource, error
 		return InstalledSource{}, err
 	}
 	return e.Get(row.ID)
+}
+
+// SetSourceLanguages stores the chapter language selection for a source. An
+// empty selection clears the column, so the source falls back to the global
+// default.
+func (e *Engine) SetSourceLanguages(id string, codes []string) (InstalledSource, error) {
+	row, err := e.row(id)
+	if err != nil {
+		return InstalledSource{}, err
+	}
+	stored, err := encodeLanguages(codes)
+	if err != nil {
+		return InstalledSource{}, err
+	}
+	if _, err := e.db.Exec(`UPDATE sources SET languages=? WHERE id=?`, stored, row.ID); err != nil {
+		return InstalledSource{}, err
+	}
+	return e.Get(row.ID)
+}
+
+// encodeLanguages renders a selection for the languages column. An empty
+// selection stores an empty string, which reads back as no preference.
+func encodeLanguages(codes []string) (string, error) {
+	normalized := languages.Set(codes)
+	if len(normalized) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode languages: %w", err)
+	}
+	return string(raw), nil
+}
+
+// decodeLanguages reads the languages column. A malformed value degrades to no
+// preference rather than failing the source read.
+func decodeLanguages(stored string) []string {
+	stored = strings.TrimSpace(stored)
+	if stored == "" {
+		return []string{}
+	}
+	var codes []string
+	if err := json.Unmarshal([]byte(stored), &codes); err != nil {
+		return []string{}
+	}
+	normalized := languages.Set(codes)
+	if normalized == nil {
+		return []string{}
+	}
+	return normalized
 }
 
 func (e *Engine) TouchSource(id string) error {

@@ -946,24 +946,37 @@ func (r *Repository) ListChapters(mangaID string) ([]Chapter, error) {
 
 // BulkChapterIDs returns the chapter IDs of a title in reading order. With
 // unreadOnly set, chapters already marked read are omitted; a missing read
-// state counts as unread.
-func (r *Repository) BulkChapterIDs(mangaID string, unreadOnly bool) ([]string, error) {
-	query := `SELECT c.id FROM chapters c WHERE c.manga_id=? ORDER BY c.chapter_number IS NULL, c.chapter_number, c.id`
+// state counts as unread. A language selection restricts the result to those
+// codes; chapters with no language stay eligible because their language is
+// unknown.
+func (r *Repository) BulkChapterIDs(mangaID string, unreadOnly bool, selection []string) ([]string, error) {
+	args := []any{mangaID}
+	languageClause := ""
+	if len(selection) > 0 {
+		languageClause = ` AND (c.language IS NULL OR c.language='' OR LOWER(c.language) IN (` + placeholders(len(selection)) + `))`
+		for _, code := range selection {
+			args = append(args, code)
+		}
+	}
+	query := `SELECT c.id FROM chapters c WHERE c.manga_id=?` + languageClause + ` ORDER BY c.chapter_number IS NULL, c.chapter_number, c.id`
 	if unreadOnly {
 		query = `SELECT c.id FROM chapters c
 			LEFT JOIN chapter_read_state s ON s.chapter_id=c.id
-			WHERE c.manga_id=? AND COALESCE(s.read,0)=0
+			WHERE c.manga_id=? AND COALESCE(s.read,0)=0` + languageClause + `
 			ORDER BY c.chapter_number IS NULL, c.chapter_number, c.id`
 	}
 	var ids []string
-	err := r.db.Select(&ids, query, mangaID)
+	err := r.db.Select(&ids, query, args...)
 	if ids == nil {
 		ids = []string{}
 	}
 	return ids, err
 }
 
-func (r *Repository) NextChapterIDs(mangaID, chapterID string, limit int) ([]string, error) {
+// NextChapterIDs returns the next chapters to download after chapterID, in
+// reading order. A language selection restricts the result to those codes;
+// chapters with no language stay eligible because their language is unknown.
+func (r *Repository) NextChapterIDs(mangaID, chapterID string, limit int, selection []string) ([]string, error) {
 	if limit <= 0 {
 		return []string{}, nil
 	}
@@ -974,14 +987,44 @@ func (r *Repository) NextChapterIDs(mangaID, chapterID string, limit int) ([]str
 	if number == nil {
 		return []string{}, nil
 	}
+	query := `SELECT c.id FROM chapters c LEFT JOIN download_queue q ON q.chapter_id=c.id
+		WHERE c.manga_id=? AND c.chapter_number>? AND c.downloaded=0 AND (q.status IS NULL OR q.status = ?)`
+	args := []any{mangaID, *number, QueueFailed}
+	if len(selection) > 0 {
+		query += ` AND (c.language IS NULL OR c.language='' OR LOWER(c.language) IN (` + placeholders(len(selection)) + `))`
+		for _, code := range selection {
+			args = append(args, code)
+		}
+	}
+	query += ` ORDER BY c.chapter_number LIMIT ?`
+	args = append(args, limit)
 	var ids []string
-	err := r.db.Select(&ids, `SELECT c.id FROM chapters c LEFT JOIN download_queue q ON q.chapter_id=c.id
-		WHERE c.manga_id=? AND c.chapter_number>? AND c.downloaded=0 AND (q.status IS NULL OR q.status = ?)
-		ORDER BY c.chapter_number LIMIT ?`, mangaID, *number, QueueFailed, limit)
+	err := r.db.Select(&ids, query, args...)
 	if ids == nil {
 		ids = []string{}
 	}
 	return ids, err
+}
+
+// SourceChapterLanguages returns the distinct chapter language codes observed
+// for each source. A source whose chapters carry no language is absent from
+// the map. The API uses this to decide which sources have a real language
+// choice to offer.
+func (r *Repository) SourceChapterLanguages() (map[string][]string, error) {
+	var rows []struct {
+		SourceID string `db:"source_id"`
+		Language string `db:"language"`
+	}
+	if err := r.db.Select(&rows, `SELECT DISTINCT source_id, language FROM chapters
+		WHERE language IS NOT NULL AND language != ''
+		ORDER BY source_id, language`); err != nil {
+		return nil, err
+	}
+	out := make(map[string][]string, len(rows))
+	for _, row := range rows {
+		out[row.SourceID] = append(out[row.SourceID], row.Language)
+	}
+	return out, nil
 }
 
 func (r *Repository) UpsertReadingProgress(progress ReadingProgress) (ReadingProgress, error) {

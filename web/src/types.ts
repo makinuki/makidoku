@@ -9,6 +9,9 @@ export type Manga = {
   authors?: string;
   artists?: string;
   genres?: string;
+  // Secondary descriptors (themes, formats, demographics) when the source
+  // distinguishes them from genres. Stored as a JSON-encoded array.
+  tags?: string;
   status: string;
   coverUrl: string;
   inLibrary: boolean;
@@ -52,6 +55,7 @@ export type Chapter = {
   language?: string;
   uploadedAt?: number;
   scanlator?: string;
+  locked?: boolean;
   downloaded: boolean;
   downloadPath?: string;
   read?: boolean;
@@ -150,6 +154,7 @@ export type Source = {
   installedAt: number;
   loaded: boolean;
   hasClearance: boolean;
+  hasSettings?: boolean;
   allowedHosts?: string[];
   pinned?: boolean;
   lastUsedAt?: number;
@@ -190,6 +195,21 @@ export type FilterSchema =
     }
   | { id: string; title: string; type: "checkbox"; default: boolean }
   | { id: string; title: string; type: "text"; placeholder?: string; default?: string };
+export type SourceSettingOption = { label: string; value: string };
+// One setting a source declares through get_settings, together with its
+// stored state. A sensitive setting never carries its value, only hasValue.
+export type SourceSetting = {
+  id: string;
+  title: string;
+  description?: string;
+  type: "checkbox" | "select" | "text";
+  options?: SourceSettingOption[];
+  placeholder?: string;
+  default?: boolean | string;
+  sensitive?: boolean;
+  value?: boolean | string;
+  hasValue: boolean;
+};
 export type CoverVariant = { url: string; width?: number; height?: number };
 export type Details = {
   id: string;

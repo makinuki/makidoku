@@ -22,6 +22,7 @@ import type {
   TrackerStatus,
   TrackerSyncJob,
   FilterSchema,
+  SourceSetting,
   HistoryEvent,
   UpdateLog,
   LibraryUpdateState,
@@ -220,6 +221,13 @@ export const api = {
   sourceIcon: (id: string) => `/api/sources/${encodeURIComponent(id)}/icon`,
   sourceFilters: (id: string) =>
     request<FilterSchema[]>(`/api/sources/${encodeURIComponent(id)}/filters`),
+  sourceSettings: (id: string) =>
+    request<SourceSetting[]>(`/api/sources/${encodeURIComponent(id)}/settings`),
+  setSourceSetting: (id: string, key: string, value: boolean | string | null) =>
+    request<SourceSetting>(
+      `/api/sources/${encodeURIComponent(id)}/settings/${encodeURIComponent(key)}`,
+      { method: "PUT", body: JSON.stringify({ value }) },
+    ),
   submitClearance: (id: string, cookie: string, userAgent: string) =>
     request<Source>(`/api/sources/${encodeURIComponent(id)}/clearance`, {
       method: "POST",

@@ -44,6 +44,26 @@ describe("BrowsePage plugins tab", () => {
     expect(screen.getByLabelText("Beta has browser clearance")).toBeInTheDocument();
     expect(screen.queryByLabelText("Alpha has browser clearance")).not.toBeInTheDocument();
   });
+
+  it("offers a settings action only for plugins that declare settings", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/sources") {
+          return Response.json([source("a", "Alpha", { hasSettings: true }), source("b", "Beta")]);
+        }
+        return Response.json([]);
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/browse?tab=plugins"]}>
+        <BrowsePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Settings for Alpha" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings for Beta" })).not.toBeInTheDocument();
+  });
 });
 
 describe("BrowsePage sources tab", () => {

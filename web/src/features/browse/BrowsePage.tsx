@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import type {
   Source,
 } from "../../types";
 import { MigrationModal } from "../manga/DetailsPage";
+import { SourceSettingsDialog } from "../sources/SourceSettingsDialog";
 
 type Tab = "sources" | "plugins" | "migrate";
 
@@ -613,6 +615,7 @@ function PluginsTab() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [confirmRemoval, setConfirmRemoval] = useState<Source>();
+  const [settingsSource, setSettingsSource] = useState<Source>();
   const [cookieSource, setCookieSource] = useState("");
   const [cookie, setCookie] = useState("");
   const [userAgent, setUserAgent] = useState("");
@@ -711,6 +714,16 @@ function PluginsTab() {
                   >
                     <ShieldCheck size={15} />
                   </span>
+                )}
+                {source.hasSettings && (
+                  <button
+                    aria-label={`Settings for ${source.name}`}
+                    title={`${source.name} settings`}
+                    onClick={() => setSettingsSource(source)}
+                    className="shrink-0 rounded-lg border border-zinc-700 p-2 text-zinc-300 hover:text-white"
+                  >
+                    <Settings size={15} />
+                  </button>
                 )}
                 {update && (
                   <button
@@ -860,6 +873,9 @@ function PluginsTab() {
             </button>
           </div>
         </Modal>
+      )}
+      {settingsSource && (
+        <SourceSettingsDialog source={settingsSource} onClose={() => setSettingsSource(undefined)} />
       )}
     </div>
   );

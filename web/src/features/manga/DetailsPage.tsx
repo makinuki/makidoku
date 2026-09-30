@@ -8,12 +8,14 @@ import {
   Ellipsis,
   ExternalLink,
   LoaderCircle,
+  Lock,
   Layers,
   Play,
   RefreshCw,
   RotateCw,
   Save,
   Tag,
+  Tags,
   X,
 } from "lucide-react";
 import { api } from "../../api";
@@ -345,6 +347,19 @@ export function DetailsPage() {
               </span>
             ))}
           </div>
+          {parseList(manga.tags).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {parseList(manga.tags).map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center gap-1 rounded-full border border-zinc-800 px-2.5 py-1 text-xs text-zinc-400"
+                >
+                  <Tags size={12} />
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="mt-6 flex flex-wrap gap-2">
             {resumeChapterId(data, chapters) ? (
               <Link
@@ -568,6 +583,16 @@ export function DetailsPage() {
                       <span className="text-xs text-zinc-500">{chapterMeta(chapter)}</span>
                     </Link>
                     {chapter.downloaded && <Check size={16} className="text-emerald-400" />}
+                    {chapter.locked && (
+                      <span
+                        role="img"
+                        aria-label={`${formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)} is locked at the source`}
+                        title="Locked at the source"
+                        className="flex min-h-11 min-w-11 items-center justify-center p-1.5 text-amber-300"
+                      >
+                        <Lock size={16} />
+                      </span>
+                    )}
                     <button
                       type="button"
                       aria-label={`${chapter.bookmark ? "Remove bookmark from" : "Bookmark"} ${formatChapter(chapter.volume, chapter.chapterNumber, chapter.title)}`}
@@ -825,9 +850,22 @@ function languageLabel(code: string) {
 }
 
 function chapterMeta(chapter: Chapter) {
-  return [chapter.language ? languageLabel(chapter.language) : "", chapter.scanlator || ""]
+  return [
+    chapter.language ? languageLabel(chapter.language) : "",
+    chapter.scanlator || "",
+    formatChapterDate(chapter.uploadedAt),
+  ]
     .filter(Boolean)
     .join(" · ");
+}
+
+// Upload times are stored as Unix seconds; an unset or unparsable value is
+// simply omitted from the chapter line.
+function formatChapterDate(uploadedAt?: number) {
+  if (!uploadedAt) return "";
+  const date = new Date(uploadedAt * 1000);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 function parseList(value?: string) {
   if (!value) return [];

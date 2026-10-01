@@ -81,6 +81,8 @@ function stubQueue(items: QueueItem[], paused = false, pausedSources: string[] =
       }
       if (path === "/api/download/resume-all") {
         downloaderPaused = false;
+        // The server's resume-all lifts every per-source pause too.
+        sourcePauses = [];
         return snapshot();
       }
       const sourceControl = /^\/api\/download\/sources\/([^/]+)\/(pause|resume)$/.exec(path);
@@ -312,7 +314,11 @@ describe("DownloadsPage", () => {
     renderPage();
     await screen.findByText("Chapter 1");
     fireEvent.click(screen.getByRole("button", { name: "Queue actions" }));
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Cancel all"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Pause all",
+      "Resume all",
+      "Cancel all",
+    ]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Cancel all" }));
     await waitFor(() =>
       expect(calls.some((call) => call.path === "/api/download/cancel-all")).toBe(true),
@@ -323,26 +329,26 @@ describe("DownloadsPage", () => {
   it("pauses and resumes the downloader from the queue control", async () => {
     const calls = stubQueue([row({ id: 1 })]);
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Pause downloads" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pause all downloads" }));
     await waitFor(() =>
       expect(calls.some((call) => call.path === "/api/download/pause-all")).toBe(true),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Resume downloads" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resume all downloads" }));
     await waitFor(() =>
       expect(calls.some((call) => call.path === "/api/download/resume-all")).toBe(true),
     );
-    expect(await screen.findByRole("button", { name: "Pause downloads" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Pause all downloads" })).toBeInTheDocument();
   });
 
   it("follows a downloader state event that carries no item", async () => {
     const calls = stubQueue([row({ id: 1 })]);
     renderPage();
-    await screen.findByRole("button", { name: "Pause downloads" });
+    await screen.findByRole("button", { name: "Pause all downloads" });
     const before = calls.length;
     await act(async () => {
       emitDownloadEvent({ type: "state", stats, paused: true });
     });
-    expect(await screen.findByRole("button", { name: "Resume downloads" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Resume all downloads" })).toBeInTheDocument();
     expect(calls.length).toBe(before);
   });
 
@@ -385,13 +391,38 @@ describe("DownloadsPage", () => {
     expect(screen.queryByText("Downloading")).not.toBeInTheDocument();
   });
 
-  it("marks every source as paused and locks the toggles while the downloader is paused", async () => {
-    stubQueue([row({ id: 1 })], true);
+  it("keeps the per-source toggle usable while the downloader is paused and masters resume", async () => {
+    const calls = stubQueue([row({ id: 1 })], true);
     renderPage();
-    // The header chips the pause and the toggle steps aside until the
-    // downloader-wide pause is lifted.
-    expect(await screen.findByText("Paused")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resume MangaDex" })).toBeDisabled();
+    // The downloader is paused, but the source header keeps its own state and
+    // its own working toggle; the master button offers to resume everything.
+    expect(await screen.findByRole("button", { name: "Resume all downloads" })).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Pause MangaDex" });
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.method === "POST" && call.path === "/api/download/sources/s1/pause"),
+      ).toBe(true);
+    });
+  });
+
+  it("offers resume all while a single source is paused and pause all otherwise", async () => {
+    stubQueue([row({ id: 1 })], false, ["s1"]);
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Resume all downloads" })).toBeInTheDocument();
+  });
+
+  it("resuming from the master button lifts every source pause", async () => {
+    const calls = stubQueue([row({ id: 1 })], false, ["s1", "s2"]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Resume all downloads" }));
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.method === "POST" && call.path === "/api/download/resume-all"),
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("button", { name: "Pause all downloads" })).toBeInTheDocument();
   });
 
   it("links a row to its title", async () => {
@@ -409,6 +440,6 @@ describe("DownloadsPage", () => {
     stubQueue([]);
     renderPage();
     expect(await screen.findByRole("heading", { name: "No downloads" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pause downloads" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause all downloads" })).not.toBeInTheDocument();
   });
 });

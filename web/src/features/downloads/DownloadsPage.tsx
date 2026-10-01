@@ -174,6 +174,10 @@ export function DownloadsPage() {
 
   const sections = useMemo(() => buildSections(snapshot.items), [snapshot.items]);
   const queuedCount = sections.reduce((total, section) => total + section.rows.length, 0);
+  // The master toggle answers one question, "is anything paused?": the
+  // downloader-wide pause or any source left paused. Resuming clears every
+  // pause, so the label always describes what the click will do.
+  const anythingPaused = snapshot.paused || (snapshot.pausedSources?.length ?? 0) > 0;
 
   // Order changes are applied locally first and persisted as the ids of the
   // live rows; a failed request falls back to the stored order.
@@ -341,6 +345,25 @@ export function DownloadsPage() {
           <QueueMenu label="Queue actions" Icon={Ellipsis}>
             {(close) => (
               <>
+                {/* Explicit master actions, so pausing stays reachable even
+                    while a single source is paused and the header toggle
+                    therefore offers to resume. */}
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    void downloaderState(false);
+                  }}
+                >
+                  Pause all
+                </MenuItem>
+                <MenuItem
+                  onSelect={() => {
+                    close();
+                    void downloaderState(true);
+                  }}
+                >
+                  Resume all
+                </MenuItem>
                 <MenuItem
                   onSelect={() => {
                     close();
@@ -354,9 +377,9 @@ export function DownloadsPage() {
           </QueueMenu>
           {queuedCount > 0 && (
             <DownloaderControl
-              paused={snapshot.paused}
+              paused={anythingPaused}
               busy={busy}
-              onToggle={() => void downloaderState(snapshot.paused)}
+              onToggle={() => void downloaderState(anythingPaused)}
             />
           )}
         </div>
@@ -394,7 +417,6 @@ export function DownloadsPage() {
                 onAction={handleRowAction}
                 onRetryFailed={retryFailed}
                 paused={snapshot.pausedSources?.includes(section.sourceId) ?? false}
-                downloaderPaused={snapshot.paused}
                 onTogglePaused={(paused) => setSourcePaused(section.sourceId, paused)}
               />
             ))}
@@ -410,7 +432,6 @@ function SourceSection({
   index,
   collapsed,
   paused,
-  downloaderPaused,
   onToggle,
   onAction,
   onRetryFailed,
@@ -419,10 +440,10 @@ function SourceSection({
   section: QueueSection;
   index: number;
   collapsed: boolean;
+  // paused is this source's own pause, independent of the downloader-wide
+  // pause: pausing and resuming the downloader never rewrites a source's state,
+  // and the header toggle always works.
   paused: boolean;
-  // downloaderPaused mirrors the downloader-wide pause; while it is on, every
-  // source is effectively paused and the per-source toggle steps aside.
-  downloaderPaused: boolean;
   onToggle: () => void;
   onAction: (action: RowAction, item: QueueItem) => void;
   onRetryFailed: (sourceId: string) => Promise<void>;
@@ -479,16 +500,12 @@ function SourceSection({
             {section.sourceName}
           </span>
           <span className="shrink-0 text-xs text-zinc-500">({section.rows.length})</span>
-          {/* While the downloader itself is paused every source is effectively
-              paused, so the headers say so and their toggles step aside. */}
-          {paused || downloaderPaused ? (
-            <span className="shrink-0 text-xs text-amber-400">Paused</span>
-          ) : null}
+          {paused && <span className="shrink-0 text-xs text-amber-400">Paused</span>}
         </button>
         {failedCount > 0 && (
           <button
             type="button"
-            disabled={retrying || paused || downloaderPaused || pausing}
+            disabled={retrying || paused || pausing}
             onClick={() => void retry()}
             aria-label={`Retry ${failedCount} failed downloads from ${section.sourceName}`}
             className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-amber-400 hover:bg-zinc-800 active:bg-zinc-800 disabled:opacity-40"
@@ -499,19 +516,13 @@ function SourceSection({
         )}
         <button
           type="button"
-          disabled={pausing || downloaderPaused}
+          disabled={pausing}
           onClick={() => void togglePaused()}
-          aria-label={`${paused || downloaderPaused ? "Resume" : "Pause"} ${section.sourceName}`}
-          title={
-            downloaderPaused
-              ? "The downloader is paused"
-              : paused
-                ? `Resume ${section.sourceName}`
-                : `Pause ${section.sourceName}`
-          }
+          aria-label={`${paused ? "Resume" : "Pause"} ${section.sourceName}`}
+          title={paused ? `Resume ${section.sourceName}` : `Pause ${section.sourceName}`}
           className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-white active:bg-zinc-800 active:text-white disabled:opacity-40"
         >
-          {paused || downloaderPaused ? <Play size={16} /> : <Pause size={16} />}
+          {paused ? <Play size={16} /> : <Pause size={16} />}
         </button>
         <button
           type="button"
@@ -718,7 +729,7 @@ function DownloaderControl({
   busy: boolean;
   onToggle: () => void;
 }) {
-  const label = paused ? "Resume downloads" : "Pause downloads";
+  const label = paused ? "Resume all downloads" : "Pause all downloads";
   return (
     <button
       type="button"
@@ -729,7 +740,7 @@ function DownloaderControl({
       className="fixed bottom-[calc(var(--nav-height)+var(--sat-bottom)+1rem)] left-1/2 z-30 flex min-h-11 -translate-x-1/2 items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900 px-4 text-sm font-medium text-zinc-100 shadow-lg hover:border-zinc-500 disabled:opacity-50 md:static md:translate-x-0 md:rounded-lg md:px-3 md:py-2 md:shadow-none"
     >
       {paused ? <Play size={16} /> : <Pause size={16} />}
-      {paused ? "Resume" : "Pause"}
+      {paused ? "Resume all" : "Pause all"}
     </button>
   );
 }

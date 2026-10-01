@@ -27,6 +27,28 @@ const (
 	ClassRateLimited ChallengeClass = "rate-limited"
 )
 
+// ChallengeState records that one origin belonging to one source is waiting for
+// clearance. The host surfaces these so the visitor can open a solver, rather
+// than the request blocking while a challenge is presented.
+type ChallengeState struct {
+	// SourceID is the installed source the origin belongs to.
+	SourceID string `json:"sourceId"`
+	// Origin is the registrable domain awaiting clearance. Two hosts on one
+	// source are separate entries because clearance for one never covers the
+	// other.
+	Origin string `json:"origin"`
+	// Status is the upstream status that was classified as a challenge.
+	Status int `json:"status"`
+	// URL is the request that encountered the challenge.
+	URL string `json:"url,omitempty"`
+	// Message explains the classification in plain terms.
+	Message string `json:"message,omitempty"`
+	// Hits counts how many requests have met this challenge.
+	Hits int `json:"hits"`
+	// LastSeen is a unix timestamp of the most recent encounter.
+	LastSeen int64 `json:"lastSeen"`
+}
+
 // ClearanceBundle is the material captured by a single solve: the whole cookie
 // jar for one registrable domain together with the user agent and client hints
 // that were in effect during the solve. The user agent is part of the bundle

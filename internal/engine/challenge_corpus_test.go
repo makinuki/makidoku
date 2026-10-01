@@ -6,17 +6,12 @@ import (
 	"testing"
 )
 
-// The want constants describe the classification each response should receive.
-// wantNone means the response must not be treated as a challenge and must not
-// be treated as a terminal block either, because the plugin decides what a 403
-// means. Status and headers matter as much as the body: Cloudflare separates a
-// solvable interstitial from a terminal block using all three, and the current
-// detector reads only a subset of them.
+// The want constants mirror the ChallengeClass values the classifier returns.
 const (
 	wantNone     = "none"
-	wantSolve    = "solve"
+	wantSolve    = "solvable"
 	wantTerminal = "terminal"
-	wantRate     = "rate"
+	wantRate     = "rate-limited"
 )
 
 // challengeCorpus holds recorded Cloudflare responses. Bodies are trimmed
@@ -117,11 +112,10 @@ func TestCurrentDetectorOverCorpus(t *testing.T) {
 	for _, entry := range challengeCorpus {
 		t.Run(entry.name+"/"+httpStatusLabel(entry.status), func(t *testing.T) {
 			body := readFixture(t, entry.body)
-			got := isChallengeResponse(entry.status, entry.headers, []byte(body))
-			want := entry.want == wantSolve
+			got := Classify(entry.status, entry.headers, []byte(body))
+			want := ChallengeClass(entry.want)
 			if got != want {
-				t.Logf("status=%d want challenge=%v got challenge=%v (intent=%s)",
-					entry.status, want, got, entry.want)
+				t.Errorf("class = %q, want %q", got, want)
 			}
 		})
 	}

@@ -1,9 +1,13 @@
 package engine
 
 import (
+	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -168,7 +172,7 @@ func TestFetchCapsResponseBody(t *testing.T) {
 	}
 }
 
-func TestFetchAppliesDefaultUserAgent(t *testing.T) {
+func TestFetchSendsNoDefaultUserAgent(t *testing.T) {
 	seen := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen <- r.Header.Get("User-Agent")
@@ -179,11 +183,14 @@ func TestFetchAppliesDefaultUserAgent(t *testing.T) {
 	if _, herr := fetcher.Do(context.Background(), "mangadex", HttpRequest{URL: server.URL}); herr != nil {
 		t.Fatalf("host error: %+v", herr)
 	}
-	if got := <-seen; got != DefaultUserAgent {
-		t.Fatalf("user agent = %q, want %q", got, DefaultUserAgent)
+	// The host no longer supplies an agent of its own. A captured browser
+	// identity is worth more than a constant that drifts out of date, so an
+	// absent header is left absent rather than filled in.
+	if got := <-seen; got != "" {
+		t.Fatalf("user agent = %q, want empty", got)
 	}
 
-	// A plugin supplied agent is preserved when no clearance is stored.
+	// A plugin supplied agent is passed through unchanged.
 	if _, herr := fetcher.Do(context.Background(), "mangadex", HttpRequest{
 		URL:     server.URL,
 		Headers: map[string]string{"User-Agent": "plugin-agent"},
@@ -243,19 +250,241 @@ func TestStorageKeyAcceptsBothWireForms(t *testing.T) {
 }
 
 func TestIsChallengeDistinguishesOutageFromInterstitial(t *testing.T) {
-	if isChallengeRaw(&rawHTTPResponse{Status: http.StatusServiceUnavailable, Body: []byte("upstream is down")}) {
+	if needsChallengeResponse(http.StatusServiceUnavailable, nil, []byte("upstream is down")) {
 		t.Fatal("an ordinary outage must not count as a challenge")
 	}
-	if !isChallengeRaw(&rawHTTPResponse{Status: http.StatusServiceUnavailable, Body: []byte(challengeBody)}) {
+	if !needsChallengeResponse(http.StatusServiceUnavailable, nil, []byte(challengeBody)) {
 		t.Fatal("a 503 carrying challenge markers is an interstitial")
 	}
-	if !isChallengeRaw(&rawHTTPResponse{
-		Status:  http.StatusServiceUnavailable,
-		Headers: map[string]string{"cf-mitigated": "challenge"},
-	}) {
+	if !needsChallengeResponse(http.StatusServiceUnavailable, map[string]string{"cf-mitigated": "challenge"}, nil) {
 		t.Fatal("a mitigation header marks an interstitial")
 	}
-	if !isChallengeRaw(&rawHTTPResponse{Status: http.StatusForbidden}) {
-		t.Fatal("a 403 is treated as a challenge")
+	// A bare refusal carries no evidence of a challenge, so it is terminal
+	// rather than solvable.
+	if got := Classify(http.StatusForbidden, nil, nil); got != ClassTerminal {
+		t.Fatalf("bare 403 class = %q, want %q", got, ClassTerminal)
+	}
+}
+
+// TestWarmUpClearsChallengeWithoutResolve covers the warm-up remedy: an origin
+// that challenges once and serves normally on the next visit is answered by the
+// root request alone, with no clearance and no resolver involved.
+func TestWarmUpClearsChallengeWithoutResolve(t *testing.T) {
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(challengeBody))
+			return
+		}
+		_, _ = w.Write([]byte("<title>ok</title>"))
+	}))
+	defer server.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	fetcher.SetBaseURL("mangafire", server.URL)
+
+	resp, herr := fetcher.Do(context.Background(), "mangafire", HttpRequest{
+		URL:    server.URL + "/series/1",
+		Method: http.MethodGet,
+	})
+	if herr != nil {
+		t.Fatalf("host error: %+v", herr)
+	}
+	if resp.Status != http.StatusOK || !strings.Contains(resp.Body, "ok") {
+		t.Fatalf("status = %d body = %q", resp.Status, resp.Body)
+	}
+	if states := fetcher.ChallengeStates(); len(states) != 0 {
+		t.Fatalf("no challenge should be recorded, got %+v", states)
+	}
+}
+
+// TestChallengeIsRecordedAndResolvedOnce checks that a challenge is surfaced
+// and that repeated requests on one origin resolve it a single time.
+func TestChallengeIsRecordedAndResolvedOnce(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("cf-mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(challengeBody))
+	}))
+	defer server.Close()
+
+	var resolves int32
+	resolver := resolverFunc(func(ctx context.Context, sourceID, usedCookie string, challenge HttpError) bool {
+		atomic.AddInt32(&resolves, 1)
+		return false
+	})
+
+	// No base URL is recorded, so the warm-up is skipped and the resolver path
+	// is exercised on its own.
+	fetcher := NewFetcher(NewMemoryStorage(), resolver)
+	_, herr := fetcher.Do(context.Background(), "kagane", HttpRequest{
+		URL:    server.URL + "/series/1",
+		Method: http.MethodGet,
+	})
+	if herr == nil || herr.Error != CodeCloudflareBlocked {
+		t.Fatalf("error = %+v, want CLOUDFLARE_BLOCKED", herr)
+	}
+
+	states := fetcher.ChallengeStates()
+	state, ok := states[hostKey("kagane", server.URL)]
+	if !ok {
+		t.Fatalf("no state recorded, got %+v", states)
+	}
+	if state.Hits != 1 {
+		t.Fatalf("hits = %d, want 1", state.Hits)
+	}
+
+	_, _ = fetcher.Do(context.Background(), "kagane", HttpRequest{
+		URL:    server.URL + "/series/2",
+		Method: http.MethodGet,
+	})
+	if got := atomic.LoadInt32(&resolves); got != 1 {
+		t.Fatalf("resolver calls = %d, want 1", got)
+	}
+}
+
+// TestJarSharedBetweenPageAndImage checks that a session cookie set while a
+// page is fetched is present on a later image request for the same source.
+func TestJarSharedBetweenPageAndImage(t *testing.T) {
+	var sawCookie int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "abc", Path: "/"})
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			if strings.Contains(r.Header.Get("Cookie"), "session=abc") {
+				atomic.StoreInt32(&sawCookie, 1)
+			}
+		}
+	}))
+	defer server.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	if _, herr := fetcher.Do(context.Background(), "kagane", HttpRequest{
+		URL:    server.URL + "/series/1",
+		Method: http.MethodGet,
+	}); herr != nil {
+		t.Fatalf("page request: %+v", herr)
+	}
+	if _, err := fetcher.FetchImage(context.Background(), "kagane", server.URL+"/page.jpg", nil); err != nil {
+		t.Fatalf("image request: %v", err)
+	}
+	if atomic.LoadInt32(&sawCookie) == 0 {
+		t.Fatal("image request did not carry the session cookie from the page request")
+	}
+}
+
+// TestTerminalBlockIsNeverReplayed checks that a refusal no challenge can clear
+// reaches the plugin with its status intact and never enters the resolver.
+func TestTerminalBlockIsNeverReplayed(t *testing.T) {
+	var resolves int32
+	resolver := resolverFunc(func(ctx context.Context, sourceID, usedCookie string, challenge HttpError) bool {
+		atomic.AddInt32(&resolves, 1)
+		return true
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<h1>You have been blocked</h1><p>Error 1020</p>"))
+	}))
+	defer server.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), resolver)
+	fetcher.SetBaseURL("blocked", server.URL)
+
+	resp, herr := fetcher.Do(context.Background(), "blocked", HttpRequest{
+		URL:    server.URL + "/series/1",
+		Method: http.MethodGet,
+	})
+	if herr != nil {
+		t.Fatalf("a terminal refusal must reach the plugin, got %+v", herr)
+	}
+	if resp.Status != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.Status)
+	}
+	if got := atomic.LoadInt32(&resolves); got != 0 {
+		t.Fatalf("resolver was called %d times for a terminal refusal", got)
+	}
+}
+
+// TestDecodeBodyUnpacksEncodings checks that a compressed body reaches the
+// plugin as text rather than as compressed bytes.
+func TestDecodeBodyUnpacksEncodings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		encoding string
+		encode   func(string) []byte
+	}{
+		{"gzip", "gzip", func(s string) []byte {
+			var buf bytes.Buffer
+			zw := gzip.NewWriter(&buf)
+			_, _ = zw.Write([]byte(s))
+			_ = zw.Close()
+			return buf.Bytes()
+		}},
+		{"deflate", "deflate", func(s string) []byte {
+			var buf bytes.Buffer
+			zw := zlib.NewWriter(&buf)
+			_, _ = zw.Write([]byte(s))
+			_ = zw.Close()
+			return buf.Bytes()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", tc.encoding)
+				_, _ = w.Write(tc.encode("<title>decoded</title>"))
+			}))
+			defer server.Close()
+
+			fetcher := NewFetcher(NewMemoryStorage(), nil)
+			resp, herr := fetcher.Do(context.Background(), "mangadex", HttpRequest{URL: server.URL})
+			if herr != nil {
+				t.Fatalf("host error: %+v", herr)
+			}
+			if !strings.Contains(resp.Body, "<title>decoded</title>") {
+				t.Fatalf("body was not decompressed: %q", resp.Body)
+			}
+		})
+	}
+}
+
+// hostKey mirrors the key the fetcher builds, which uses the hostname without
+// the port so a source stays one entry across local and published addresses.
+func hostKey(sourceID, raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return sourceID + "|" + raw
+	}
+	return sourceID + "|" + parsed.Hostname()
+}
+
+// TestClassifySeparatesTerminalFromSolvable pins the distinction that keeps a
+// geographic refusal out of the solve path.
+func TestClassifySeparatesTerminalFromSolvable(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		headers map[string]string
+		body    string
+		want    ChallengeClass
+	}{
+		{"interstitial", http.StatusForbidden, nil, challengeBody, ClassSolvable},
+		{"geo block", http.StatusForbidden, nil, "Error 1020 You have been blocked", ClassTerminal},
+		{"access denied", http.StatusForbidden, nil, "Access denied", ClassTerminal},
+		{"rate limited", http.StatusTooManyRequests, map[string]string{"retry-after": "30"}, "slow down", ClassRateLimited},
+		{"ok page", http.StatusOK, nil, "<title>Kagane</title>", ClassNone},
+		{"ok page naming a challenge", http.StatusOK, nil,
+			"<title>Kagane</title>ads will be disabled for 15 minutes in just a moment", ClassNone},
+		{"script path is not a challenge", http.StatusOK, nil,
+			"<script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script>", ClassNone},
+		{"not found carrying a phrase", http.StatusNotFound, nil, "just a moment", ClassNone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Classify(tc.status, tc.headers, []byte(tc.body))
+			if got != tc.want {
+				t.Fatalf("class = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

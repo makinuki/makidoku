@@ -214,7 +214,11 @@ func (r *Registry) read(ctx context.Context, location string, limit int64) ([]by
 	if err != nil {
 		return nil, CodedError(CodeParsingError, "registry location %q is unusable: %v", location, err)
 	}
-	req.Header.Set("User-Agent", DefaultUserAgent)
+	// The catalog is a static manifest served from GitHub Pages, not an
+	// anti-bot protected origin, so the agent identifies the daemon rather than
+	// impersonating a browser. Claiming to be Chrome to fetch a public JSON file
+	// would be both dishonest and unnecessary.
+	req.Header.Set("User-Agent", RegistryUserAgent)
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := r.client.Do(req)

@@ -181,8 +181,69 @@ func TestClaimOptionsResolveCapsAndPauses(t *testing.T) {
 	}
 }
 
-// seedChapterQueueItem stores one live queue row for the mangadex fixture so
-// QueueSourceIDs reports the source.
+// Reordering the queue re-plans it: an in-flight chapter that the new order
+// puts behind pending work returns to the queue, keeps its staged pages, and
+// resumes from them after the new head has finished.
+func TestReorderYieldsSupersededChapterAndResumesIt(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	eng := queueFixture()
+	two := 2.0
+	eng.details.Chapters = append(eng.details.Chapters, engine.ChapterItem{ID: "chapter-2", Number: &two, Language: "en"})
+	queue := NewQueue(repo, eng, Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	mangaID := seedLibrary(t, repo)
+	items, err := queue.EnqueueManga(context.Background(), mangaID, ChapterSelection{IDs: []string{"chapter-id", "chapter-2"}}, FormatCBZ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Midway through the first page, put the other chapter ahead of it.
+	eng.afterFirstFetch = func() {
+		if err := queue.Reorder([]int64{items[1].ID, items[0].ID}); err != nil {
+			t.Errorf("reorder: %v", err)
+		}
+	}
+	finished, err := queue.Drain(context.Background())
+	if err != nil || finished != 2 {
+		t.Fatalf("drain after reorder: %v (finished %d)", err, finished)
+	}
+	// One page of the first chapter was staged before the yield, so the drain
+	// fetched four of the six pages instead of re-fetching all of them.
+	if eng.fetches != 4 {
+		t.Fatalf("fetches = %d, want 4", eng.fetches)
+	}
+	for _, item := range items {
+		chapter, err := repo.GetChapter(item.ChapterID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !chapter.Downloaded || chapter.DownloadPath == nil {
+			t.Fatalf("chapter %s after reorder = %+v", item.ChapterID, chapter)
+		}
+	}
+}
+
+// Resuming means everything runs: the downloader-wide resume also lifts every
+// per-source pause.
+func TestResumeAllClearsPerSourcePauses(t *testing.T) {
+	repo, dataDir := downloaderRepository(t)
+	queue := NewQueue(repo, queueFixture(), Options{
+		Workers: 1, PageInterval: 0, DownloadDir: filepath.Join(dataDir, "downloads"), MaxRetries: 0,
+	})
+	queue.PauseAll()
+	queue.PauseSource("mangadex")
+	queue.PauseSource("other")
+	if paused := queue.PausedSources(); len(paused) != 2 {
+		t.Fatalf("paused sources = %v", paused)
+	}
+	queue.ResumeAll()
+	if queue.Paused() {
+		t.Fatal("queue stayed paused after resume")
+	}
+	if paused := queue.PausedSources(); len(paused) != 0 {
+		t.Fatalf("paused sources after resume = %v", paused)
+	}
+}
 func seedChapterQueueItem(t *testing.T, repo *db.Repository) {
 	t.Helper()
 	manga, err := repo.UpsertManga(db.Manga{

@@ -283,3 +283,58 @@ func TestQueueSourceIDsListLiveSources(t *testing.T) {
 		t.Fatalf("live sources = %v", ids)
 	}
 }
+
+func TestYieldSupersededDownloads(t *testing.T) {
+	repo := gateFixture(t)
+
+	// While the in-flight chapter still sits ahead of the whole pending
+	// backlog, a reorder leaves it alone.
+	first, err := repo.ClaimNextQueueItem(ClaimOptions{})
+	if err != nil || first == nil {
+		t.Fatalf("claim = %+v, %v", first, err)
+	}
+	ids, err := repo.YieldSupersededDownloads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("yield with the first row in flight = %v", ids)
+	}
+
+	// Moving another row ahead of it returns it to the queue with its
+	// progress kept.
+	items, err := repo.ListQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make([]int64, 0, len(items))
+	for _, item := range items {
+		if item.ID != first.ID {
+			order = append(order, item.ID)
+		}
+	}
+	order = append(order, first.ID) // the in-flight row now comes last
+	if err := repo.SetQueueOrder(order); err != nil {
+		t.Fatal(err)
+	}
+	ids, err = repo.YieldSupersededDownloads()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != first.ID {
+		t.Fatalf("yielded = %v, want [%d]", ids, first.ID)
+	}
+	yielded, err := repo.GetQueueItem(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if yielded.Status != QueuePending {
+		t.Fatalf("yielded item status = %q", yielded.Status)
+	}
+
+	// Nothing is in flight any more, so a second pass yields nothing.
+	ids, err = repo.YieldSupersededDownloads()
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("second yield = %v, %v", ids, err)
+	}
+}

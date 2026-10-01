@@ -1771,6 +1771,43 @@ func (r *Repository) CancelAllQueueItems() ([]DownloadQueueItem, error) {
 	return items, nil
 }
 
+// YieldSupersededDownloads returns the in-flight items that the new queue
+// order puts behind pending work: after a reorder, a chapter that no longer
+// comes first returns to the queue, keeping its progress and staged pages, so
+// the new head is claimed next instead of after it finishes. The ids come
+// back in queue order for one transition event per row.
+func (r *Repository) YieldSupersededDownloads() ([]int64, error) {
+	tx, err := r.db.Beginx()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ids []int64
+	if err := tx.Select(&ids, `SELECT id FROM download_queue
+		WHERE status = ? AND position > (SELECT MIN(position) FROM download_queue WHERE status = ?)
+		ORDER BY position, queued_at, id`, QueueDownloading, QueuePending); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, QueuePending)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, QueueDownloading)
+	if _, err := tx.Exec(`UPDATE download_queue SET status = ?
+		WHERE id IN (`+placeholders(len(ids))+`) AND status = ?`, args...); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // SetQueueOrder rewrites the claim order from the given item ids in display
 // order. Ids that no longer exist are skipped so a client working from a
 // slightly stale snapshot cannot fail the whole reorder.

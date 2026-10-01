@@ -279,9 +279,15 @@ func (q *Queue) PauseAll() {
 	q.publishState()
 }
 
-// ResumeAll lets the workers claim queued items again.
+// ResumeAll lets the workers claim queued items again and lifts every
+// per-source pause as well: resuming means everything runs, regardless of the
+// state each source was left in.
 func (q *Queue) ResumeAll() {
 	q.paused.Store(false)
+	q.pausedSources.Range(func(key, _ any) bool {
+		q.pausedSources.Delete(key)
+		return true
+	})
 	q.notify()
 	q.publishState()
 }
@@ -545,9 +551,6 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) (bool, e
 		if err != nil {
 			return false, q.fail(item, err)
 		}
-		if q.interrupted(item) {
-			return false, nil
-		}
 		if page.IsScrambled {
 			data, err = q.engine.Unscramble(ctx, item.SourceID, data)
 			if err != nil {
@@ -573,6 +576,12 @@ func (q *Queue) process(ctx context.Context, item db.DownloadQueueItem) (bool, e
 			return false, q.fail(item, err)
 		}
 		q.publishCurrent("progress", item.ID)
+		// The interrupt check follows the staging write: a pause or a reorder
+		// yield that lands right after a fetch keeps the page just fetched, so
+		// the resumed chapter continues from disk instead of refetching it.
+		if q.interrupted(item) {
+			return false, nil
+		}
 	}
 	if q.interrupted(item) {
 		return false, nil
@@ -719,19 +728,26 @@ func (q *Queue) stopped(id int64) bool {
 		// left to work on.
 		return true
 	}
-	return item.Status == db.QueuePaused
+	return item.Status != db.QueueDownloading
 }
 
-// interrupted reports whether work on the item must stop. A canceled or
-// removed row stops as before; a paused source or a paused downloader returns
-// the item to the pending state with its progress and staged pages intact, so
-// the resume continues from where it stopped instead of restarting the
-// chapter.
+// interrupted reports whether work on the item must stop. Three cases end the
+// work: a removed or explicitly stopped row drops its staged pages, a row the
+// queue released back to pending because a reorder put other work first keeps
+// them so it resumes from them, and a paused source or a paused downloader
+// returns the item to the pending state with its progress intact.
 func (q *Queue) interrupted(item db.DownloadQueueItem) bool {
-	if q.stopped(item.ID) {
-		// The row is gone or canceled, so its staged pages can never resume:
-		// they are dropped together with the row.
+	row, err := q.repo.GetQueueItem(item.ID)
+	if err != nil || row.Status == db.QueuePaused {
+		// The row is gone or explicitly stopped, so its staged pages can never
+		// resume: they are dropped together with the row.
 		q.removeStaged(item.ID)
+		return true
+	}
+	if row.Status != db.QueueDownloading {
+		// A reorder released the row back to pending because other work now
+		// comes first. The staged pages stay, so the chapter continues from
+		// them when it is claimed again.
 		return true
 	}
 	if !q.sourcePaused(item.SourceID) && !q.paused.Load() {
@@ -829,12 +845,24 @@ func (q *Queue) CancelAll() (int64, error) {
 
 // Reorder persists the queue order given as item ids in display order and
 // announces the change, so clients can refetch the snapshot instead of trying
-// to merge the ordering into their local state.
+// to merge the ordering into their local state. Reordering also re-plans the
+// queue: an in-flight chapter that the new order puts behind pending work
+// returns to the queue with its staged pages, so the new head is claimed next.
 func (q *Queue) Reorder(ids []int64) error {
 	if err := q.repo.SetQueueOrder(ids); err != nil {
 		return err
 	}
-	q.events.publish(Event{Type: "reordered", Stats: q.Stats(), Paused: q.Paused()})
+	yielded, err := q.repo.YieldSupersededDownloads()
+	if err != nil {
+		return err
+	}
+	for _, id := range yielded {
+		q.publishCurrent("pending", id)
+	}
+	if len(yielded) > 0 {
+		q.notify()
+	}
+	q.events.publish(Event{Type: "reordered", Stats: q.Stats(), Paused: q.Paused(), PausedSources: q.PausedSources()})
 	return nil
 }
 

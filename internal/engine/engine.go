@@ -72,6 +72,26 @@ type InstalledSource struct {
 	AllowedHosts       []string `json:"allowedHosts,omitempty"`
 	Pinned             bool     `json:"pinned"`
 	LastUsedAt         *int64   `json:"lastUsedAt,omitempty"`
+	// Challenge describes the anti-bot state of this source, or nil when the
+	// source has not met a challenge. It replaces the boolean HasClearance in
+	// the web UI, where "solved before" and "blocked right now" mean different
+	// things to a reader.
+	Challenge *SourceChallenge `json:"challenge,omitempty"`
+}
+
+// SourceChallenge is the per-source view of an outstanding challenge.
+type SourceChallenge struct {
+	// State is one of "challenged" or "blocked".
+	State string `json:"state"`
+	// Origins lists the registrable domains awaiting clearance. A source whose
+	// pages and images sit on different domains reports both.
+	Origins []string `json:"origins"`
+	// Hits counts the requests that met the challenge.
+	Hits int `json:"hits"`
+	// LastSeen is a unix timestamp of the most recent encounter.
+	LastSeen int64 `json:"lastSeen"`
+	// Message explains the state in terms a reader can act on.
+	Message string `json:"message"`
 }
 
 // CatalogEntry is a registry entry annotated with local state.
@@ -688,6 +708,52 @@ func (e *Engine) row(id string) (sourceRow, error) {
 	return row, nil
 }
 
+// sourceChallenge folds the per-origin challenge records into the single state
+// shown for a source. It returns nil when no challenge is outstanding.
+func (e *Engine) sourceChallenge(sourceID string) *SourceChallenge {
+	states := e.fetcher.ChallengeStates()
+	var matched []ChallengeState
+	for _, state := range states {
+		if state.SourceID == sourceID {
+			matched = append(matched, state)
+		}
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+
+	sort.Slice(matched, func(i, j int) bool { return matched[i].LastSeen > matched[j].LastSeen })
+
+	out := &SourceChallenge{
+		State:    "challenged",
+		Origins:  make([]string, 0, len(matched)),
+		Hits:     0,
+		LastSeen: matched[0].LastSeen,
+		Message:  "This source is checking your browser. Solve it to continue.",
+	}
+	for _, state := range matched {
+		out.Origins = append(out.Origins, state.Origin)
+		out.Hits += state.Hits
+	}
+	return out
+}
+
+// ResolveID maps a caller-supplied source identifier to the installation id
+// used as the storage and clearance namespace. A caller may pass either the
+// installation id or the plugin key.
+func (e *Engine) ResolveID(id string) (string, error) {
+	row, err := e.row(id)
+	if err != nil {
+		return "", err
+	}
+	return row.ID, nil
+}
+
+// ChallengeStates returns a snapshot of every origin awaiting clearance.
+func (e *Engine) ChallengeStates() map[string]ChallengeState {
+	return e.fetcher.ChallengeStates()
+}
+
 // describe merges the installation record with live plugin state.
 func (e *Engine) describe(row sourceRow) InstalledSource {
 	out := InstalledSource{
@@ -709,6 +775,7 @@ func (e *Engine) describe(row sourceRow) InstalledSource {
 	if row.IconURL != nil {
 		out.IconURL = *row.IconURL
 	}
+	out.Challenge = e.sourceChallenge(row.ID)
 
 	e.mu.Lock()
 	p, loaded := e.plugins[row.ID]

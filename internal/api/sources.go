@@ -42,7 +42,31 @@ func (s *Server) mountSources(r chi.Router) {
 		source.Put("/downloads", s.putSourceDownloads)
 		source.Get("/search", s.search)
 		source.Post("/clearance", s.submitClearance)
+		source.Get("/challenges", s.sourceChallenges)
 	})
+}
+
+// sourceChallenges lists the origins currently awaiting clearance for a source.
+func (s *Server) sourceChallenges(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeJSON(w, http.StatusOK, []engine.ChallengeState{})
+		return
+	}
+	sourceID, err := s.engine.ResolveID(chi.URLParam(r, "sourceID"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var matched []engine.ChallengeState
+	for _, state := range s.engine.ChallengeStates() {
+		if state.SourceID == sourceID {
+			matched = append(matched, state)
+		}
+	}
+	if matched == nil {
+		matched = []engine.ChallengeState{}
+	}
+	writeJSON(w, http.StatusOK, matched)
 }
 
 func (s *Server) updateSource(w http.ResponseWriter, r *http.Request) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -314,7 +314,7 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
                           <b className="block truncate text-sm">{source.name}</b>
                           <small className="text-zinc-500">
                             {source.lang}
-                            {source.nsfw ? " · 18+" : ""}
+                            {source.nsfw ? " Â· 18+" : ""}
                           </small>
                         </span>
                       </button>
@@ -392,7 +392,7 @@ function SourcesTab({ onOpenPlugins }: { onOpenPlugins: () => void }) {
                 disabled={saving}
                 className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-amber-400 px-4 text-sm font-semibold text-zinc-950 disabled:opacity-50"
               >
-                {saving ? "Saving…" : "Save search"}
+                {saving ? "Savingâ€¦" : "Save search"}
               </button>
               <button
                 type="button"
@@ -619,6 +619,27 @@ function PluginsTab() {
   const [cookieSource, setCookieSource] = useState("");
   const [cookie, setCookie] = useState("");
   const [userAgent, setUserAgent] = useState("");
+  const clearanceSection = useRef<HTMLElement | null>(null);
+
+  // blockedSources lists the sources refused access outright, where a
+  // browser check cannot help.
+  const blockedSources = new Set(
+    sources
+      .filter((s) => s.challenge?.state === "blocked")
+      .map((s) => s.id),
+  );
+
+  // focusClearanceForm selects a source in the clearance form and scrolls
+  // to it. The form is the interim path until a source can be solved in
+  // place; the WebView flow reuses the same entry point.
+  const focusClearanceForm = (sourceId: string) => {
+    if (blockedSources.has(sourceId)) return;
+    setCookieSource(sourceId);
+    clearanceSection.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  };
   const load = async () => {
     try {
       const [installed, entries, settings] = await Promise.all([
@@ -701,19 +722,35 @@ function PluginsTab() {
                 <div className="min-w-0 flex-1">
                   <b className="block truncate">{source.name}</b>
                   <small className="text-zinc-500">
-                    v{source.version} · {source.lang}
-                    {source.nsfw ? " · 18+" : ""}
+                    v{source.version} Â· {source.lang}
+                    {source.nsfw ? " Â· 18+" : ""}
                   </small>
                 </div>
-                {source.hasClearance && (
-                  <span
-                    role="img"
-                    aria-label={`${source.name} has browser clearance`}
-                    title="Browser clearance active"
-                    className="grid size-8 shrink-0 place-items-center rounded-lg border border-emerald-500/40 text-emerald-300"
+                {source.challenge ? (
+                  <button
+                    onClick={() => focusClearanceForm(source.id)}
+                    title={
+                      source.challenge.state === "blocked"
+                        ? "This source refused access, and a browser check will not clear it."
+                        : `This source is checking your browser (${source.challenge.origins.join(", ")}).`
+                    }
+                    className="shrink-0 rounded-lg border border-amber-500/40 px-2 py-1.5 text-xs text-amber-300"
                   >
-                    <ShieldCheck size={15} />
-                  </span>
+                    {source.challenge.state === "blocked"
+                      ? "Blocked"
+                      : "Needs check"}
+                  </button>
+                ) : (
+                  source.hasClearance && (
+                    <span
+                      role="img"
+                      aria-label={`${source.name} has browser clearance`}
+                      title="Browser clearance active"
+                      className="grid size-8 shrink-0 place-items-center rounded-lg border border-emerald-500/40 text-emerald-300"
+                    >
+                      <ShieldCheck size={15} />
+                    </span>
+                  )
                 )}
                 {(source.hasSettings || (source.availableLanguages?.length ?? 0) > 1) && (
                   <button
@@ -765,7 +802,7 @@ function PluginsTab() {
                 <div className="min-w-0 flex-1">
                   <b className="block">{entry.name}</b>
                   <small className="text-zinc-500">
-                    v{entry.version} · {entry.lang} ·{" "}
+                    v{entry.version} Â· {entry.lang} Â·{" "}
                     {entry.compatible ? "Compatible" : entry.incompatibility}
                   </small>
                 </div>
@@ -785,20 +822,23 @@ function PluginsTab() {
                   ) : (
                     <Download size={13} />
                   )}
-                  {busy.includes(entry.id) ? "Installing…" : "Install"}
+                  {busy.includes(entry.id) ? "Installingâ€¦" : "Install"}
                 </button>
               </div>
             ))}
         </div>
       </section>
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+      <section
+        ref={clearanceSection}
+        className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5"
+      >
         <div className="flex items-center gap-2">
           <ShieldCheck size={17} className="text-amber-300" />
           <h2 className="font-semibold">Browser clearance</h2>
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          If a source blocks the app with a browser check, paste the cookie and user agent from a
-          real browser session.
+          Paste the cookie and user agent from a browser session where you have passed the
+          check. The app applies them to every later request for that source.
         </p>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           <select

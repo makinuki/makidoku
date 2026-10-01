@@ -165,6 +165,21 @@ export type Source = {
   allowedHosts?: string[];
   pinned?: boolean;
   lastUsedAt?: number;
+  // challenge describes the anti-bot state of the source, or is absent when
+  // the source has not met a check.
+  challenge?: SourceChallenge;
+};
+// SourceChallenge is the per-source view of an outstanding browser check.
+export type SourceChallenge = {
+  // state is "challenged" when a check can be cleared, or "blocked" when the
+  // origin refused access outright.
+  state: "challenged" | "blocked";
+  // origins lists the domains awaiting clearance. A source whose pages and
+  // images sit on different domains reports both.
+  origins: string[];
+  hits: number;
+  lastSeen: number;
+  message: string;
 };
 export type CatalogEntry = Source & {
   installed: boolean;

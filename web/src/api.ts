@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   Aggregate,
   BulkResult,
   Category,
@@ -35,6 +35,7 @@ import type {
   TachibackupOptions,
   TachibackupProgress,
   TachibackupReport,
+  SourceChallenge,
   TachibackupSummary,
 } from "./types";
 
@@ -252,6 +253,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ cookie, userAgent }),
     }),
+  sourceChallenges: (id: string) =>
+    request<SourceChallenge[]>(
+      `/api/sources/${encodeURIComponent(id)}/challenges`,
+    ),
   search: (source: string, q: string, page = 1, filters?: Record<string, unknown>) =>
     request<PageResult>(
       `/api/sources/${encodeURIComponent(source)}/search?q=${encodeURIComponent(q)}&page=${page}${filters && Object.keys(filters).length ? `&filters=${encodeURIComponent(JSON.stringify(filters))}` : ""}`,

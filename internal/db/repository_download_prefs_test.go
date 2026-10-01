@@ -36,14 +36,16 @@ func TestSourceDownloadPrefsRoundTrip(t *testing.T) {
 	}
 
 	interval, attempts := int64(120), int64(1)
-	if err := repo.SetSourceDownloadPrefs(SourceDownloadPrefs{SourceID: "mangadex", IntervalMs: &interval, MaxAttempts: &attempts}); err != nil {
+	burst := int64(2)
+	if err := repo.SetSourceDownloadPrefs(SourceDownloadPrefs{SourceID: "mangadex", IntervalMs: &interval, MaxAttempts: &attempts, Burst: &burst}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := repo.GetSourceDownloadPrefs("mangadex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.IntervalMs == nil || *got.IntervalMs != 120 || got.MaxAttempts == nil || *got.MaxAttempts != 1 || got.BackoffMs != nil {
+	if got == nil || got.IntervalMs == nil || *got.IntervalMs != 120 || got.MaxAttempts == nil || *got.MaxAttempts != 1 ||
+		got.Burst == nil || *got.Burst != 2 || got.BackoffMs != nil {
 		t.Fatalf("stored prefs = %+v", got)
 	}
 
@@ -57,7 +59,7 @@ func TestSourceDownloadPrefsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.IntervalMs != nil || got.MaxAttempts != nil || got.BackoffMs == nil || *got.BackoffMs != 2000 {
+	if got.IntervalMs != nil || got.MaxAttempts != nil || got.Burst != nil || got.BackoffMs == nil || *got.BackoffMs != 2000 {
 		t.Fatalf("replaced prefs = %+v", got)
 	}
 
@@ -81,21 +83,21 @@ func TestRetryFailedQueueItemsBySource(t *testing.T) {
 	// Failures are recorded from the in-flight state, so the rows that must
 	// end up failed are claimed and failed in queue order first; the row
 	// that stays queued is claimed last and released back to pending.
-	claimed, err := repo.ClaimNextQueueItem()
+	claimed, err := repo.ClaimNextQueueItem(ClaimOptions{})
 	if err != nil || claimed == nil || claimed.ID != otherFailedID {
 		t.Fatalf("first claim = %+v, %v", claimed, err)
 	}
 	if err := repo.MarkQueueFailed(claimed.ID, errors.New("boom")); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err = repo.ClaimNextQueueItem()
+	claimed, err = repo.ClaimNextQueueItem(ClaimOptions{})
 	if err != nil || claimed == nil || claimed.ID != failedID {
 		t.Fatalf("second claim = %+v, %v", claimed, err)
 	}
 	if err := repo.MarkQueueFailed(claimed.ID, errors.New("boom")); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err = repo.ClaimNextQueueItem()
+	claimed, err = repo.ClaimNextQueueItem(ClaimOptions{})
 	if err != nil || claimed == nil || claimed.ID != pendingID {
 		t.Fatalf("third claim = %+v, %v", claimed, err)
 	}
@@ -152,4 +154,132 @@ func queueItemForSource(t *testing.T, repo *Repository, sourceID, sourceMangaID,
 		t.Fatal(err)
 	}
 	return item.ID
+}
+
+// gateFixture seeds three chapters of mangadex followed by one of other, so
+// the queue order always starts with mangadex work.
+func gateFixture(t *testing.T) *Repository {
+	t.Helper()
+	repo := prefsRepository(t)
+	queueItemForSource(t, repo, "mangadex", "gate-a", "a1")
+	queueItemForSource(t, repo, "mangadex", "gate-a", "a2")
+	queueItemForSource(t, repo, "mangadex", "gate-a", "a3")
+	queueItemForSource(t, repo, "other", "gate-b", "b1")
+	return repo
+}
+
+func claimSource(t *testing.T, repo *Repository, options ClaimOptions) string {
+	t.Helper()
+	item, err := repo.ClaimNextQueueItem(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item == nil {
+		return ""
+	}
+	return item.SourceID
+}
+
+func TestClaimGatesRespectConcurrencyLimits(t *testing.T) {
+	repo := gateFixture(t)
+
+	// A per-source cap of one spreads the queue across sources: the second
+	// chapter of mangadex is skipped while its first is in flight.
+	options := ClaimOptions{DefaultCap: 1}
+	if source := claimSource(t, repo, options); source != "mangadex" {
+		t.Fatalf("first claim = %q", source)
+	}
+	if source := claimSource(t, repo, options); source != "other" {
+		t.Fatalf("second claim = %q, want other", source)
+	}
+	if source := claimSource(t, repo, options); source != "" {
+		t.Fatalf("third claim = %q, want none", source)
+	}
+}
+
+func TestClaimGatesApplyPerSourceCaps(t *testing.T) {
+	repo := gateFixture(t)
+
+	// An explicit cap for mangadex lets it run one chapter while other keeps
+	// the default cap of five, so both sources stay claimable.
+	options := ClaimOptions{DefaultCap: 5, Caps: []SourceConcurrency{{SourceID: "mangadex", Max: 1}}}
+	if source := claimSource(t, repo, options); source != "mangadex" {
+		t.Fatalf("first claim = %q", source)
+	}
+	if source := claimSource(t, repo, options); source != "other" {
+		t.Fatalf("second claim = %q, want other", source)
+	}
+	if source := claimSource(t, repo, options); source != "" {
+		t.Fatalf("third claim = %q, want none", source)
+	}
+}
+
+func TestClaimGatesRespectActiveSourceLimit(t *testing.T) {
+	repo := gateFixture(t)
+
+	// One active source at a time: mangadex runs its chapters in order and
+	// other waits until every mangadex row has left the downloading state.
+	options := ClaimOptions{DefaultCap: 5, MaxActiveSources: 1}
+	claimed := []int64{}
+	for _, want := range []string{"mangadex", "mangadex", "mangadex"} {
+		item, err := repo.ClaimNextQueueItem(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item == nil || item.SourceID != want {
+			t.Fatalf("claim = %+v, want %s", item, want)
+		}
+		claimed = append(claimed, item.ID)
+	}
+	if source := claimSource(t, repo, options); source != "" {
+		t.Fatalf("fourth claim = %q, want none", source)
+	}
+
+	// Completing the mangadex chapters frees the active-source slot.
+	for _, item := range claimed {
+		full, err := repo.GetQueueItem(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CompleteQueueDownload(full.ChapterID, "/tmp/chapter.cbz"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if source := claimSource(t, repo, options); source != "other" {
+		t.Fatalf("claim after completing = %q, want other", source)
+	}
+}
+
+func TestClaimGatesSkipPausedSources(t *testing.T) {
+	repo := gateFixture(t)
+
+	// mangadex sits first in the queue order but is paused, so the only
+	// claimable row is the other-source chapter, even with generous caps.
+	options := ClaimOptions{PausedSources: []string{"mangadex"}, DefaultCap: 5, MaxActiveSources: 5}
+	item, err := repo.ClaimNextQueueItem(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item == nil || item.SourceID != "other" {
+		t.Fatalf("claim = %+v, want the other-source chapter", item)
+	}
+	if err := repo.CompleteQueueDownload(item.ChapterID, "/tmp/chapter.cbz"); err != nil {
+		t.Fatal(err)
+	}
+	// With the other chapter finished, the paused backlog is all that is
+	// left: nothing else may be claimed.
+	if item, err := repo.ClaimNextQueueItem(options); err != nil || item != nil {
+		t.Fatalf("claim after finishing = %+v, %v", item, err)
+	}
+}
+
+func TestQueueSourceIDsListLiveSources(t *testing.T) {
+	repo := gateFixture(t)
+	ids, err := repo.QueueSourceIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != "mangadex" || ids[1] != "other" {
+		t.Fatalf("live sources = %v", ids)
+	}
 }

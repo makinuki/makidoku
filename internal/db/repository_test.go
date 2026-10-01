@@ -166,7 +166,7 @@ func TestQueueStateMachine(t *testing.T) {
 	if err := repo.ResumeQueueItem(item.ID); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := repo.ClaimNextQueueItem()
+	claimed, err := repo.ClaimNextQueueItem(ClaimOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestCompleteQueueDownloadRespectsCanceledItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.ClaimNextQueueItem(); err != nil {
+	if _, err := repo.ClaimNextQueueItem(ClaimOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.CancelQueueItem(item.ID); err != nil {
@@ -1398,7 +1398,7 @@ func TestQueueOrderIsExplicitAndPersisted(t *testing.T) {
 		t.Fatalf("reorder: %v", err)
 	}
 	assertIDOrder(t, listQueueIDs(t, repo), []int64{items[2].ID, items[0].ID, items[1].ID})
-	claimed, err := repo.ClaimNextQueueItem()
+	claimed, err := repo.ClaimNextQueueItem(ClaimOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1447,7 +1447,7 @@ func TestCancelAllQueueItemsAndRelease(t *testing.T) {
 	}
 
 	// Releasing a claimed item returns it to the queue with its progress.
-	claimed, err := repo.ClaimNextQueueItem()
+	claimed, err := repo.ClaimNextQueueItem(ClaimOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

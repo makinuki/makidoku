@@ -1849,7 +1849,7 @@ func (r *Repository) RetryFailedQueueItemsBySource(sourceID string) ([]int64, er
 // nil when the user has set none.
 func (r *Repository) GetSourceDownloadPrefs(sourceID string) (*SourceDownloadPrefs, error) {
 	var prefs SourceDownloadPrefs
-	err := r.db.Get(&prefs, `SELECT source_id, interval_ms, max_attempts, backoff_ms
+	err := r.db.Get(&prefs, `SELECT source_id, interval_ms, max_attempts, backoff_ms, burst
 		FROM source_download_prefs WHERE source_id = ?`, sourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -1864,30 +1864,90 @@ func (r *Repository) GetSourceDownloadPrefs(sourceID string) (*SourceDownloadPre
 // fields are all nil is deleted, which returns the source to following its
 // own suggestions and the global defaults.
 func (r *Repository) SetSourceDownloadPrefs(prefs SourceDownloadPrefs) error {
-	if prefs.IntervalMs == nil && prefs.MaxAttempts == nil && prefs.BackoffMs == nil {
+	if prefs.IntervalMs == nil && prefs.MaxAttempts == nil && prefs.BackoffMs == nil && prefs.Burst == nil {
 		_, err := r.db.Exec(`DELETE FROM source_download_prefs WHERE source_id = ?`, prefs.SourceID)
 		return err
 	}
-	_, err := r.db.Exec(`INSERT INTO source_download_prefs (source_id, interval_ms, max_attempts, backoff_ms, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+	_, err := r.db.Exec(`INSERT INTO source_download_prefs (source_id, interval_ms, max_attempts, backoff_ms, burst, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id) DO UPDATE SET
 			interval_ms = excluded.interval_ms,
 			max_attempts = excluded.max_attempts,
 			backoff_ms = excluded.backoff_ms,
+			burst = excluded.burst,
 			updated_at = excluded.updated_at`,
-		prefs.SourceID, prefs.IntervalMs, prefs.MaxAttempts, prefs.BackoffMs, time.Now().UnixMilli())
+		prefs.SourceID, prefs.IntervalMs, prefs.MaxAttempts, prefs.BackoffMs, prefs.Burst, time.Now().UnixMilli())
 	return err
 }
 
-func (r *Repository) ClaimNextQueueItem() (*DownloadQueueItem, error) {
+// SourceConcurrency is the resolved chapter cap of one source for a claim.
+type SourceConcurrency struct {
+	SourceID string
+	Max      int
+}
+
+// ClaimOptions carries the runtime gates a claim must respect. The zero value
+// claims strictly in queue order, which is what a one-shot drain wants: it
+// runs to completion under its own worker count. Rows of paused sources are
+// never claimed, a source never has more than its resolved cap of chapters in
+// flight, and at most MaxActiveSources distinct sources download at once. A
+// source absent from Caps uses DefaultCap; each gate is ignored when its
+// value is not positive.
+type ClaimOptions struct {
+	PausedSources    []string
+	Caps             []SourceConcurrency
+	DefaultCap       int
+	MaxActiveSources int
+}
+
+// ClaimNextQueueItem atomically moves the next claimable pending row into the
+// downloading state. The gated statement runs inside one transaction and the
+// pool holds a single connection, so two workers cannot overshoot a cap.
+func (r *Repository) ClaimNextQueueItem(options ClaimOptions) (*DownloadQueueItem, error) {
 	tx, err := r.db.Beginx()
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	query := `SELECT q.id FROM download_queue q JOIN chapters c ON c.id = q.chapter_id WHERE q.status = ?`
+	args := []any{QueuePending}
+	if len(options.PausedSources) > 0 {
+		query += ` AND c.source_id NOT IN (` + placeholders(len(options.PausedSources)) + `)`
+		for _, sourceID := range options.PausedSources {
+			args = append(args, sourceID)
+		}
+	}
+	if options.DefaultCap > 0 {
+		query += ` AND (SELECT COUNT(*) FROM download_queue d JOIN chapters dc ON dc.id = d.chapter_id
+			WHERE d.status = ? AND dc.source_id = c.source_id)
+			< COALESCE((SELECT cap FROM caps WHERE caps.source_id = c.source_id), ?)`
+		args = append(args, QueueDownloading, options.DefaultCap)
+		// The caps CTE carries the sources whose resolved cap differs from
+		// the default; without entries it is empty and COALESCE always wins.
+		if len(options.Caps) > 0 {
+			values := strings.TrimSuffix(strings.Repeat("(?,?),", len(options.Caps)), ",")
+			capArgs := make([]any, 0, len(options.Caps)*2)
+			for _, cap := range options.Caps {
+				capArgs = append(capArgs, cap.SourceID, cap.Max)
+			}
+			query = `WITH caps(source_id, cap) AS (VALUES ` + values + `) ` + query
+			args = append(capArgs, args...)
+		} else {
+			query = `WITH caps(source_id, cap) AS (SELECT '', 0 WHERE 0) ` + query
+		}
+	}
+	if options.MaxActiveSources > 0 {
+		query += ` AND (EXISTS (SELECT 1 FROM download_queue d JOIN chapters dc ON dc.id = d.chapter_id
+				WHERE d.status = ? AND dc.source_id = c.source_id)
+			OR (SELECT COUNT(DISTINCT dc.source_id) FROM download_queue d JOIN chapters dc ON dc.id = d.chapter_id
+				WHERE d.status = ?) < ?)`
+		args = append(args, QueueDownloading, QueueDownloading, options.MaxActiveSources)
+	}
+	query += ` ORDER BY q.position, q.queued_at, q.id LIMIT 1`
+
 	var id int64
-	if err := tx.Get(&id, `SELECT id FROM download_queue WHERE status = ? ORDER BY position, queued_at, id LIMIT 1`, QueuePending); err != nil {
+	if err := tx.Get(&id, query, args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -1909,6 +1969,17 @@ func (r *Repository) ClaimNextQueueItem() (*DownloadQueueItem, error) {
 		return nil, err
 	}
 	return &item, nil
+}
+
+// QueueSourceIDs lists the sources that have live rows in the download queue,
+// so the downloader can resolve their concurrency caps before claiming.
+func (r *Repository) QueueSourceIDs() ([]string, error) {
+	ids := []string{}
+	err := r.db.Select(&ids, `SELECT DISTINCT c.source_id FROM download_queue q
+		JOIN chapters c ON c.id = q.chapter_id
+		WHERE q.status IN (?, ?, ?, ?) ORDER BY c.source_id`,
+		QueuePending, QueueDownloading, QueuePaused, QueueFailed)
+	return ids, err
 }
 
 func (r *Repository) GetQueueItem(id int64) (DownloadQueueItem, error) {

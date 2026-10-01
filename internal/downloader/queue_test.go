@@ -489,7 +489,7 @@ func TestResumeContinuesFromStagedPages(t *testing.T) {
 
 	// Simulate an interrupted attempt: one page fetched and staged, recorded
 	// in the queue row, then the process died.
-	claimed, err := repo.ClaimNextQueueItem()
+	claimed, err := repo.ClaimNextQueueItem(db.ClaimOptions{})
 	if err != nil || claimed == nil {
 		t.Fatalf("claim = %+v, err = %v", claimed, err)
 	}
@@ -575,7 +575,7 @@ func TestRetryThenDrainFinishesDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.ClaimNextQueueItem(); err != nil {
+	if _, err := repo.ClaimNextQueueItem(db.ClaimOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkQueueFailed(items[0].ID, errors.New("boom")); err != nil {

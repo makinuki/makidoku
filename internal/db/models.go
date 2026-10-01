@@ -574,4 +574,5 @@ type SourceDownloadPrefs struct {
 	IntervalMs  *int64 `db:"interval_ms" json:"intervalMs"`
 	MaxAttempts *int64 `db:"max_attempts" json:"maxAttempts"`
 	BackoffMs   *int64 `db:"backoff_ms" json:"backoffMs"`
+	Burst       *int64 `db:"burst" json:"burst"`
 }

@@ -331,7 +331,7 @@ func (q *Queue) Drain(ctx context.Context) (int, error) {
 				if q.paused.Load() {
 					return
 				}
-				item, err := q.repo.ClaimNextQueueItem()
+				item, err := q.repo.ClaimNextQueueItem(db.ClaimOptions{})
 				if err != nil {
 					errs <- err
 					return
@@ -370,7 +370,7 @@ func (q *Queue) runWorker(ctx context.Context) {
 			q.wait(ctx)
 			continue
 		}
-		item, err := q.repo.ClaimNextQueueItem()
+		item, err := q.repo.ClaimNextQueueItem(db.ClaimOptions{})
 		if err != nil {
 			slog.Warn("downloader claim failed", "err", err)
 			q.wait(ctx)

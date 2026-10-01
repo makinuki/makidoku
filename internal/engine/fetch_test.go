@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/makinuki/makidoku/internal/db"
 )
 
 // challengeBody imitates a Cloudflare interstitial.
@@ -21,6 +23,42 @@ type resolverFunc func(ctx context.Context, sourceID, usedCookie string, challen
 
 func (f resolverFunc) Resolve(ctx context.Context, sourceID, usedCookie string, challenge HttpError) bool {
 	return f(ctx, sourceID, usedCookie, challenge)
+}
+
+// Bundle reports no stored material unless the test installs one, so the
+// resolver seam can be driven from a plain function.
+func (f resolverFunc) Bundle(sourceID, origin string) *db.ClearanceBundle { return nil }
+
+// MarkUsable and MarkChallenged are no-ops for the function seam.
+func (f resolverFunc) MarkUsable(sourceID, origin string) error     { return nil }
+func (f resolverFunc) MarkChallenged(sourceID, origin string) error { return nil }
+
+// bundleResolver drives the real broker and installs material when a challenge
+// is reported, so the replay path runs end to end instead of through a stubbed
+// cookie.
+type bundleResolver struct {
+	broker  *ClearanceBroker
+	test    *testing.T
+	install func()
+}
+
+func (r *bundleResolver) Resolve(ctx context.Context, sourceID, usedCookie string, challenge HttpError) bool {
+	if r.install != nil {
+		r.install()
+	}
+	return r.broker.Resolve(ctx, sourceID, usedCookie, challenge)
+}
+
+func (r *bundleResolver) Bundle(sourceID, origin string) *db.ClearanceBundle {
+	return r.broker.Bundle(sourceID, origin)
+}
+
+func (r *bundleResolver) MarkUsable(sourceID, origin string) error {
+	return r.broker.MarkUsable(sourceID, origin)
+}
+
+func (r *bundleResolver) MarkChallenged(sourceID, origin string) error {
+	return r.broker.MarkChallenged(sourceID, origin)
 }
 
 func TestFetchPassesUpstreamStatusThrough(t *testing.T) {
@@ -84,22 +122,15 @@ func TestFetchReplaysGetAfterClearance(t *testing.T) {
 	}))
 	defer server.Close()
 
-	storage := NewMemoryStorage()
-	resolver := resolverFunc(func(ctx context.Context, sourceID, usedCookie string, challenge HttpError) bool {
-		if usedCookie != "" {
-			t.Errorf("the blocked attempt used cookie %q, want none", usedCookie)
+	broker, _ := newTestBroker(t, 0)
+	resolver := &bundleResolver{broker: broker, install: func() {
+		if err := broker.Submit("kagane", hostOnly(server.URL), "solved", "cleared-agent"); err != nil {
+			t.Fatalf("submit clearance: %v", err)
 		}
-		if err := storage.Set(sourceID, ClearanceCookieKey, "solved"); err != nil {
-			t.Error(err)
-		}
-		if err := storage.Set(sourceID, ClearanceUserAgentKey, "cleared-agent"); err != nil {
-			t.Error(err)
-		}
-		return true
-	})
+	}}
 
-	fetcher := NewFetcher(storage, resolver)
-	resp, herr := fetcher.Do(context.Background(), "asurascans", HttpRequest{URL: server.URL})
+	fetcher := NewFetcher(NewMemoryStorage(), resolver)
+	resp, herr := fetcher.Do(context.Background(), "kagane", HttpRequest{URL: server.URL})
 	if herr != nil {
 		t.Fatalf("host error: %+v", herr)
 	}

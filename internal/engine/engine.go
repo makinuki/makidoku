@@ -17,6 +17,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	dbstore "github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/identity"
 	"github.com/makinuki/makidoku/internal/languages"
 )
@@ -104,11 +105,11 @@ type CatalogEntry struct {
 	UpdateAvailable  bool   `json:"updateAvailable"`
 }
 
-func New(db *sqlx.DB, opts Options) *Engine {
-	storage := NewSQLStorage(db)
-	clearance := NewClearanceBroker(storage, opts.ChallengeWait)
+func New(conn *sqlx.DB, opts Options) *Engine {
+	storage := NewSQLStorage(conn)
+	clearance := NewClearanceBroker(dbstore.NewRepository(conn), storage, opts.ChallengeWait)
 	return &Engine{
-		db:        db,
+		db:        conn,
 		dataDir:   opts.DataDir,
 		storage:   storage,
 		fetcher:   NewFetcher(storage, clearance),
@@ -568,14 +569,87 @@ func (e *Engine) Unscramble(ctx context.Context, sourceID string, data []byte) (
 
 // SubmitClearance stores anti-bot clearance material for a source and releases
 // any request waiting on it.
-func (e *Engine) SubmitClearance(sourceID, cookie, userAgent string) error {
+// SubmitClearance records clearance material an operator obtained in a browser.
+// The origin defaults to the source's base host when the caller does not name
+// one, and an empty cookie removes the stored material.
+func (e *Engine) SubmitClearance(sourceID, origin, cookie, userAgent string) error {
 	row, err := e.row(sourceID)
 	if err != nil {
 		return err
 	}
+	if origin == "" {
+		origin = originOf(row.BaseURL)
+	}
 	// Persist under the canonical id: the fetcher always reads by id, while
 	// callers may pass a plugin key or alias.
-	return e.clearance.Submit(row.ID, cookie, userAgent)
+	return e.clearance.Submit(row.ID, origin, cookie, userAgent)
+}
+
+// ClearanceBundles returns the stored clearance material for a source. Cookie
+// values are never returned through the API.
+func (e *Engine) ClearanceBundles(sourceID string) ([]ClearanceSummary, error) {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	bundles, err := e.clearance.Bundles(row.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ClearanceSummary, 0, len(bundles))
+	for _, bundle := range bundles {
+		out = append(out, ClearanceSummary{
+			Origin:          bundle.Origin,
+			HasClearance:    bundle.HasClearance(),
+			Cookies:         cookieNamesOf(bundle.Cookies),
+			Status:          bundle.Status,
+			BrowserProfile:  bundle.BrowserProfile,
+			ObtainedAt:      bundle.ObtainedAt,
+			ExpiresHint:     bundle.ExpiresHint,
+			LastSuccessAt:   bundle.LastSuccessAt,
+			LastChallengeAt: bundle.LastChallengeAt,
+			Generation:      bundle.Generation,
+			UserAgent:       bundle.UserAgent,
+		})
+	}
+	return out, nil
+}
+
+// DeleteClearance removes stored material for one origin of a source.
+func (e *Engine) DeleteClearance(sourceID, origin string) error {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return err
+	}
+	return e.clearance.Delete(row.ID, origin)
+}
+
+// ClearanceSummary describes stored clearance without exposing cookie values.
+type ClearanceSummary struct {
+	Origin          string   `json:"origin"`
+	HasClearance    bool     `json:"hasClearance"`
+	Cookies         []string `json:"cookies"`
+	Status          string   `json:"status"`
+	BrowserProfile  string   `json:"browserProfile"`
+	ObtainedAt      int64    `json:"obtainedAt"`
+	ExpiresHint     *int64   `json:"expiresHint,omitempty"`
+	LastSuccessAt   *int64   `json:"lastSuccessAt,omitempty"`
+	LastChallengeAt *int64   `json:"lastChallengeAt,omitempty"`
+	Generation      int      `json:"generation"`
+	// UserAgent is the identity the solve ran under. It is returned because a
+	// mismatch between the cookie and the agent is the most common cause of a
+	// replay failing, and an operator needs it to diagnose that.
+	UserAgent string `json:"userAgent,omitempty"`
+}
+
+// cookieNamesOf returns the cookie names in a jar, sorted, with no values.
+func cookieNamesOf(cookies map[string]string) []string {
+	names := make([]string, 0, len(cookies))
+	for name := range cookies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // plugin returns the loaded plugin for sourceID, compiling it on first use.

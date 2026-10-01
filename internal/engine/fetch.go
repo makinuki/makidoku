@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/makinuki/makidoku/internal/db"
 )
 
 const (
@@ -45,10 +47,16 @@ const (
 // It returns true once fresh clearance material is available, which lets the
 // host replay the original request one time.
 type ChallengeResolver interface {
-	// Resolve reports whether clearance newer than usedCookie is available
-	// for sourceID. usedCookie is the clearance cookie that was applied to
-	// the blocked attempt, empty when none was stored.
+	// Resolve reports whether clearance newer than usedCookie is available for
+	// the origin that produced the challenge. usedCookie is the clearance
+	// cookie applied to the blocked attempt, empty when none was stored.
 	Resolve(ctx context.Context, sourceID, usedCookie string, challenge HttpError) bool
+	// Bundle returns the material stored for one source and origin, or nil.
+	Bundle(sourceID, origin string) *db.ClearanceBundle
+	// MarkUsable records that a request carrying the material succeeded.
+	MarkUsable(sourceID, origin string) error
+	// MarkChallenged records that material for an origin met a challenge.
+	MarkChallenged(sourceID, origin string) error
 }
 
 // Fetcher performs plugin HTTP requests with the daemon's native network
@@ -260,6 +268,12 @@ func (f *Fetcher) doWith(ctx context.Context, sourceID string, req HttpRequest, 
 	}
 
 	f.recordChallenge(sourceID, req.URL, challenge)
+	// Stored material that was rejected is marked so the record reflects that it
+	// no longer works. The update is bounded by the bundle's own generation, so a
+	// burst of parallel failures counts once.
+	if usedCookie != "" && f.resolver != nil {
+		_ = f.resolver.MarkChallenged(sourceID, originOf(req.URL))
+	}
 	if f.resolver == nil || !f.resolver.Resolve(ctx, sourceID, usedCookie, challenge) {
 		// The claim is retained: the challenge is still outstanding and the
 		// visitor has not answered the prompt yet.
@@ -436,15 +450,19 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	}
 	applyBrowserHeaders(httpReq)
 
-	cookie, userAgent := f.clearance(sourceID)
-	if cookie != "" {
-		httpReq.Header.Set("Cookie", mergeCookie(httpReq.Header.Get("Cookie"), "cf_clearance="+cookie))
+	bundle := f.clearance(sourceID, target.String())
+	usedCookie := ""
+	if bundle != nil {
+		if header := bundle.CookieHeader(); header != "" {
+			httpReq.Header.Set("Cookie", mergeCookie(httpReq.Header.Get("Cookie"), header))
+		}
+		usedCookie = bundle.Cookies["cf_clearance"]
 	}
 	// The stored agent must match the one the clearance cookie was issued to, so
 	// it wins over the plugin's value. With no stored clearance the plugin's own
 	// agent is left unchanged.
-	if userAgent != "" {
-		httpReq.Header.Set("User-Agent", userAgent)
+	if bundle != nil && bundle.UserAgent != "" {
+		httpReq.Header.Set("User-Agent", bundle.UserAgent)
 	} else if httpReq.Header.Get("User-Agent") == "" {
 		// The transport otherwise writes a "Go-http-client/1.1" default that
 		// identifies the host to the origin. Assigning an empty slice suppresses
@@ -456,7 +474,7 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	if err != nil {
 		// A dropped connection and an expired deadline share one code, so no
 		// further discrimination is needed here.
-		return nil, cookie, &HttpError{
+		return nil, usedCookie, &HttpError{
 			Error:   CodeNetworkTimeout,
 			URL:     target.String(),
 			Message: err.Error(),
@@ -470,7 +488,7 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	// search through binary noise, so the body is unpacked here.
 	raw, err := io.ReadAll(io.LimitReader(decodeBody(httpResp), maxResponseBytes+1))
 	if err != nil {
-		return nil, cookie, &HttpError{
+		return nil, usedCookie, &HttpError{
 			Error:   CodeNetworkTimeout,
 			Status:  httpResp.StatusCode,
 			URL:     target.String(),
@@ -478,7 +496,7 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 		}
 	}
 	if len(raw) > maxResponseBytes {
-		return nil, cookie, &HttpError{
+		return nil, usedCookie, &HttpError{
 			Error:   CodeMemoryLimitExceeded,
 			Status:  httpResp.StatusCode,
 			URL:     target.String(),
@@ -486,11 +504,17 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 		}
 	}
 
+	// A protected origin answering without a challenge is the only reliable
+	// evidence that the stored material still works.
+	if bundle != nil && Classify(httpResp.StatusCode, nil, raw) != ClassSolvable {
+		_ = f.resolver.MarkUsable(sourceID, originOf(target.String()))
+	}
+
 	return &rawHTTPResponse{
 		Status:  httpResp.StatusCode,
 		Headers: flattenHeaders(httpResp.Header),
 		Body:    raw,
-	}, cookie, nil
+	}, usedCookie, nil
 }
 
 // applyBrowserHeaders fills in the navigation headers a plugin would normally
@@ -536,18 +560,14 @@ func decodeBody(resp *http.Response) io.Reader {
 	}
 }
 
-// clearance loads the anti-bot material recorded for sourceID.
-func (f *Fetcher) clearance(sourceID string) (cookie, userAgent string) {
-	if f.storage == nil {
-		return "", ""
+// clearance loads the anti-bot material recorded for a source and origin. The
+// whole jar is applied, not only the clearance cookie, because dropping a
+// companion cookie causes an immediate re-challenge on many zones.
+func (f *Fetcher) clearance(sourceID, target string) *db.ClearanceBundle {
+	if f.resolver == nil {
+		return nil
 	}
-	if value, ok, err := f.storage.Get(sourceID, ClearanceCookieKey); err == nil && ok {
-		cookie = value
-	}
-	if value, ok, err := f.storage.Get(sourceID, ClearanceUserAgentKey); err == nil && ok {
-		userAgent = value
-	}
-	return cookie, userAgent
+	return f.resolver.Bundle(sourceID, originOf(target))
 }
 
 // RegistryUserAgent identifies the daemon when it fetches the source catalog.

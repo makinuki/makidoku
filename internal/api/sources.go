@@ -43,7 +43,35 @@ func (s *Server) mountSources(r chi.Router) {
 		source.Get("/search", s.search)
 		source.Post("/clearance", s.submitClearance)
 		source.Get("/challenges", s.sourceChallenges)
+		source.Get("/clearance", s.getClearance)
+		source.Delete("/clearance", s.deleteClearance)
 	})
+}
+
+// getClearance reports the stored clearance state for a source without
+// returning cookie values. Only the cookie names are listed, because a cookie
+// value must never be read back through the API.
+func (s *Server) getClearance(w http.ResponseWriter, r *http.Request) {
+	summaries, err := s.engine.ClearanceBundles(chi.URLParam(r, "sourceID"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if summaries == nil {
+		summaries = []engine.ClearanceSummary{}
+	}
+	writeJSON(w, http.StatusOK, summaries)
+}
+
+// deleteClearance removes the stored material for one origin. With no origin the
+// base host of the source is used.
+func (s *Server) deleteClearance(w http.ResponseWriter, r *http.Request) {
+	origin := strings.TrimSpace(r.URL.Query().Get("origin"))
+	if err := s.engine.DeleteClearance(chi.URLParam(r, "sourceID"), origin); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // sourceChallenges lists the origins currently awaiting clearance for a source.
@@ -475,17 +503,21 @@ func (s *Server) enforceImageCacheRetention() {
 
 // submitClearance records the cf_clearance cookie and matching user agent an
 // operator obtained by solving a challenge in a browser. The stored cookie is
-// never read back through the API.
+// never read back through the API. An empty cookie removes the stored material
+// for the named origin.
 func (s *Server) submitClearance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Cookie    string `json:"cookie"`
 		UserAgent string `json:"userAgent"`
+		Origin    string `json:"origin"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
 	sourceID := chi.URLParam(r, "sourceID")
-	if err := s.engine.SubmitClearance(sourceID, strings.TrimSpace(body.Cookie), strings.TrimSpace(body.UserAgent)); err != nil {
+	err := s.engine.SubmitClearance(sourceID, strings.TrimSpace(body.Origin),
+		strings.TrimSpace(body.Cookie), strings.TrimSpace(body.UserAgent))
+	if err != nil {
 		writeError(w, err)
 		return
 	}

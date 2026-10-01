@@ -35,6 +35,7 @@
   TachibackupOptions,
   TachibackupProgress,
   TachibackupReport,
+  ClearanceSummary,
   SourceChallenge,
   TachibackupSummary,
 } from "./types";
@@ -256,6 +257,13 @@ export const api = {
   sourceChallenges: (id: string) =>
     request<SourceChallenge[]>(
       `/api/sources/${encodeURIComponent(id)}/challenges`,
+    ),
+  clearance: (id: string) =>
+    request<ClearanceSummary[]>(`/api/sources/${encodeURIComponent(id)}/clearance`),
+  deleteClearance: (id: string, origin?: string) =>
+    request<void>(
+      `/api/sources/${encodeURIComponent(id)}/clearance${origin ? `?origin=${encodeURIComponent(origin)}` : ""}`,
+      { method: "DELETE" },
     ),
   search: (source: string, q: string, page = 1, filters?: Record<string, unknown>) =>
     request<PageResult>(

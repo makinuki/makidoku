@@ -168,6 +168,27 @@ export type Source = {
   // challenge describes the anti-bot state of the source, or is absent when
   // the source has not met a check.
   challenge?: SourceChallenge;
+  // clearance lists the stored clearance material, one entry per domain. Cookie
+  // values are never sent to the client.
+  clearance?: ClearanceSummary[];
+};
+// ClearanceSummary describes stored clearance for one domain without exposing
+// any cookie value.
+export type ClearanceSummary = {
+  origin: string;
+  hasClearance: boolean;
+  cookies: string[];
+  status: string;
+  browserProfile: string;
+  obtainedAt: number;
+  expiresHint?: number;
+  lastSuccessAt?: number;
+  lastChallengeAt?: number;
+  generation: number;
+  // userAgent is the identity the solve ran under. It is shown because a
+  // mismatch between the cookie and the agent is the most common cause of a
+  // replay failing.
+  userAgent?: string;
 };
 // SourceChallenge is the per-source view of an outstanding browser check.
 export type SourceChallenge = {

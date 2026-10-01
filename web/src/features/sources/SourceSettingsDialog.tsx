@@ -249,7 +249,7 @@ function TextSettingInput({
   );
 }
 
-type PacingFieldKey = "intervalMs" | "maxAttempts" | "backoffMs";
+type PacingFieldKey = "intervalMs" | "maxAttempts" | "backoffMs" | "burst";
 
 const pacingFields: Array<{ key: PacingFieldKey; label: string; unit: string; warning: string }> = [
   { key: "intervalMs", label: "Page interval", unit: "ms", warning: "Faster than the source suggests" },
@@ -260,11 +260,18 @@ const pacingFields: Array<{ key: PacingFieldKey; label: string; unit: string; wa
     warning: "More retries than the source suggests",
   },
   { key: "backoffMs", label: "Retry backoff", unit: "ms", warning: "Shorter than the source suggests" },
+  {
+    key: "burst",
+    label: "Concurrent chapters",
+    unit: "chapters",
+    warning: "More parallel chapters than the source tolerates",
+  },
 ];
 
-// Interval and backoff are aggressive when smaller, attempts when larger.
+// Interval and backoff are aggressive when smaller, attempts and concurrency
+// when larger.
 function isAggressivePacing(key: PacingFieldKey, override: number, suggestion: number) {
-  return key === "maxAttempts" ? override > suggestion : override < suggestion;
+  return key === "maxAttempts" || key === "burst" ? override > suggestion : override < suggestion;
 }
 
 // DownloadPacingSection lets the user override the download pacing the source

@@ -289,6 +289,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ sourceId }),
     }),
+  // Pausing a source stops its new claims while the rest keeps downloading;
+  // its in-flight chapter is released with its progress kept. Both answers
+  // carry the updated snapshot, including the paused source list.
+  pauseSourceDownloads: (sourceId: string) =>
+    request<DownloadSnapshot>(`/api/download/sources/${encodeURIComponent(sourceId)}/pause`, {
+      method: "POST",
+    }),
+  resumeSourceDownloads: (sourceId: string) =>
+    request<DownloadSnapshot>(`/api/download/sources/${encodeURIComponent(sourceId)}/resume`, {
+      method: "POST",
+    }),
   progress: (
     mangaId: string,
     chapterId: string,

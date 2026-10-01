@@ -65,6 +65,7 @@ const emptySnapshot: DownloadSnapshot = {
   items: [],
   stats: { downloadedPages: 0, retriedRequests: 0, throttledRequests: 0 },
   paused: false,
+  pausedSources: [],
 };
 
 const sortMenuGroups = sortOptions.reduce<Array<{ label: string; options: typeof sortOptions }>>(
@@ -119,6 +120,7 @@ export function DownloadsPage() {
         setSnapshot((current) => ({
           ...current,
           paused: message.paused ?? current.paused,
+          pausedSources: message.pausedSources ?? current.pausedSources,
           items: !next
             ? current.items
             : current.items.some((item) => item.id === next.id)
@@ -184,6 +186,17 @@ export function DownloadsPage() {
       await api.retryFailedDownloads(sourceId);
     } catch (e) {
       setError(messageOf(e, "Unable to retry the failed downloads"));
+    }
+  };
+
+  // Pausing one source answers with the updated snapshot, so the row state
+  // comes straight from the response instead of a refetch.
+  const setSourcePaused = async (sourceId: string, paused: boolean) => {
+    setError("");
+    try {
+      setSnapshot(await (paused ? api.pauseSourceDownloads(sourceId) : api.resumeSourceDownloads(sourceId)));
+    } catch (e) {
+      setError(messageOf(e, paused ? "Unable to pause the source" : "Unable to resume the source"));
     }
   };
 
@@ -354,6 +367,8 @@ export function DownloadsPage() {
                 }
                 onAction={handleRowAction}
                 onRetryFailed={retryFailed}
+                paused={snapshot.pausedSources?.includes(section.sourceId) ?? false}
+                onTogglePaused={(paused) => setSourcePaused(section.sourceId, paused)}
               />
             ))}
           </div>
@@ -367,16 +382,20 @@ function SourceSection({
   section,
   index,
   collapsed,
+  paused,
   onToggle,
   onAction,
   onRetryFailed,
+  onTogglePaused,
 }: {
   section: QueueSection;
   index: number;
   collapsed: boolean;
+  paused: boolean;
   onToggle: () => void;
   onAction: (action: RowAction, item: QueueItem) => void;
   onRetryFailed: (sourceId: string) => Promise<void>;
+  onTogglePaused: (paused: boolean) => Promise<void>;
 }) {
   const { ref, handleRef } = useSortable({
     id: sectionSortableId(section.sourceId),
@@ -386,7 +405,8 @@ function SourceSection({
   });
   // A source header offers its bulk retry only while the group holds failed
   // rows; the button stays disabled through the request so a double press
-  // cannot queue the same transition twice.
+  // cannot queue the same transition twice, and while the source is paused,
+  // where the retried chapters would just sit queued.
   const failedCount = section.rows.filter((row) => row.status === "FAILED").length;
   const [retrying, setRetrying] = useState(false);
   const retry = async () => {
@@ -395,6 +415,17 @@ function SourceSection({
       await onRetryFailed(section.sourceId);
     } finally {
       setRetrying(false);
+    }
+  };
+  // Pausing one source leaves the rest of the queue running; the in-flight
+  // chapter of the source returns to the queue with its progress kept.
+  const [pausing, setPausing] = useState(false);
+  const togglePaused = async () => {
+    setPausing(true);
+    try {
+      await onTogglePaused(!paused);
+    } finally {
+      setPausing(false);
     }
   };
   return (
@@ -415,11 +446,12 @@ function SourceSection({
             {section.sourceName}
           </span>
           <span className="shrink-0 text-xs text-zinc-500">({section.rows.length})</span>
+          {paused && <span className="shrink-0 text-xs text-amber-400">Paused</span>}
         </button>
         {failedCount > 0 && (
           <button
             type="button"
-            disabled={retrying}
+            disabled={retrying || paused || pausing}
             onClick={() => void retry()}
             aria-label={`Retry ${failedCount} failed downloads from ${section.sourceName}`}
             className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-amber-400 hover:bg-zinc-800 active:bg-zinc-800 disabled:opacity-40"
@@ -428,6 +460,16 @@ function SourceSection({
             Retry {failedCount} failed
           </button>
         )}
+        <button
+          type="button"
+          disabled={pausing}
+          onClick={() => void togglePaused()}
+          aria-label={`${paused ? "Resume" : "Pause"} ${section.sourceName}`}
+          title={paused ? `Resume ${section.sourceName}` : `Pause ${section.sourceName}`}
+          className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-white active:bg-zinc-800 active:text-white disabled:opacity-40"
+        >
+          {paused ? <Play size={16} /> : <Pause size={16} />}
+        </button>
         <button
           type="button"
           ref={handleRef}

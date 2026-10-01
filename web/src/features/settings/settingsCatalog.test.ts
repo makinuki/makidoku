@@ -44,6 +44,8 @@ describe("settings catalog", () => {
     expect(settingLabel("library.update_interval")).toBe("Check for new chapters");
     expect(settingLabel("browse.hide_nsfw")).toBe("Hide adult sources");
     expect(settingLabel("downloads.concurrent")).toBe("Parallel downloads");
+    expect(settingLabel("downloads.sources_at_once")).toBe("Sources at a time");
+    expect(settingLabel("downloads.chapters_per_source")).toBe("Chapters per source");
     expect(settingLabel("downloads.page_interval")).toBe("Page request interval");
     expect(settingLabel("downloads.retry_attempts")).toBe("Retries per page");
   });

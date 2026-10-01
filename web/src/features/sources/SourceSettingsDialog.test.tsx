@@ -47,9 +47,9 @@ const settings: SourceSetting[] = [
 // stubFetch serves the settings list on GET and echoes the posted value back
 // as the updated setting on PUT.
 const emptyPacing = {
-  override: { intervalMs: null, maxAttempts: null, backoffMs: null },
-  hint: { intervalMs: null, maxAttempts: null, backoffMs: null },
-  defaults: { intervalMs: 500, maxAttempts: 3, backoffMs: 1000 },
+  override: { intervalMs: null, maxAttempts: null, backoffMs: null, burst: null },
+  hint: { intervalMs: null, maxAttempts: null, backoffMs: null, burst: null },
+  defaults: { intervalMs: 500, maxAttempts: 3, backoffMs: 1000, burst: 2 },
 };
 
 function stubFetch() {
@@ -174,6 +174,24 @@ describe("SourceSettingsDialog", () => {
       expect(screen.queryByText("Faster than the source suggests")).not.toBeInTheDocument(),
     );
   });
+
+  it("warns when the concurrency override exceeds what the source tolerates", async () => {
+    const calls = stubPacing();
+    render(<SourceSettingsDialog source={source} onClose={vi.fn()} />);
+
+    const chapters = await screen.findByLabelText("Concurrent chapters");
+    expect(chapters).toHaveAttribute("placeholder", "Source suggests 2 chapters");
+
+    fireEvent.change(chapters, { target: { value: "4" } });
+    fireEvent.blur(chapters);
+    await waitFor(() => {
+      const put = calls.find((call) => call.method === "PUT" && call.url.includes("/downloads"));
+      expect(put?.body).toMatchObject({ burst: 4 });
+    });
+    expect(
+      await screen.findByText("More parallel chapters than the source tolerates"),
+    ).toBeInTheDocument();
+  });
 });
 
 // stubLanguages serves an empty settings list and echoes the posted language
@@ -199,14 +217,15 @@ function stubLanguages() {
   return calls;
 }
 
-// stubPacing serves one source whose hints are 800 ms, 2 tries and 1000 ms,
-// and folds each stored override back into the response it serves next.
+// stubPacing serves one source whose hints are 800 ms, 2 tries, 1000 ms and 2
+// concurrent chapters, and folds each stored override back into the response
+// it serves next.
 function stubPacing() {
   const calls: { url: string; method: string; body: any }[] = [];
   let policy = {
-    override: { intervalMs: null as number | null, maxAttempts: null as number | null, backoffMs: null as number | null },
-    hint: { intervalMs: 800, maxAttempts: 2, backoffMs: 1000 },
-    defaults: { intervalMs: 500, maxAttempts: 3, backoffMs: 1000 },
+    override: { intervalMs: null as number | null, maxAttempts: null as number | null, backoffMs: null as number | null, burst: null as number | null },
+    hint: { intervalMs: 800, maxAttempts: 2, backoffMs: 1000, burst: 2 },
+    defaults: { intervalMs: 500, maxAttempts: 3, backoffMs: 1000, burst: 2 },
   };
   vi.stubGlobal(
     "fetch",

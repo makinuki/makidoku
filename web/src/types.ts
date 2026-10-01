@@ -218,11 +218,13 @@ export type SourceSetting = {
   hasValue: boolean;
 };
 // One pacing layer of a source's download policy. A null field means that
-// layer stays silent and the next one decides it.
+// layer stays silent and the next one decides it. burst counts concurrent
+// chapters, not milliseconds.
 export type DownloadPolicyLayer = {
   intervalMs: number | null;
   maxAttempts: number | null;
   backoffMs: number | null;
+  burst: number | null;
 };
 // The three pacing layers for one source: the user's override wins over the
 // source's own suggestion, which wins over the host defaults.
@@ -275,6 +277,9 @@ export type DownloadSnapshot = {
   items: QueueItem[];
   stats: { downloadedPages: number; retriedRequests: number; throttledRequests: number };
   paused: boolean;
+  // pausedSources names the sources whose new downloads are paused; the pause
+  // lasts for the daemon's lifetime only.
+  pausedSources?: string[];
 };
 export type DownloadEvent = {
   type: string;
@@ -283,6 +288,7 @@ export type DownloadEvent = {
   item?: QueueItem;
   stats: DownloadSnapshot["stats"];
   paused: boolean;
+  pausedSources?: string[];
 };
 export type TrackerStatus = {
   trackerType?: string;

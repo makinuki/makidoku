@@ -130,6 +130,8 @@ const settingLabelOverrides: Record<string, string> = {
   "downloads.auto_download": "Automatic downloads",
   "downloads.download_ahead": "Download ahead",
   "downloads.concurrent": "Parallel downloads",
+  "downloads.sources_at_once": "Sources at a time",
+  "downloads.chapters_per_source": "Chapters per source",
   "downloads.page_interval": "Page request interval",
   "downloads.retry_attempts": "Retries per page",
   "tracking.auto_sync": "Automatic sync",

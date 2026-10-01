@@ -43,10 +43,11 @@ function emitDownloadEvent(message: unknown) {
 
 // The page talks to the queue endpoints through fetch; the stub answers the
 // snapshot routes from its own list so mutations are visible to a refetch.
-function stubQueue(items: QueueItem[], paused = false) {
+function stubQueue(items: QueueItem[], paused = false, pausedSources: string[] = []) {
   const calls: Call[] = [];
   let current = items;
   let downloaderPaused = paused;
+  let sourcePauses = [...pausedSources];
   sockets = [];
   vi.stubGlobal(
     "WebSocket",
@@ -67,7 +68,8 @@ function stubQueue(items: QueueItem[], paused = false) {
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, path, body });
-      const snapshot = () => Response.json({ items: current, stats, paused: downloaderPaused });
+      const snapshot = () =>
+        Response.json({ items: current, stats, paused: downloaderPaused, pausedSources: sourcePauses });
       if (path === "/api/download" && method === "GET") return snapshot();
       if (path === "/api/download/pause-all") {
         downloaderPaused = true;
@@ -75,6 +77,15 @@ function stubQueue(items: QueueItem[], paused = false) {
       }
       if (path === "/api/download/resume-all") {
         downloaderPaused = false;
+        return snapshot();
+      }
+      const sourceControl = /^\/api\/download\/sources\/([^/]+)\/(pause|resume)$/.exec(path);
+      if (sourceControl) {
+        const sourceId = decodeURIComponent(sourceControl[1]);
+        sourcePauses =
+          sourceControl[2] === "pause"
+            ? [...sourcePauses, sourceId]
+            : sourcePauses.filter((id) => id !== sourceId);
         return snapshot();
       }
       if (path === "/api/download/cancel-all") {
@@ -323,6 +334,34 @@ describe("DownloadsPage", () => {
     });
     expect(await screen.findByRole("button", { name: "Resume downloads" })).toBeInTheDocument();
     expect(calls.length).toBe(before);
+  });
+
+  it("pauses and resumes one source from its group header", async () => {
+    const calls = stubQueue([row({ id: 1 })]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Pause MangaDex" }));
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.method === "POST" && call.path === "/api/download/sources/s1/pause"),
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("button", { name: "Resume MangaDex" })).toBeInTheDocument();
+    expect(await screen.findByText("Paused")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume MangaDex" }));
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.method === "POST" && call.path === "/api/download/sources/s1/resume"),
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("button", { name: "Pause MangaDex" })).toBeInTheDocument();
+  });
+
+  it("disables the failed retry action while the source is paused", async () => {
+    stubQueue([row({ id: 1, status: "FAILED" })], false, ["s1"]);
+    renderPage();
+    const retry = await screen.findByRole("button", { name: "Retry 1 failed downloads from MangaDex" });
+    expect(retry).toBeDisabled();
   });
 
   it("links a row to its title", async () => {

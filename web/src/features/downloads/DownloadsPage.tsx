@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { DragDropProvider, KeyboardSensor, PointerSensor } from "@dnd-kit/react";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/react";
@@ -67,6 +68,23 @@ const emptySnapshot: DownloadSnapshot = {
   paused: false,
   pausedSources: [],
 };
+
+// A pause is carried out by the server only at an item's next page boundary,
+// which can take a while, so the UI flips the affected in-flight rows to queued
+// right away and the queue events reconcile the exact state a moment later.
+function releaseDownloadingRows(
+  setSnapshot: Dispatch<SetStateAction<DownloadSnapshot>>,
+  sourceFilter?: (sourceId: string) => boolean,
+) {
+  setSnapshot((current) => ({
+    ...current,
+    items: current.items.map((item) =>
+      item.status === "DOWNLOADING" && (!sourceFilter || sourceFilter(item.sourceId))
+        ? { ...item, status: "PENDING" }
+        : item,
+    ),
+  }));
+}
 
 const sortMenuGroups = sortOptions.reduce<Array<{ label: string; options: typeof sortOptions }>>(
   (groups, option) => {
@@ -193,16 +211,24 @@ export function DownloadsPage() {
   // comes straight from the response instead of a refetch.
   const setSourcePaused = async (sourceId: string, paused: boolean) => {
     setError("");
+    // A paused chapter only returns to the queue at its next page boundary,
+    // which can take a while, so an in-flight row of this source flips to
+    // queued right away; the queue events reconcile it a moment later.
+    if (paused) releaseDownloadingRows(setSnapshot, (source) => source === sourceId);
     try {
       setSnapshot(await (paused ? api.pauseSourceDownloads(sourceId) : api.resumeSourceDownloads(sourceId)));
     } catch (e) {
       setError(messageOf(e, paused ? "Unable to pause the source" : "Unable to resume the source"));
+      await refresh();
     }
   };
 
   const downloaderState = async (resume: boolean) => {
     setBusy(true);
     setError("");
+    // The same optimistic flip applies to the downloader-wide pause: every
+    // in-flight row reads queued while the server releases it.
+    if (!resume) releaseDownloadingRows(setSnapshot);
     try {
       setSnapshot(resume ? await api.resumeAllDownloads() : await api.pauseAllDownloads());
     } catch (e) {
@@ -368,6 +394,7 @@ export function DownloadsPage() {
                 onAction={handleRowAction}
                 onRetryFailed={retryFailed}
                 paused={snapshot.pausedSources?.includes(section.sourceId) ?? false}
+                downloaderPaused={snapshot.paused}
                 onTogglePaused={(paused) => setSourcePaused(section.sourceId, paused)}
               />
             ))}
@@ -383,6 +410,7 @@ function SourceSection({
   index,
   collapsed,
   paused,
+  downloaderPaused,
   onToggle,
   onAction,
   onRetryFailed,
@@ -392,6 +420,9 @@ function SourceSection({
   index: number;
   collapsed: boolean;
   paused: boolean;
+  // downloaderPaused mirrors the downloader-wide pause; while it is on, every
+  // source is effectively paused and the per-source toggle steps aside.
+  downloaderPaused: boolean;
   onToggle: () => void;
   onAction: (action: RowAction, item: QueueItem) => void;
   onRetryFailed: (sourceId: string) => Promise<void>;
@@ -429,8 +460,10 @@ function SourceSection({
     }
   };
   return (
-    <section ref={ref} className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
-      <div className="flex items-center gap-1 px-2 py-1">
+    <section ref={ref} className="rounded-xl border border-zinc-800 bg-zinc-900/40">
+      {/* No overflow clipping here: a row menu that opens past the card edge must
+          stay visible instead of being cut by the rounded boundary. */}
+      <div className="flex items-center gap-1 rounded-t-xl px-2 py-1">
         <button
           type="button"
           aria-expanded={!collapsed}
@@ -446,12 +479,16 @@ function SourceSection({
             {section.sourceName}
           </span>
           <span className="shrink-0 text-xs text-zinc-500">({section.rows.length})</span>
-          {paused && <span className="shrink-0 text-xs text-amber-400">Paused</span>}
+          {/* While the downloader itself is paused every source is effectively
+              paused, so the headers say so and their toggles step aside. */}
+          {paused || downloaderPaused ? (
+            <span className="shrink-0 text-xs text-amber-400">Paused</span>
+          ) : null}
         </button>
         {failedCount > 0 && (
           <button
             type="button"
-            disabled={retrying || paused || pausing}
+            disabled={retrying || paused || downloaderPaused || pausing}
             onClick={() => void retry()}
             aria-label={`Retry ${failedCount} failed downloads from ${section.sourceName}`}
             className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-amber-400 hover:bg-zinc-800 active:bg-zinc-800 disabled:opacity-40"
@@ -462,13 +499,19 @@ function SourceSection({
         )}
         <button
           type="button"
-          disabled={pausing}
+          disabled={pausing || downloaderPaused}
           onClick={() => void togglePaused()}
-          aria-label={`${paused ? "Resume" : "Pause"} ${section.sourceName}`}
-          title={paused ? `Resume ${section.sourceName}` : `Pause ${section.sourceName}`}
+          aria-label={`${paused || downloaderPaused ? "Resume" : "Pause"} ${section.sourceName}`}
+          title={
+            downloaderPaused
+              ? "The downloader is paused"
+              : paused
+                ? `Resume ${section.sourceName}`
+                : `Pause ${section.sourceName}`
+          }
           className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-white active:bg-zinc-800 active:text-white disabled:opacity-40"
         >
-          {paused ? <Play size={16} /> : <Pause size={16} />}
+          {paused || downloaderPaused ? <Play size={16} /> : <Pause size={16} />}
         </button>
         <button
           type="button"
@@ -716,7 +759,10 @@ function MenuItem({
 }
 
 // Menus close on outside tap and on Escape: touch users have no hover escape
-// hatch, so the trigger behaves like a modal toggle.
+// hatch, so the trigger behaves like a modal toggle. The panel is portaled to
+// the body and placed from the trigger's viewport rect, so it is never clipped
+// by a source card, the scroll area or the sticky top bar; when the space below
+// is too small it flips above the trigger and stays inside the viewport.
 function QueueMenu({
   label,
   Icon,
@@ -727,26 +773,49 @@ function QueueMenu({
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useEffect(() => {
     if (!open) return;
+    const place = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = menuRef.current?.offsetWidth || 224;
+      const height = menuRef.current?.offsetHeight || 0;
+      const flip = height > 0 && rect.bottom + height + 8 > window.innerHeight;
+      const top = flip ? Math.max(8, rect.top - height - 4) : rect.bottom + 4;
+      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+      setPlacement({ top, left });
+    };
+    place();
+    // The panel measures itself once it is in the DOM, so place again on the next frame.
+    const frame = requestAnimationFrame(place);
     const onPointerDown = (event: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) close();
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      close();
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
     };
   }, [open, close]);
   return (
-    <div className="relative" ref={menuRef}>
+    <>
       <button
+        ref={triggerRef}
         type="button"
         aria-label={label}
         aria-haspopup="menu"
@@ -756,14 +825,18 @@ function QueueMenu({
       >
         <Icon size={18} />
       </button>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
-        >
-          {children(close)}
-        </div>
-      )}
-    </div>
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ top: placement.top, left: placement.left }}
+            className="fixed z-[60] w-56 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
+          >
+            {children(close)}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }

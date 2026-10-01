@@ -73,6 +73,10 @@ function stubQueue(items: QueueItem[], paused = false, pausedSources: string[] =
       if (path === "/api/download" && method === "GET") return snapshot();
       if (path === "/api/download/pause-all") {
         downloaderPaused = true;
+        // The server releases in-flight rows to queued; the stub mirrors it.
+        current = current.map((item) =>
+          item.status === "DOWNLOADING" ? { ...item, status: "PENDING" } : item,
+        );
         return snapshot();
       }
       if (path === "/api/download/resume-all") {
@@ -82,10 +86,16 @@ function stubQueue(items: QueueItem[], paused = false, pausedSources: string[] =
       const sourceControl = /^\/api\/download\/sources\/([^/]+)\/(pause|resume)$/.exec(path);
       if (sourceControl) {
         const sourceId = decodeURIComponent(sourceControl[1]);
-        sourcePauses =
-          sourceControl[2] === "pause"
-            ? [...sourcePauses, sourceId]
-            : sourcePauses.filter((id) => id !== sourceId);
+        if (sourceControl[2] === "pause") {
+          sourcePauses = [...sourcePauses, sourceId];
+          current = current.map((item) =>
+            item.sourceId === sourceId && item.status === "DOWNLOADING"
+              ? { ...item, status: "PENDING" }
+              : item,
+          );
+        } else {
+          sourcePauses = sourcePauses.filter((id) => id !== sourceId);
+        }
         return snapshot();
       }
       if (path === "/api/download/cancel-all") {
@@ -362,6 +372,26 @@ describe("DownloadsPage", () => {
     renderPage();
     const retry = await screen.findByRole("button", { name: "Retry 1 failed downloads from MangaDex" });
     expect(retry).toBeDisabled();
+  });
+
+  it("shows an in-flight row as queued right after a pause", async () => {
+    stubQueue([row({ id: 1, status: "DOWNLOADING" })]);
+    renderPage();
+    expect(await screen.findByText("Downloading")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pause MangaDex" }));
+    await waitFor(() => {
+      expect(screen.getByText("Queued")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Downloading")).not.toBeInTheDocument();
+  });
+
+  it("marks every source as paused and locks the toggles while the downloader is paused", async () => {
+    stubQueue([row({ id: 1 })], true);
+    renderPage();
+    // The header chips the pause and the toggle steps aside until the
+    // downloader-wide pause is lifted.
+    expect(await screen.findByText("Paused")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume MangaDex" })).toBeDisabled();
   });
 
   it("links a row to its title", async () => {

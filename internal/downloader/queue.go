@@ -24,6 +24,14 @@ import (
 
 const DefaultWorkers = 3
 
+// DefaultMaxActiveSources and DefaultChaptersPerSource bound how many sources
+// and how many chapters per source the downloader works on at once when the
+// settings do not say otherwise.
+const (
+	DefaultMaxActiveSources  = 2
+	DefaultChaptersPerSource = 2
+)
+
 type Engine interface {
 	Details(ctx context.Context, sourceID, mangaID string) (engine.MangaDetails, error)
 	Pages(ctx context.Context, sourceID, chapterID string) ([]engine.PageItem, error)
@@ -37,6 +45,11 @@ type Options struct {
 	PageInterval time.Duration
 	DownloadDir  string
 	MaxRetries   int
+	// MaxActiveSources and ChaptersPerSource gate claiming: at most that many
+	// distinct sources run at once, and at most that many chapters of one
+	// source. Zero values fall back to the package defaults.
+	MaxActiveSources  int
+	ChaptersPerSource int
 }
 
 type ChapterSelection struct {
@@ -51,10 +64,11 @@ type Stats struct {
 }
 
 type Event struct {
-	Type   string               `json:"type"`
-	Item   db.DownloadQueueItem `json:"item"`
-	Stats  Stats                `json:"stats"`
-	Paused bool                 `json:"paused"`
+	Type          string               `json:"type"`
+	Item          db.DownloadQueueItem `json:"item"`
+	Stats         Stats                `json:"stats"`
+	Paused        bool                 `json:"paused"`
+	PausedSources []string             `json:"pausedSources"`
 }
 
 type Queue struct {
@@ -66,6 +80,10 @@ type Queue struct {
 	events   *eventBroker
 	wake     chan struct{}
 	paused   atomic.Bool
+	// pausedSources holds the sources whose new work is paused for this
+	// daemon run. The state is runtime only: on restart every source is
+	// claimable again.
+	pausedSources sync.Map
 
 	downloadedPages atomic.Int64
 	retriedRequests atomic.Int64
@@ -74,13 +92,14 @@ type Queue struct {
 	policies sync.Map
 }
 
-// sourcePolicy is the effective pacing and retry policy for one source. A
-// hint the source declares replaces the host default; an absent hint leaves
-// the default in place.
+// sourcePolicy is the effective pacing, retry and concurrency policy for one
+// source. A hint the source declares replaces the host default; an absent hint
+// leaves the default in place; a stored user override replaces both.
 type sourcePolicy struct {
-	interval time.Duration
-	retries  int
-	backoff  time.Duration
+	interval   time.Duration
+	retries    int
+	backoff    time.Duration
+	concurrent int
 }
 
 func NewQueue(repo *db.Repository, sourceEngine Engine, options Options) *Queue {
@@ -92,6 +111,12 @@ func NewQueue(repo *db.Repository, sourceEngine Engine, options Options) *Queue 
 	}
 	if options.MaxRetries < 0 {
 		options.MaxRetries = 3
+	}
+	if options.MaxActiveSources < 1 {
+		options.MaxActiveSources = DefaultMaxActiveSources
+	}
+	if options.ChaptersPerSource < 1 {
+		options.ChaptersPerSource = DefaultChaptersPerSource
 	}
 	return &Queue{
 		repo: repo, engine: sourceEngine, options: options,
@@ -119,14 +144,18 @@ func (q *Queue) policyFor(ctx context.Context, sourceID string) sourcePolicy {
 		return cached.(sourcePolicy)
 	}
 	policy := sourcePolicy{
-		interval: q.options.PageInterval,
-		retries:  q.options.MaxRetries,
-		backoff:  DefaultRetryBackoff,
+		interval:   q.options.PageInterval,
+		retries:    q.options.MaxRetries,
+		backoff:    DefaultRetryBackoff,
+		concurrent: q.options.ChaptersPerSource,
 	}
 	rated := true
 	if rate, retry, err := q.engine.TransferHints(ctx, sourceID); err == nil {
 		if rate.IntervalMs != nil && *rate.IntervalMs > 0 {
 			policy.interval = time.Duration(*rate.IntervalMs) * time.Millisecond
+		}
+		if rate.Burst != nil && *rate.Burst > 0 {
+			policy.concurrent = int(*rate.Burst)
 		}
 		if retry.MaxAttempts != nil && *retry.MaxAttempts > 0 {
 			policy.retries = int(*retry.MaxAttempts)
@@ -150,6 +179,9 @@ func (q *Queue) policyFor(ctx context.Context, sourceID string) sourcePolicy {
 		if prefs.BackoffMs != nil {
 			policy.backoff = time.Duration(*prefs.BackoffMs) * time.Millisecond
 		}
+		if prefs.Burst != nil && *prefs.Burst > 0 {
+			policy.concurrent = int(*prefs.Burst)
+		}
 	}
 	if rated {
 		q.policies.Store(sourceID, policy)
@@ -167,6 +199,68 @@ func (q *Queue) InvalidateSourcePolicy(sourceID string) {
 // suggests nothing and the user has set no override.
 func (q *Queue) Defaults() (interval time.Duration, maxAttempts int, backoff time.Duration) {
 	return q.options.PageInterval, q.options.MaxRetries, DefaultRetryBackoff
+}
+
+// claimOptions resolves the runtime claim gates: paused sources are never
+// claimed, and every source with live queue rows reports its chapter cap when
+// it differs from the global default, so a burst hint or user override steers
+// how work spreads across sources.
+func (q *Queue) claimOptions(ctx context.Context) db.ClaimOptions {
+	options := db.ClaimOptions{
+		PausedSources:    q.PausedSources(),
+		DefaultCap:       q.options.ChaptersPerSource,
+		MaxActiveSources: q.options.MaxActiveSources,
+	}
+	sourceIDs, err := q.repo.QueueSourceIDs()
+	if err != nil {
+		// Without the live sources the default cap still applies; only the
+		// per-source refinements are lost, so claiming continues.
+		return options
+	}
+	for _, sourceID := range sourceIDs {
+		policy := q.policyFor(ctx, sourceID)
+		if policy.concurrent != options.DefaultCap {
+			options.Caps = append(options.Caps, db.SourceConcurrency{SourceID: sourceID, Max: policy.concurrent})
+		}
+	}
+	return options
+}
+
+// PauseSource stops new work for one source. An in-flight chapter is released
+// at its next boundary with progress and staged pages intact, exactly like the
+// downloader-wide pause. The state lives for the daemon's lifetime only.
+func (q *Queue) PauseSource(sourceID string) {
+	if sourceID == "" {
+		return
+	}
+	q.pausedSources.Store(sourceID, struct{}{})
+	q.publishState()
+}
+
+// ResumeSource makes the source claimable again and wakes idle workers.
+func (q *Queue) ResumeSource(sourceID string) {
+	q.pausedSources.Delete(sourceID)
+	q.notify()
+	q.publishState()
+}
+
+// PausedSources lists the paused sources in a stable order for clients and
+// claim gates.
+func (q *Queue) PausedSources() []string {
+	out := []string{}
+	q.pausedSources.Range(func(key, _ any) bool {
+		if sourceID, ok := key.(string); ok {
+			out = append(out, sourceID)
+		}
+		return true
+	})
+	sort.Strings(out)
+	return out
+}
+
+func (q *Queue) sourcePaused(sourceID string) bool {
+	_, ok := q.pausedSources.Load(sourceID)
+	return ok
 }
 
 // PauseAll stops the workers from claiming more work. An item that is already
@@ -187,7 +281,7 @@ func (q *Queue) ResumeAll() {
 
 // publishState announces a downloader-level change that carries no queue item.
 func (q *Queue) publishState() {
-	q.events.publish(Event{Type: "state", Stats: q.Stats(), Paused: q.Paused()})
+	q.events.publish(Event{Type: "state", Stats: q.Stats(), Paused: q.Paused(), PausedSources: q.PausedSources()})
 }
 
 // Paused reports whether the downloader is paused.
@@ -331,7 +425,10 @@ func (q *Queue) Drain(ctx context.Context) (int, error) {
 				if q.paused.Load() {
 					return
 				}
-				item, err := q.repo.ClaimNextQueueItem(db.ClaimOptions{})
+				// The one-shot drain claims strictly in queue order: it runs
+				// in the foreground under its own worker count, so only the
+				// paused sources are honored as gates.
+				item, err := q.repo.ClaimNextQueueItem(db.ClaimOptions{PausedSources: q.PausedSources()})
 				if err != nil {
 					errs <- err
 					return
@@ -370,7 +467,7 @@ func (q *Queue) runWorker(ctx context.Context) {
 			q.wait(ctx)
 			continue
 		}
-		item, err := q.repo.ClaimNextQueueItem(db.ClaimOptions{})
+		item, err := q.repo.ClaimNextQueueItem(q.claimOptions(ctx))
 		if err != nil {
 			slog.Warn("downloader claim failed", "err", err)
 			q.wait(ctx)
@@ -619,9 +716,10 @@ func (q *Queue) stopped(id int64) bool {
 }
 
 // interrupted reports whether work on the item must stop. A canceled or
-// removed row stops as before; a paused downloader returns the item to the
-// pending state with its progress and staged pages intact, so the resume
-// continues from where it stopped instead of restarting the chapter.
+// removed row stops as before; a paused source or a paused downloader returns
+// the item to the pending state with its progress and staged pages intact, so
+// the resume continues from where it stopped instead of restarting the
+// chapter.
 func (q *Queue) interrupted(item db.DownloadQueueItem) bool {
 	if q.stopped(item.ID) {
 		// The row is gone or canceled, so its staged pages can never resume:
@@ -629,14 +727,20 @@ func (q *Queue) interrupted(item db.DownloadQueueItem) bool {
 		q.removeStaged(item.ID)
 		return true
 	}
-	if !q.paused.Load() {
+	if !q.sourcePaused(item.SourceID) && !q.paused.Load() {
 		return false
 	}
+	q.releaseForPause(item)
+	return true
+}
+
+// releaseForPause returns the in-flight chapter to the pending state so a
+// later resume continues from its staged pages.
+func (q *Queue) releaseForPause(item db.DownloadQueueItem) {
 	if err := q.repo.ReleaseQueueItem(item.ID); err != nil {
 		slog.Warn("downloader releasing paused item failed", "chapter", item.ChapterID, "err", err)
 	}
 	q.publishCurrent("pending", item.ID)
-	return true
 }
 
 func (q *Queue) Pause(id int64) error {
@@ -735,7 +839,7 @@ func (q *Queue) publishCurrent(eventType string, id int64) {
 }
 
 func (q *Queue) publish(eventType string, item db.DownloadQueueItem) {
-	q.events.publish(Event{Type: eventType, Item: item, Stats: q.Stats(), Paused: q.Paused()})
+	q.events.publish(Event{Type: eventType, Item: item, Stats: q.Stats(), Paused: q.Paused(), PausedSources: q.PausedSources()})
 }
 
 func (q *Queue) notify() {

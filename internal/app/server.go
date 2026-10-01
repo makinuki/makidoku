@@ -99,9 +99,18 @@ func New(cfg config.Config) (*Server, error) {
 	if attempts, settingErr := preferences.Int("downloads.retry_attempts"); settingErr == nil && attempts >= 0 {
 		maxRetries = attempts
 	}
+	maxActiveSources := downloader.DefaultMaxActiveSources
+	if sources, settingErr := preferences.Int("downloads.sources_at_once"); settingErr == nil && sources > 0 {
+		maxActiveSources = sources
+	}
+	chaptersPerSource := downloader.DefaultChaptersPerSource
+	if chapters, settingErr := preferences.Int("downloads.chapters_per_source"); settingErr == nil && chapters > 0 {
+		chaptersPerSource = chapters
+	}
 	downloads := downloader.NewQueue(db.NewRepository(database), eng, downloader.Options{
 		Workers: workers, PageInterval: pageInterval,
 		DownloadDir: cfg.DownloadDir, MaxRetries: maxRetries,
+		MaxActiveSources: maxActiveSources, ChaptersPerSource: chaptersPerSource,
 	})
 
 	router := chi.NewRouter()

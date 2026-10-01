@@ -15,9 +15,10 @@ import (
 )
 
 type downloadSnapshot struct {
-	Items  []db.DownloadQueueItem `json:"items"`
-	Stats  downloader.Stats       `json:"stats"`
-	Paused bool                   `json:"paused"`
+	Items         []db.DownloadQueueItem `json:"items"`
+	Stats         downloader.Stats       `json:"stats"`
+	Paused        bool                   `json:"paused"`
+	PausedSources []string               `json:"pausedSources"`
 }
 
 func (s *Server) mountDownloads(r chi.Router) {
@@ -30,6 +31,10 @@ func (s *Server) mountDownloads(r chi.Router) {
 	r.Post("/download/retry-failed", s.retryFailedDownloads)
 	r.Post("/download/reorder", s.reorderDownloads)
 	r.Get("/download/events", s.downloadEvents)
+	r.Route("/download/sources/{sourceID}", func(source chi.Router) {
+		source.Post("/pause", s.pauseSourceDownloads)
+		source.Post("/resume", s.resumeSourceDownloads)
+	})
 	r.Route("/download/{itemID}", func(item chi.Router) {
 		item.Post("/pause", s.pauseDownload)
 		item.Post("/resume", s.resumeDownload)
@@ -40,6 +45,20 @@ func (s *Server) mountDownloads(r chi.Router) {
 
 func (s *Server) retryDownload(w http.ResponseWriter, r *http.Request) {
 	s.controlDownload(w, r, s.downloads.Retry)
+}
+
+// pauseSourceDownloads stops new claims for one source. An in-flight chapter
+// of that source is released at its next boundary with its progress kept, so a
+// later resume continues where it stopped.
+func (s *Server) pauseSourceDownloads(w http.ResponseWriter, r *http.Request) {
+	s.downloads.PauseSource(chi.URLParam(r, "sourceID"))
+	s.writeDownloadSnapshot(w)
+}
+
+// resumeSourceDownloads makes the source claimable again.
+func (s *Server) resumeSourceDownloads(w http.ResponseWriter, r *http.Request) {
+	s.downloads.ResumeSource(chi.URLParam(r, "sourceID"))
+	s.writeDownloadSnapshot(w)
 }
 
 // retryFailedDownloads moves every failed item of one source back to the
@@ -150,6 +169,7 @@ func (s *Server) writeDownloadSnapshot(w http.ResponseWriter) {
 	}
 	writeJSON(w, http.StatusOK, downloadSnapshot{
 		Items: items, Stats: s.downloads.Stats(), Paused: s.downloads.Paused(),
+		PausedSources: s.downloads.PausedSources(),
 	})
 }
 

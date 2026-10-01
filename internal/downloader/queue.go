@@ -201,6 +201,13 @@ func (q *Queue) Defaults() (interval time.Duration, maxAttempts int, backoff tim
 	return q.options.PageInterval, q.options.MaxRetries, DefaultRetryBackoff
 }
 
+// ConcurrencyDefaults reports the global source and per-source concurrency
+// limits the claim gates apply when a source suggests nothing and the user has
+// set no override.
+func (q *Queue) ConcurrencyDefaults() (maxActiveSources, chaptersPerSource int) {
+	return q.options.MaxActiveSources, q.options.ChaptersPerSource
+}
+
 // claimOptions resolves the runtime claim gates: paused sources are never
 // claimed, and every source with live queue rows reports its chapter cap when
 // it differs from the global default, so a burst hint or user override steers

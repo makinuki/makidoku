@@ -30,6 +30,9 @@ type fakeDownloads struct {
 	retryFailed       int
 	retryFailedSource string
 	invalidated       string
+	pausedSource      string
+	resumedSource     string
+	pausedSources     []string
 	pausedAll         bool
 	cancelAll         int64
 	cancelIDs         []int64
@@ -62,6 +65,21 @@ func (f *fakeDownloads) RetryFailedItems(sourceID string) (int, error) {
 func (f *fakeDownloads) InvalidateSourcePolicy(sourceID string) { f.invalidated = sourceID }
 func (f *fakeDownloads) Defaults() (time.Duration, int, time.Duration) {
 	return 500 * time.Millisecond, 3, time.Second
+}
+func (f *fakeDownloads) ConcurrencyDefaults() (int, int) { return 2, 3 }
+func (f *fakeDownloads) PauseSource(sourceID string) {
+	f.pausedSource = sourceID
+	f.pausedSources = append(f.pausedSources, sourceID)
+}
+func (f *fakeDownloads) ResumeSource(sourceID string) {
+	f.resumedSource = sourceID
+	f.pausedSources = nil
+}
+func (f *fakeDownloads) PausedSources() []string {
+	if f.pausedSources == nil {
+		return []string{}
+	}
+	return f.pausedSources
 }
 func (f *fakeDownloads) PauseAll() { f.pausedAll = true }
 func (f *fakeDownloads) ResumeAll()                { f.pausedAll = false }

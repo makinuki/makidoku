@@ -340,6 +340,8 @@ var definitionList = []Definition{
 	}},
 	{Key: "downloads.download_ahead", Type: "number", Default: "0", Description: "Upcoming chapters to keep downloaded while you read", Validate: number(0, 10)},
 	{Key: "downloads.concurrent", Type: "number", Default: "2", Description: "How many chapters download at the same time", Validate: number(1, 16)},
+	{Key: "downloads.sources_at_once", Type: "number", Default: "2", Description: "How many sources download at the same time", Validate: number(1, 16)},
+	{Key: "downloads.chapters_per_source", Type: "number", Default: "2", Description: "How many chapters of one source download at the same time", Validate: number(1, 16)},
 	{Key: "downloads.page_interval", Type: "number", Default: "500", Description: "Milliseconds to wait between page requests when a source suggests nothing; a source's own suggestion or your per-source override wins", Validate: number(0, 3600000)},
 	{Key: "downloads.retry_attempts", Type: "number", Default: "3", Description: "Extra tries a page gets before its chapter is marked failed", Validate: number(0, 10)},
 	{Key: "tracking.auto_sync", Type: "boolean", Default: "true", Description: "Sync progress with trackers in the background", Validate: func(v any) error {

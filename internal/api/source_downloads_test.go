@@ -61,25 +61,27 @@ func TestSourceDownloadsReadAndOverride(t *testing.T) {
 	if view.Override.IntervalMs != nil || view.Override.MaxAttempts != nil || view.Override.BackoffMs != nil {
 		t.Fatalf("override before storing = %+v", view.Override)
 	}
-	if view.Hint.IntervalMs != nil || view.Hint.MaxAttempts != nil || view.Hint.BackoffMs != nil {
+	if view.Hint.IntervalMs != nil || view.Hint.MaxAttempts != nil || view.Hint.BackoffMs != nil || view.Hint.Burst != nil {
 		t.Fatalf("hint from an unloadable source should stay silent, got %+v", view.Hint)
 	}
 	if view.Defaults.IntervalMs == nil || *view.Defaults.IntervalMs != 500 ||
 		view.Defaults.MaxAttempts == nil || *view.Defaults.MaxAttempts != 3 ||
-		view.Defaults.BackoffMs == nil || *view.Defaults.BackoffMs != 1000 {
+		view.Defaults.BackoffMs == nil || *view.Defaults.BackoffMs != 1000 ||
+		view.Defaults.Burst == nil || *view.Defaults.Burst != 3 {
 		t.Fatalf("defaults = %+v", view.Defaults)
 	}
 
 	// Storing an override persists it, echoes it back and drops the cached
 	// queue policy so the next chapter uses the new pacing.
-	code, body = doJSON(t, router, http.MethodPut, "/api/sources/s/downloads", `{"intervalMs":120,"maxAttempts":5}`)
+	code, body = doJSON(t, router, http.MethodPut, "/api/sources/s/downloads", `{"intervalMs":120,"maxAttempts":5,"burst":4}`)
 	if code != http.StatusOK {
 		t.Fatalf("PUT status = %d, body = %s", code, body)
 	}
 	if err := json.Unmarshal([]byte(body), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.Override.IntervalMs == nil || *view.Override.IntervalMs != 120 || view.Override.MaxAttempts == nil || *view.Override.MaxAttempts != 5 {
+	if view.Override.IntervalMs == nil || *view.Override.IntervalMs != 120 || view.Override.MaxAttempts == nil || *view.Override.MaxAttempts != 5 ||
+		view.Override.Burst == nil || *view.Override.Burst != 4 {
 		t.Fatalf("stored override = %+v", view.Override)
 	}
 	if downloads.invalidated != "s" {
@@ -98,7 +100,7 @@ func TestSourceDownloadsReadAndOverride(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.Override.IntervalMs != nil || view.Override.MaxAttempts == nil || *view.Override.MaxAttempts != 5 {
+	if view.Override.IntervalMs != nil || view.Override.MaxAttempts == nil || *view.Override.MaxAttempts != 5 || view.Override.Burst != nil {
 		t.Fatalf("replaced override = %+v", view.Override)
 	}
 
@@ -122,6 +124,8 @@ func TestSourceDownloadsRejectsInvalidOverrides(t *testing.T) {
 		`{"maxAttempts":11}`,
 		`{"backoffMs":-5}`,
 		`{"backoffMs":60001}`,
+		`{"burst":0}`,
+		`{"burst":17}`,
 	} {
 		code, _ := doJSON(t, router, http.MethodPut, "/api/sources/s/downloads", body)
 		if code != http.StatusBadRequest {
@@ -160,5 +164,42 @@ func TestRetryFailedDownloads(t *testing.T) {
 
 	if code, _ := doJSON(t, handler, http.MethodPost, "/api/download/retry-failed", `{}`); code != http.StatusBadRequest {
 		t.Fatalf("missing sourceId status = %d, want 400", code)
+	}
+}
+
+// Pausing one source answers with the updated snapshot whose paused list
+// names the source, so open clients flip their per-source control without a
+// refetch; a resume clears it again.
+func TestPauseAndResumeSourceDownloads(t *testing.T) {
+	downloads := newFakeDownloads()
+	handler := downloadRouter(downloads)
+
+	code, body := doJSON(t, handler, http.MethodPost, "/api/download/sources/mangadex/pause", "")
+	if code != http.StatusOK {
+		t.Fatalf("pause status = %d, body = %s", code, body)
+	}
+	if downloads.pausedSource != "mangadex" {
+		t.Fatalf("paused source = %q", downloads.pausedSource)
+	}
+	var snapshot downloadSnapshot
+	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.PausedSources) != 1 || snapshot.PausedSources[0] != "mangadex" {
+		t.Fatalf("snapshot paused sources = %v", snapshot.PausedSources)
+	}
+
+	code, body = doJSON(t, handler, http.MethodPost, "/api/download/sources/mangadex/resume", "")
+	if code != http.StatusOK {
+		t.Fatalf("resume status = %d, body = %s", code, body)
+	}
+	if downloads.resumedSource != "mangadex" {
+		t.Fatalf("resumed source = %q", downloads.resumedSource)
+	}
+	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.PausedSources) != 0 {
+		t.Fatalf("snapshot after resume = %v", snapshot.PausedSources)
 	}
 }

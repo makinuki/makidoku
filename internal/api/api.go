@@ -32,6 +32,10 @@ type downloadQueue interface {
 	RetryFailedItems(sourceID string) (int, error)
 	InvalidateSourcePolicy(sourceID string)
 	Defaults() (interval time.Duration, maxAttempts int, backoff time.Duration)
+	ConcurrencyDefaults() (maxActiveSources, chaptersPerSource int)
+	PauseSource(sourceID string)
+	ResumeSource(sourceID string)
+	PausedSources() []string
 	PauseAll()
 	ResumeAll()
 	Paused() bool

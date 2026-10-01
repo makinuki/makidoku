@@ -12,11 +12,13 @@ import (
 )
 
 // downloadPolicyView reports one pacing layer. A null field means the layer
-// stays silent on that knob and the next layer decides it.
+// stays silent on that knob and the next layer decides it. Burst is the
+// concurrent chapters the layer allows, not a duration.
 type downloadPolicyView struct {
 	IntervalMs  *int64 `json:"intervalMs"`
 	MaxAttempts *int64 `json:"maxAttempts"`
 	BackoffMs   *int64 `json:"backoffMs"`
+	Burst       *int64 `json:"burst"`
 }
 
 // sourceDownloadsResponse carries all three pacing layers at once: the user's
@@ -33,9 +35,10 @@ type sourceDownloadsResponse struct {
 // pacing and narrow enough that a mistyped value cannot stall the downloader
 // or flood a source.
 const (
-	maxOverrideIntervalMs  = int64(60 * 60 * 1000)
-	maxOverrideBackoffMs   = int64(60 * 1000)
+	maxOverrideIntervalMs    = int64(60 * 60 * 1000)
+	maxOverrideBackoffMs     = int64(60 * 1000)
 	maxOverrideRetryAttempts = int64(10)
+	maxOverrideBurst         = int64(16)
 )
 
 // Fallback defaults reported when no queue is attached (health probes and
@@ -80,6 +83,7 @@ func (s *Server) putSourceDownloads(w http.ResponseWriter, r *http.Request) {
 		IntervalMs:  body.IntervalMs,
 		MaxAttempts: body.MaxAttempts,
 		BackoffMs:   body.BackoffMs,
+		Burst:       body.Burst,
 	}
 	if err := s.repo.SetSourceDownloadPrefs(prefs); err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)
@@ -104,6 +108,8 @@ func validateDownloadPolicy(policy downloadPolicyView) error {
 		return errors.New("maxAttempts must be between 0 and 10")
 	case policy.BackoffMs != nil && (*policy.BackoffMs < 0 || *policy.BackoffMs > maxOverrideBackoffMs):
 		return errors.New("backoffMs must be between 0 and 60000")
+	case policy.Burst != nil && (*policy.Burst < 1 || *policy.Burst > maxOverrideBurst):
+		return errors.New("burst must be between 1 and 16")
 	}
 	return nil
 }
@@ -122,6 +128,7 @@ func (s *Server) sourceDownloadsResponse(ctx context.Context, sourceID string) (
 			IntervalMs:  prefs.IntervalMs,
 			MaxAttempts: prefs.MaxAttempts,
 			BackoffMs:   prefs.BackoffMs,
+			Burst:       prefs.Burst,
 		}
 	}
 	if s.engine != nil {
@@ -130,18 +137,24 @@ func (s *Server) sourceDownloadsResponse(ctx context.Context, sourceID string) (
 				IntervalMs:  rate.IntervalMs,
 				MaxAttempts: retry.MaxAttempts,
 				BackoffMs:   retry.BackoffMs,
+				Burst:       rate.Burst,
 			}
 		}
 	}
 	intervalMs, attempts, backoffMs := fallbackPageIntervalMs, fallbackMaxRetries, downloader.DefaultRetryBackoff.Milliseconds()
+	burst := int64(downloader.DefaultChaptersPerSource)
 	if s.downloads != nil {
 		interval, maxAttempts, backoff := s.downloads.Defaults()
 		intervalMs, attempts, backoffMs = interval.Milliseconds(), int64(maxAttempts), backoff.Milliseconds()
+		if _, chaptersPerSource := s.downloads.ConcurrencyDefaults(); chaptersPerSource > 0 {
+			burst = int64(chaptersPerSource)
+		}
 	}
 	view.Defaults = downloadPolicyView{
 		IntervalMs:  &intervalMs,
 		MaxAttempts: &attempts,
 		BackoffMs:   &backoffMs,
+		Burst:       &burst,
 	}
 	return view, nil
 }

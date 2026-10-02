@@ -43,6 +43,10 @@ type Server struct {
 	// challenger presents anti-bot challenges. It owns a thread and a window, so it
 	// is created with the server and released with it.
 	challenger *solver.Solver
+	// autoSolver answers challenges without a button press when the toggle is on.
+	// It is nil when the toggle is off. The broker's hook also holds it, and
+	// keeping it here makes that explicit.
+	autoSolver *autoSolver
 	http       *http.Server
 	api        *api.Server
 }
@@ -161,6 +165,10 @@ func New(cfg config.Config) (*Server, error) {
 	challenger := solver.New(solverProfile)
 	server.SetChallenger(challenger)
 
+	// The automatic path is registered only when the toggle is on, so with it off
+	// no hook exists and nothing in the engine is told a challenge happened.
+	autoSolver := startAutoSolve(cfg, eng, challenger, eng.ChallengeBroker())
+
 	sweepOnce(imageCache, repo.ListCachedPaths)
 	server.Mount(router)
 	web.Mount(router)
@@ -176,6 +184,7 @@ func New(cfg config.Config) (*Server, error) {
 		settings:   preferences,
 		api:        server,
 		challenger: challenger,
+		autoSolver: autoSolver,
 		http: &http.Server{
 			Addr:              net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port)),
 			Handler:           router,

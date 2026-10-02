@@ -1,6 +1,137 @@
 package app
 
-import "sync"
+import (
+	"context"
+	"log/slog"
+	"sync"
+
+	"github.com/makinuki/makidoku/internal/config"
+	"github.com/makinuki/makidoku/internal/db"
+	"github.com/makinuki/makidoku/internal/engine"
+	"github.com/makinuki/makidoku/internal/solver"
+)
+
+// autoSolver answers a classified challenge without being asked, when the
+// auto-solve toggle is on.
+//
+// It is the same window, the same capture path and the same outcome handling as
+// the browse grid button; only who initiates differs. The reader's manual press
+// goes through the API and is never rationed by the budget here.
+type autoSolver struct {
+	challenger solver.Challenger
+	engine     *engine.Engine
+	budget     *AttemptBudget
+
+	// inFlight keeps one window per origin at a time. Without it two requests
+	// blocked on the same origin would each open a window.
+	mu       sync.Mutex
+	inFlight map[string]bool
+}
+
+// startAutoSolve registers the challenge hook when the toggle is on, and returns
+// nil when it is off so there is nothing to keep alive.
+func startAutoSolve(cfg config.Config, eng *engine.Engine, challenger solver.Challenger, broker *engine.ClearanceBroker) *autoSolver {
+	if !cfg.AutoSolve || challenger == nil {
+		return nil
+	}
+	auto := &autoSolver{
+		challenger: challenger,
+		engine:     eng,
+		budget:     NewAttemptBudget(autoSolveAttemptsPerOrigin),
+		inFlight:   make(map[string]bool),
+	}
+	broker.SetChallengeHook(auto.onChallenged)
+	slog.Info("auto-solve is on, a challenge will open a window without a button press",
+		"attemptsPerOrigin", autoSolveAttemptsPerOrigin)
+	return auto
+}
+
+// autoSolveAttemptsPerOrigin is the allowance the automatic path has per origin
+// for the life of the daemon. Three tolerates a site that is merely fussy today
+// without letting a hopeless one interrupt the reader repeatedly.
+const autoSolveAttemptsPerOrigin = 3
+
+// onChallenged runs on the request path, so it does the deciding here and the
+// solving on its own goroutine. A blocked request is already parked and waiting;
+// blocking it further would defeat the point.
+func (a *autoSolver) onChallenged(sourceID, origin string) {
+	if a == nil || origin == "" {
+		return
+	}
+	if !a.claim(origin) {
+		return
+	}
+	if !a.budget.Take(origin) {
+		a.release(origin)
+		slog.Info("auto-solve has spent its attempts for this origin, leaving it to the reader",
+			"origin", origin, "limit", a.budget.Limit())
+		return
+	}
+	go func() {
+		defer a.release(origin)
+		a.solve(sourceID, origin)
+	}()
+}
+
+// claim reserves an origin for one solve and reports whether it was free.
+func (a *autoSolver) claim(origin string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.inFlight[origin] {
+		return false
+	}
+	a.inFlight[origin] = true
+	return true
+}
+
+func (a *autoSolver) release(origin string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.inFlight, origin)
+}
+
+// solve opens the window, stores what it captured, and verifies it. A verified
+// result clears the origin's allowance because the origin is demonstrably
+// working again; a capture the site refused leaves the allowance spent.
+func (a *autoSolver) solve(sourceID, origin string) {
+	if err := a.challenger.Available(context.Background()); err != nil {
+		slog.Warn("auto-solve skipped, the browser cannot be presented", "origin", origin, "err", err)
+		return
+	}
+
+	slog.Info("auto-solve opening a window", "source", sourceID, "origin", origin)
+	result, err := a.challenger.Solve(context.Background(), "https://"+origin+"/")
+	if err != nil || result == nil {
+		slog.Warn("auto-solve did not produce a result", "origin", origin, "err", err)
+		return
+	}
+	if !result.Captured {
+		slog.Info("auto-solve captured nothing", "origin", origin, "needsInteraction", result.NeedsInteraction)
+		return
+	}
+
+	if err := a.engine.SubmitClearanceBundle(sourceID, db.ClearanceBundle{
+		Origin:    origin,
+		Cookies:   result.Capture.Cookies,
+		UserAgent: result.Capture.UserAgent,
+		SecChUa:   result.Capture.SecChUa,
+	}); err != nil {
+		slog.Warn("auto-solve could not store what it captured", "origin", origin, "err", err)
+		return
+	}
+
+	verified, err := a.engine.ProbeClearance(context.Background(), sourceID, origin)
+	if err != nil {
+		slog.Warn("auto-solve could not verify what it captured", "origin", origin, "err", err)
+		return
+	}
+	if verified {
+		a.budget.Clear(origin)
+		slog.Info("auto-solve cleared the challenge", "origin", origin, "cookies", len(result.Capture.Cookies))
+		return
+	}
+	slog.Info("auto-solve stored material the site has not accepted yet", "origin", origin)
+}
 
 // AttemptBudget bounds how many times the daemon opens a solve window on its own
 // for one origin.

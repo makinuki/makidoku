@@ -665,6 +665,19 @@ func (e *Engine) SourceBaseURL(sourceID string) (string, error) {
 	return row.BaseURL, nil
 }
 
+// SetChallengeHook registers a host callback told when a request starts waiting
+// for clearance. It is the seam an automatic solver uses, and it is optional.
+func (e *Engine) SetChallengeHook(hook func(sourceID, origin string)) {
+	e.clearance.SetChallengeHook(hook)
+}
+
+// ChallengeBroker exposes the clearance broker so a host can register a
+// challenge hook. It is exported for wiring only; the broker's own methods
+// remain the API.
+func (e *Engine) ChallengeBroker() *ClearanceBroker {
+	return e.clearance
+}
+
 // ClearanceBundles returns the stored clearance material for a source. Cookie
 // values are never returned through the API.
 func (e *Engine) ClearanceBundles(sourceID string) ([]ClearanceSummary, error) {

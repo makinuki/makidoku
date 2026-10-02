@@ -30,20 +30,25 @@ const (
 	agentGrace = 3 * time.Second
 	// agentPollInterval is how often that wait re-reads the latest report.
 	agentPollInterval = 100 * time.Millisecond
+	// jarQuietPeriod is how long the jar must be still before it is taken as the
+	// whole answer. A guard that sets an identifier and then a granting cookie a
+	// moment later would otherwise have the first of the two mistaken for the
+	// result.
+	jarQuietPeriod = 4 * time.Second
 )
 
-// jarChanged reports whether the jar gained a name the earlier read did not have.
+// jarChanged reports whether the jar moved since an earlier read. Both a new
+// name and a rewritten value count, because a guard may issue a value in stages
+// under one name.
 //
-// Values are not compared, because a guard may rewrite the value it issued
-// without that meaning anything on its own. A new name is the signal that the
-// site issued material in response to the challenge.
-//
-// Any new name counts. Which one matters is decided by whether a request carrying
-// the jar gets through, not by the name itself: a guard that is not Cloudflare
-// issues its own cookie, and naming it here would mean one solver per guard.
+// Values are compared rather than only names so that a guard which sets its
+// material early and rewrites it later is still seen to be working.
 func jarChanged(before, after map[string]string) bool {
-	for name := range after {
-		if _, existed := before[name]; !existed {
+	if len(before) != len(after) {
+		return true
+	}
+	for name, value := range after {
+		if previous, existed := before[name]; !existed || previous != value {
 			return true
 		}
 	}
@@ -94,6 +99,12 @@ func (s *Solver) Solve(ctx context.Context, origin string) (*Result, error) {
 	ticker := time.NewTicker(solvePollInterval)
 	defer ticker.Stop()
 
+	// last is the most recent jar, quietSince marks when it last moved, and
+	// settled says the jar has been still long enough to be the whole answer.
+	last := baseline
+	var quietSince time.Time
+	settled := false
+
 	for {
 		state := sink.current()
 
@@ -101,7 +112,20 @@ func (s *Solver) Solve(ctx context.Context, origin string) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		if jarChanged(baseline.jar, snapshot.jar) {
+		// A guard issues material in steps: an identifier first, then the cookie
+		// that actually grants access. The first new name is not the answer, it is
+		// the answer starting, so polling continues until the jar stops changing
+		// and the whole sequence is collected rather than whichever cookie landed
+		// first.
+		moved := jarChanged(last.jar, snapshot.jar)
+		last = snapshot
+		if moved {
+			if quietSince.IsZero() {
+				quietSince = time.Now()
+			}
+			settled = time.Since(quietSince) > jarQuietPeriod
+		}
+		if jarChanged(baseline.jar, last.jar) && settled {
 			if state.UserAgent == "" {
 				if waited := sink.waitForAgent(ctx, agentGrace); waited != nil {
 					state = *waited
@@ -111,7 +135,7 @@ func (s *Solver) Solve(ctx context.Context, origin string) (*Result, error) {
 				Captured: true,
 				Capture: Capture{
 					Origin:    origin,
-					Cookies:   snapshot.jar,
+					Cookies:   last.jar,
 					UserAgent: state.UserAgent,
 					SecChUa:   state.ClientHints,
 				},

@@ -297,3 +297,20 @@ type message struct {
 }
 
 type point struct{ x, y int32 }
+
+// startHost creates the window the browser will be driven from. It is hidden
+// until a solve needs it on screen.
+func startHost() (threadHost, error) {
+	window, err := newHostWindow(false)
+	if err != nil {
+		return nil, err
+	}
+	return window, nil
+}
+
+// run pumps messages for the life of the solver and releases the window on the
+// way out.
+func (w *hostWindow) run() {
+	w.pump()
+	w.destroy()
+}

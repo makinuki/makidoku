@@ -81,7 +81,7 @@ func teardown() error {
 // and keeps one source clearance from being replayed against another.
 func (s *Solver) openView(ctx context.Context, show bool) error {
 	return s.onSolver(func() error {
-		window := s.window
+		window := s.host()
 		if window == nil {
 			return fmt.Errorf("the solver window is not available")
 		}
@@ -130,7 +130,7 @@ func (s *Solver) openView(ctx context.Context, show bool) error {
 // because destroying it would stop the pump this view depends on.
 func (s *Solver) closeView(ctx context.Context) {
 	_ = s.onSolver(func() error {
-		window := s.window
+		window := s.host()
 		if window == nil || window.view == nil {
 			return nil
 		}
@@ -154,11 +154,11 @@ func (s *Solver) readCookies(ctx context.Context, origin string) (cookieSnapshot
 	go func() {
 		s.onThread(func() {
 			defer close(issued)
-			if s.window == nil || s.window.view == nil {
+			if s.host() == nil || s.host().view == nil {
 				result <- cookieSnapshot{jar: map[string]string{}}
 				return
 			}
-			manager, err := s.window.cookieManager()
+			manager, err := s.host().cookieManager()
 			if err != nil {
 				result <- cookieSnapshot{jar: map[string]string{}}
 				return
@@ -190,10 +190,10 @@ func (s *Solver) readCookies(ctx context.Context, origin string) (cookieSnapshot
 // the read path returns what the write path stored.
 func (s *Solver) writeCheckCookie(ctx context.Context) error {
 	return s.onSolver(func() error {
-		if s.window == nil || s.window.view == nil {
+		if s.host() == nil || s.host().view == nil {
 			return fmt.Errorf("no view is open")
 		}
-		manager, err := s.window.cookieManager()
+		manager, err := s.host().cookieManager()
 		if err != nil {
 			return err
 		}
@@ -242,4 +242,38 @@ func (s *Solver) checkScriptInjection(ctx context.Context) error {
 	case <-time.After(scriptProbeWait):
 		return fmt.Errorf("self check: the view did not run the injected script")
 	}
+}
+
+// beginSolve opens a visible view, installs the page reporter, and navigates to
+// the origin.
+//
+// The window is always shown. Whether it opens on the daemon own initiative or
+// because the user pressed a button is the caller decision and happens before
+// this; once here, the solve path is the same either way.
+func (s *Solver) beginSolve(origin string, sink *reports) error {
+	if err := s.openView(context.Background(), true); err != nil {
+		return err
+	}
+	return s.onSolver(func() error {
+		window := s.host()
+		if window == nil || window.view == nil {
+			return fmt.Errorf("no view is open")
+		}
+		window.view.MessageCallback = func(message string, _ *edge.ICoreWebView2, _ *edge.ICoreWebView2WebMessageReceivedEventArgs) {
+			sink.store(parsePageState(message))
+		}
+		// The script is added before navigating so it is present on the challenge
+		// document as well as on whatever the challenge redirects to.
+		window.view.Init(pageReportScript)
+		window.view.Navigate(origin)
+		return nil
+	})
+}
+
+// host returns the solver window in its concrete type. The Solver holds it
+// behind an interface so the package builds where there is no browser, and this
+// is where that indirection is undone.
+func (s *Solver) host() *hostWindow {
+	window, _ := s.window.(*hostWindow)
+	return window
 }

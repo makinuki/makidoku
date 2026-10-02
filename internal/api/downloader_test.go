@@ -57,7 +57,7 @@ func (f *fakeDownloads) Cancel(id int64) error {
 	f.cancelIDs = append(f.cancelIDs, id)
 	return nil
 }
-func (f *fakeDownloads) Retry(id int64) error      { f.retriedID = id; return nil }
+func (f *fakeDownloads) Retry(id int64) error { f.retriedID = id; return nil }
 func (f *fakeDownloads) RetryFailedItems(sourceID string) (int, error) {
 	f.retryFailedSource = sourceID
 	return f.retryFailed, nil
@@ -81,7 +81,7 @@ func (f *fakeDownloads) PausedSources() []string {
 	}
 	return f.pausedSources
 }
-func (f *fakeDownloads) PauseAll() { f.pausedAll = true }
+func (f *fakeDownloads) PauseAll()                 { f.pausedAll = true }
 func (f *fakeDownloads) ResumeAll()                { f.pausedAll = false }
 func (f *fakeDownloads) Paused() bool              { return f.pausedAll }
 func (f *fakeDownloads) CancelAll() (int64, error) { return f.cancelAll, nil }

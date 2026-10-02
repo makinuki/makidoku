@@ -82,6 +82,21 @@ const (
 // cannot resolve, so nothing leaves the machine and no real site is touched.
 const checkOrigin = "https://makidoku.invalid"
 
+// threadHost is the platform part of the solver thread: the window whose message
+// queue the browser is driven from.
+//
+// It is an interface so the Solver compiles on platforms with no embedded
+// browser. Those build a host that reports nothing is available.
+type threadHost interface {
+	// run pumps messages until the thread is asked to stop. It occupies the
+	// solver thread, which is why work is posted rather than run directly.
+	run()
+	// runTask runs a closure on the thread and waits for it to finish.
+	runTask(func())
+	// postClose asks the thread to stop.
+	postClose()
+}
+
 // Solver owns the thread the embedded browser lives on.
 //
 // The window and its message pump exist for the life of the solver. The browser
@@ -93,7 +108,7 @@ type Solver struct {
 	// window is set by the solver thread once it exists. It is read by callers
 	// that post work, which is safe because it is only written before the pump
 	// starts and never changes afterwards.
-	window *hostWindow
+	window threadHost
 
 	// stopped is closed once the solver thread has finished.
 	stopped chan struct{}
@@ -144,7 +159,7 @@ func (s *Solver) run() {
 		s.setInitError(err)
 		return
 	}
-	window, err := newHostWindow(false)
+	window, err := startHost()
 	if err != nil {
 		s.setInitError(err)
 		return
@@ -154,8 +169,7 @@ func (s *Solver) run() {
 	// as messages, so releasing callers here is safe: the pump will drain them.
 	close(s.ready)
 
-	window.pump()
-	window.destroy()
+	window.run()
 }
 
 func (s *Solver) setInitError(err error) {

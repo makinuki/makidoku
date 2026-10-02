@@ -1,8 +1,10 @@
 package solver
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
+	"time"
 )
 
 // pageState is what the injected script reports about the document in the view.
@@ -116,4 +118,30 @@ func (r *reports) current() pageState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.latest
+}
+
+// waitForAgent returns the first report carrying a user agent, or nil when none
+// arrives before the deadline.
+//
+// The clearance cookie is written by the network stack while the page report
+// travels back as a message, so the two can arrive in either order. Returning
+// the moment the cookie appears would therefore sometimes store the cookie
+// without the identity it was issued to, and a clearance replayed under the
+// wrong agent is the most common reason a replay fails.
+func (r *reports) waitForAgent(ctx context.Context, grace time.Duration) *pageState {
+	deadline := time.Now().Add(grace)
+	for {
+		state := r.current()
+		if state.UserAgent != "" {
+			return &state
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(agentPollInterval):
+		}
+	}
 }

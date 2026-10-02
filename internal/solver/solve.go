@@ -19,6 +19,12 @@ const (
 	// interstitial renders immediately, so substantial content this soon means the
 	// site served the request rather than challenging it.
 	settleDelay = 4 * time.Second
+	// agentGrace bounds the wait for the page to report the identity the clearance
+	// was issued to. It is short because the cookie is usually accompanied by a
+	// report already, so the wait is only ever paid when the message is late.
+	agentGrace = 3 * time.Second
+	// agentPollInterval is how often that wait re-reads the latest report.
+	agentPollInterval = 100 * time.Millisecond
 )
 
 // ErrSolveAbandoned reports that the attempt ended without clearance. It is a
@@ -64,6 +70,14 @@ func (s *Solver) Solve(ctx context.Context, origin string) (*Result, error) {
 			return nil, err
 		}
 		if _, ok := snapshot.jar[ClearanceName]; ok {
+			// The cookie can be written before the page has reported in, so a
+			// short bounded wait is taken for the identity rather than returning
+			// a bundle that will replay under the wrong agent.
+			if state.UserAgent == "" {
+				if waited := sink.waitForAgent(ctx, agentGrace); waited != nil {
+					state = *waited
+				}
+			}
 			return &Result{
 				Captured: true,
 				Capture: Capture{

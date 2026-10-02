@@ -67,6 +67,9 @@ type Server struct {
 	// onAutoSolveChanged is told when the auto-solve preference is written, so the
 	// change applies to the running daemon rather than the next start.
 	onAutoSolveChanged func(bool)
+	// onUserAgentChanged is told when the browser identity is written, so a
+	// change applies to the running daemon rather than the next start.
+	onUserAgentChanged func(string)
 	// A solve already in flight, keyed by origin. A second window for one origin
 	// would show the reader two windows answering a single challenge, so a repeat
 	// request for the same origin is refused while the first is open.
@@ -175,6 +178,12 @@ const autoSolveSettingKey = "anti_bot.auto_solve"
 // changes, so the daemon can apply it without waiting for a restart.
 func (s *Server) SetAutoSolveObserver(fn func(bool)) {
 	s.onAutoSolveChanged = fn
+}
+
+// SetUserAgentObserver registers a callback told when the browser identity
+// changes, so the daemon applies it without waiting for a restart.
+func (s *Server) SetUserAgentObserver(fn func(string)) {
+	s.onUserAgentChanged = fn
 }
 
 // SetChallenger attaches the component that presents anti-bot challenges in a

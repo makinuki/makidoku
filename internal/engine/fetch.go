@@ -9,6 +9,8 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+
+	"github.com/makinuki/makidoku/internal/settings"
 	"sync"
 	"time"
 
@@ -67,6 +69,9 @@ type Fetcher struct {
 	timeout   time.Duration
 	storage   Storage
 	resolver  ChallengeResolver
+	// userAgent is presented when a request carries no clearance and no agent of
+	// its own, so the transport never identifies itself as Go.
+	userAgent string
 
 	mu      sync.Mutex
 	clients map[string]*http.Client
@@ -100,6 +105,7 @@ func NewFetcher(storage Storage, resolver ChallengeResolver) *Fetcher {
 		timeout:      defaultFetchTimeout,
 		storage:      storage,
 		resolver:     resolver,
+		userAgent:    settings.DefaultUserAgent,
 		clients:      map[string]*http.Client{},
 		imageClients: map[string]*http.Client{},
 		jars:         map[string]*cookiejar.Jar{},
@@ -423,6 +429,19 @@ func (f *Fetcher) attempt(ctx context.Context, sourceID, method string, req Http
 	return f.attemptWith(ctx, sourceID, method, req, f.client)
 }
 
+// SetUserAgent changes the browser identity presented when a request carries no
+// clearance and no agent of its own, so a value written in the interface takes
+// effect without a restart. An empty value restores the default.
+func (f *Fetcher) SetUserAgent(agent string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if strings.TrimSpace(agent) == "" {
+		f.userAgent = settings.DefaultUserAgent
+		return
+	}
+	f.userAgent = agent
+}
+
 func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req HttpRequest, pick clientPicker) (*rawHTTPResponse, string, *HttpError) {
 	target, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil || !target.IsAbs() || (target.Scheme != "http" && target.Scheme != "https") {
@@ -465,9 +484,10 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 		httpReq.Header.Set("User-Agent", bundle.UserAgent)
 	} else if httpReq.Header.Get("User-Agent") == "" {
 		// The transport otherwise writes a "Go-http-client/1.1" default that
-		// identifies the host to the origin. Assigning an empty slice suppresses
-		// the header while leaving a plugin-supplied agent in place.
-		httpReq.Header["User-Agent"] = nil
+		// identifies the host to the origin. The configured browser identity is
+		// used instead, so an origin that refuses a Go transport on sight is not
+		// refused before a challenge is ever involved.
+		httpReq.Header.Set("User-Agent", f.userAgent)
 	}
 
 	httpResp, err := pick(sourceID).Do(httpReq)

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+
+	"github.com/makinuki/makidoku/internal/settings"
 	"testing"
 
 	"github.com/makinuki/makidoku/internal/db"
@@ -203,7 +205,7 @@ func TestFetchCapsResponseBody(t *testing.T) {
 	}
 }
 
-func TestFetchSendsNoDefaultUserAgent(t *testing.T) {
+func TestFetchPresentsTheConfiguredBrowserIdentity(t *testing.T) {
 	seen := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen <- r.Header.Get("User-Agent")
@@ -214,11 +216,22 @@ func TestFetchSendsNoDefaultUserAgent(t *testing.T) {
 	if _, herr := fetcher.Do(context.Background(), "mangadex", HttpRequest{URL: server.URL}); herr != nil {
 		t.Fatalf("host error: %+v", herr)
 	}
-	// The host no longer supplies an agent of its own. A captured browser
-	// identity is worth more than a constant that drifts out of date, so an
-	// absent header is left absent rather than filled in.
-	if got := <-seen; got != "" {
-		t.Fatalf("user agent = %q, want empty", got)
+	// The host supplies no agent of its own, so the configured browser identity
+	// is presented rather than the transport naming itself as Go-http-client.
+	// The value is editable because a constant drifts out of date; the reader
+	// changes it rather than the build being frozen at the wrong one.
+	if got := <-seen; got != settings.DefaultUserAgent {
+		t.Fatalf("user agent = %q, want the configured browser identity %q",
+			got, settings.DefaultUserAgent)
+	}
+
+	// A configured agent replaces the default for later requests.
+	fetcher.SetUserAgent("chosen-agent")
+	if _, herr := fetcher.Do(context.Background(), "mangadex", HttpRequest{URL: server.URL}); herr != nil {
+		t.Fatalf("host error: %+v", herr)
+	}
+	if got := <-seen; got != "chosen-agent" {
+		t.Fatalf("user agent = %q, want the configured agent", got)
 	}
 
 	// A plugin supplied agent is passed through unchanged.

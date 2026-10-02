@@ -33,6 +33,13 @@ type Options struct {
 	// ChallengeWait is how long a blocked GET or HEAD waits for anti-bot
 	// clearance to be submitted before it fails. Zero fails immediately.
 	ChallengeWait time.Duration
+	// UserAgent is the browser identity presented when a request carries no
+	// clearance of its own. Empty falls back to settings.DefaultUserAgent.
+	//
+	// It matters for two reasons: an origin that refuses a Go transport before any
+	// challenge is involved, and the fact that a clearance cookie is bound to the
+	// identity that obtained it, so the solve window has to present the same one.
+	UserAgent string
 }
 
 // Engine hosts installed sources and exposes their exports to the rest of the
@@ -94,6 +101,15 @@ type SourceChallenge struct {
 	LastSeen int64 `json:"lastSeen"`
 	// Message explains the state in terms a reader can act on.
 	Message string `json:"message"`
+}
+
+// userAgentNotBlank requires something to be present. An empty identity is
+// rejected because it would put the transport's own default back on the wire.
+func userAgentNotBlank(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return errors.New("a browser identity is required")
+	}
+	return nil
 }
 
 // CatalogEntry is a registry entry annotated with local state.
@@ -663,6 +679,12 @@ func (e *Engine) SourceBaseURL(sourceID string) (string, error) {
 		return "", err
 	}
 	return row.BaseURL, nil
+}
+
+// SetUserAgent changes the browser identity used for later requests, so a value
+// written in the interface takes effect without a restart.
+func (e *Engine) SetUserAgent(agent string) {
+	e.fetcher.SetUserAgent(agent)
 }
 
 // SetChallengeHook registers a host callback told when a request starts waiting

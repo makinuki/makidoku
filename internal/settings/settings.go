@@ -199,6 +199,33 @@ func enum(values ...string) func(any) error {
 	}
 }
 
+// DefaultUserAgent is the browser identity presented when no clearance has been
+// obtained.
+//
+// It is editable because a stale agent is a real problem and choosing a
+// replacement is the reader's decision rather than something a build should
+// freeze. Without it the transport announces itself as Go-http-client, which many
+// origins refuse before any challenge is involved at all.
+const DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+	"(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+// userAgentDefaultJSON is DefaultUserAgent in the JSON form a schema stores. A
+// schema default is a JSON literal rather than a bare Go string, so a bare one
+// fails to decode when the settings are read.
+var userAgentDefaultJSON, _ = json.Marshal(DefaultUserAgent)
+
+// UserAgentKey is the stored preference holding the browser identity.
+const UserAgentKey = "anti_bot.user_agent"
+
+// userAgentNotBlank requires something to be present. An empty identity is
+// rejected because it would put the transport's own default back on the wire.
+func userAgentNotBlank(value any) error {
+	if s, ok := value.(string); !ok || strings.TrimSpace(s) == "" {
+		return errors.New("a browser identity is required")
+	}
+	return nil
+}
+
 func boolean(value any) error {
 	if _, ok := value.(bool); !ok {
 		return errors.New("value must be boolean")
@@ -361,6 +388,7 @@ var definitionList = []Definition{
 	{Key: "browse.chapter_languages", Type: "string", Default: `""`, Description: "Default chapter languages for sources without their own selection", Validate: languageList()},
 	{Key: "privacy.incognito", Type: "boolean", Default: "false", Description: "Start in incognito mode, which does not record reading activity", Validate: boolean},
 	{Key: "anti_bot.auto_solve", Type: "boolean", Default: "false", Description: "Open a browser window by itself when a site checks for a browser, instead of waiting for you to press the button", Validate: boolean},
+	{Key: "anti_bot.user_agent", Type: "string", Default: string(userAgentDefaultJSON), Description: "Browser identity sent with every request. Change it only to a real browser identity you are willing to be identified as, because clearance is tied to it", Validate: userAgentNotBlank},
 	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "How much detail is written to the log", Validate: enum("debug", "info", "warn", "error")},
 	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Days to keep processed page images", Validate: number(1, 3650)},
 	{Key: "library.view.sort", Type: "string", Default: `"recent"`, Description: "Library ordering", Validate: enum("recent", "title", "added", "last_read", "unread"), Hidden: true},

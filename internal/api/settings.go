@@ -94,6 +94,9 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		// takes effect for the challenge that prompted the reader to look at it.
 		s.onAutoSolveChanged(raw == "true")
 	}
+	if key == settings.UserAgentKey && s.onUserAgentChanged != nil {
+		s.onUserAgentChanged(raw)
+	}
 	entries, err := s.settings.List()
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)

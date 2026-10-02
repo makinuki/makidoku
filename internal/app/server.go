@@ -95,6 +95,11 @@ func New(cfg config.Config) (*Server, error) {
 			slog.Warn("daemon log level invalid, using info", "err", setErr)
 		}
 	}
+	// The browser identity is read once here and applied to the fetcher, so every
+	// request presents it rather than the transport naming itself as Go.
+	if agent, err := preferences.Get(settings.UserAgentKey); err == nil {
+		eng.SetUserAgent(agent)
+	}
 	workers := cfg.DownloadWorkers
 	if configuredWorkers, settingErr := preferences.Int("downloads.concurrent"); settingErr == nil && configuredWorkers > 0 {
 		workers = configuredWorkers
@@ -174,6 +179,7 @@ func New(cfg config.Config) (*Server, error) {
 		autoSolver.SetEnabled(raw == "true")
 	}
 	server.SetAutoSolveObserver(autoSolver.SetEnabled)
+	server.SetUserAgentObserver(eng.SetUserAgent)
 
 	sweepOnce(imageCache, repo.ListCachedPaths)
 	server.Mount(router)

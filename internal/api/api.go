@@ -138,6 +138,33 @@ func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQue
 	return server
 }
 
+// solverCapability reports whether this machine can present a challenge in a
+// browser.
+//
+// Availability is a property of the machine rather than of a source, so it is
+// reported on its own. A reader needs it to decide between offering the browser
+// check and falling back to pasting a cookie by hand, and asking that question
+// per source would answer it the same way every time.
+type solverCapability struct {
+	// Available reports whether a solve window can be presented at all.
+	Available bool `json:"available"`
+	// Reason explains an unavailable state in terms a reader can act on.
+	Reason string `json:"reason,omitempty"`
+}
+
+// solverCapabilityRoute reports whether the challenge solver can be used.
+func (s *Server) solverCapabilityRoute(w http.ResponseWriter, r *http.Request) {
+	capability := solverCapability{Available: true}
+	if s.challenger == nil {
+		capability.Available = false
+		capability.Reason = "no challenge solver is attached to this daemon"
+	} else if err := s.challenger.Available(r.Context()); err != nil {
+		capability.Available = false
+		capability.Reason = err.Error()
+	}
+	writeJSON(w, http.StatusOK, capability)
+}
+
 // SetChallenger attaches the component that presents anti-bot challenges in a
 // browser. Without it the solve route reports that solving is unavailable, and
 // the manual paste route remains the way to supply clearance.
@@ -402,6 +429,7 @@ func (s *Server) SetUpdater(service *updater.Service) { s.updater = service }
 func (s *Server) Mount(r chi.Router) {
 	r.Route("/api", func(api chi.Router) {
 		api.Get("/health", s.health)
+		api.Get("/challenge-solver", s.solverCapabilityRoute)
 		s.mountLibrary(api)
 		s.mountMetadata(api)
 		s.mountPrivacy(api)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -583,6 +584,62 @@ func (e *Engine) SubmitClearance(sourceID, origin, cookie, userAgent string) err
 	// Persist under the canonical id: the fetcher always reads by id, while
 	// callers may pass a plugin key or alias.
 	return e.clearance.Submit(row.ID, origin, cookie, userAgent)
+}
+
+// SubmitClearanceBundle stores a full captured bundle for a source and origin.
+//
+// It is the lossless counterpart to SubmitClearance. A bundle carries the whole
+// cookie jar together with the client hints, because a clearance cookie is
+// commonly issued alongside others and a jar missing them is re-challenged
+// immediately. Submitting a single cookie stays correct for a value pasted by
+// hand, which is all that method is for.
+func (e *Engine) SubmitClearanceBundle(sourceID string, bundle dbstore.ClearanceBundle) error {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return err
+	}
+	if bundle.Origin == "" {
+		bundle.Origin = originOf(row.BaseURL)
+	}
+	// Persist under the canonical id, for the reason SubmitClearance does.
+	return e.clearance.SubmitBundle(row.ID, bundle)
+}
+
+// ProbeClearance reports whether the stored clearance lets the fetcher reach an
+// origin, and records the outcome against the bundle.
+//
+// A captured cookie proves nothing on its own. It can be stale, it can have been
+// issued to an identity the fetcher no longer presents, and a site can serve one
+// request while challenging the next. The only evidence that clearance works is
+// a request that succeeds, so a caller is expected to ask rather than assume.
+func (e *Engine) ProbeClearance(ctx context.Context, sourceID, origin string) (bool, error) {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return false, err
+	}
+	if origin == "" {
+		origin = originOf(row.BaseURL)
+	}
+
+	response, httpErr := e.fetcher.Do(ctx, row.ID, HttpRequest{
+		URL:    "https://" + origin + "/",
+		Method: "GET",
+	})
+	if httpErr != nil {
+		// A challenge here means the material did not help. It is recorded so the
+		// button comes back rather than the bundle sitting there looking usable.
+		_ = e.clearance.MarkChallenged(row.ID, origin)
+		return false, nil
+	}
+
+	reachable := response.Status == http.StatusOK &&
+		Classify(response.Status, response.Headers, []byte(response.Body)) == ClassNone
+	if reachable {
+		_ = e.clearance.MarkUsable(row.ID, origin)
+	} else {
+		_ = e.clearance.MarkChallenged(row.ID, origin)
+	}
+	return reachable, nil
 }
 
 // ClearanceBundles returns the stored clearance material for a source. Cookie

@@ -7,6 +7,7 @@ import {
   Library,
   Palette,
   RefreshCw,
+  ShieldCheck,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -21,6 +22,7 @@ export type SettingsSectionId =
   | "browse"
   | "data"
   | "privacy"
+  | "anti_bot"
   | "advanced";
 
 export type SettingsSection = {
@@ -88,6 +90,13 @@ export const settingsSections: SettingsSection[] = [
     subtitle: "Incognito mode and recorded activity",
     icon: EyeOff,
     prefixes: ["privacy"],
+  },
+  {
+    id: "anti_bot",
+    title: "Browser check",
+    subtitle: "Answering a site check in a window",
+    icon: ShieldCheck,
+    prefixes: ["anti_bot"],
   },
   {
     id: "advanced",

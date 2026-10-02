@@ -2275,6 +2275,11 @@ describe("settings credential feedback", () => {
         if (path === "/api/catalog" || path === "/api/categories" || path === "/api/trackers") {
           return Response.json([]);
         }
+        if (path === "/api/challenge-solver") {
+          // Reported unavailable so the paste form renders. This test drives the
+          // manual route, which is the fallback shown when no browser is present.
+          return Response.json({ available: false, reason: "no browser runtime" });
+        }
         return Response.json([]);
       }),
     );

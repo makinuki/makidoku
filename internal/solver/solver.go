@@ -129,6 +129,11 @@ type Solver struct {
 	// starts and never changes afterwards.
 	window threadHost
 
+	// viewHost is the window currently holding a browser, when a solve has one
+	// open. It is created per solve and destroyed with it, and is only ever
+	// touched on the solver thread.
+	viewHost *hostWindow
+
 	// stopped is closed once the solver thread has finished.
 	stopped chan struct{}
 	// ready is closed once the window exists and the pump is about to run. Work
@@ -204,17 +209,18 @@ func (s *Solver) run() {
 		s.setInitError(err)
 		return
 	}
-	window, err := startHost()
+	thread, err := startThread()
 	if err != nil {
 		s.setInitError(err)
 		return
 	}
-	s.window = window
-	// The window exists but the pump has not entered its loop yet. Work is queued
-	// as messages, so releasing callers here is safe: the pump will drain them.
+	s.window = thread
+	// The thread and its apartment exist but the loop has not entered yet. Work is
+	// queued as messages, so releasing callers here is safe: the loop will drain
+	// them.
 	close(s.ready)
 
-	window.run()
+	thread.run()
 }
 
 func (s *Solver) setInitError(err error) {
@@ -229,8 +235,8 @@ func (s *Solver) setInitError(err error) {
 // completes asynchronously has to be issued here and awaited by the caller, or
 // the thread responsible for producing the answer is the thread being blocked.
 func (s *Solver) onThread(fn func()) {
-	// Waiting for readiness first means a caller that arrives during start-up
-	// waits for the window rather than posting to one that does not exist.
+	// Waiting for readiness first means a caller that arrives during start-up waits
+	// for the thread rather than posting to one that is not running.
 	select {
 	case <-s.ready:
 	case <-s.stopped:

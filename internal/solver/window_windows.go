@@ -16,19 +16,20 @@ import (
 // the thread that created the window.
 
 var (
-	user32               = windows.NewLazySystemDLL("user32.dll")
-	procRegisterClassEx  = user32.NewProc("RegisterClassExW")
-	procCreateWindowEx   = user32.NewProc("CreateWindowExW")
-	procDestroyWindow    = user32.NewProc("DestroyWindow")
-	procShowWindow       = user32.NewProc("ShowWindow")
-	procUpdateWindow     = user32.NewProc("UpdateWindow")
-	procGetMessage       = user32.NewProc("GetMessageW")
-	procTranslateMessage = user32.NewProc("TranslateMessage")
-	procDispatchMessage  = user32.NewProc("DispatchMessageW")
-	procDefWindowProc    = user32.NewProc("DefWindowProcW")
-	procPostMessage      = user32.NewProc("PostMessageW")
-	procSetForeground    = user32.NewProc("SetForegroundWindow")
-	procLoadCursor       = user32.NewProc("LoadCursorW")
+	user32                = windows.NewLazySystemDLL("user32.dll")
+	procRegisterClassEx   = user32.NewProc("RegisterClassExW")
+	procCreateWindowEx    = user32.NewProc("CreateWindowExW")
+	procDestroyWindow     = user32.NewProc("DestroyWindow")
+	procShowWindow        = user32.NewProc("ShowWindow")
+	procUpdateWindow      = user32.NewProc("UpdateWindow")
+	procGetMessage        = user32.NewProc("GetMessageW")
+	procTranslateMessage  = user32.NewProc("TranslateMessage")
+	procDispatchMessage   = user32.NewProc("DispatchMessageW")
+	procDefWindowProc     = user32.NewProc("DefWindowProcW")
+	procPostMessage       = user32.NewProc("PostMessageW")
+	procPostThreadMessage = user32.NewProc("PostThreadMessageW")
+	procSetForeground     = user32.NewProc("SetForegroundWindow")
+	procLoadCursor        = user32.NewProc("LoadCursorW")
 )
 
 // loadStandardCursor returns the standard arrow. A missing cursor is cosmetic, so
@@ -61,21 +62,16 @@ const (
 )
 
 // hostWindow is the parent the browser is embedded in.
+//
+// One window exists per solve and is destroyed with the view it holds. The
+// browser library offers no way to release its own objects, so destroying the
+// parent is the only teardown available: the browser's window is a child of it
+// and goes with it.
 type hostWindow struct {
 	hwnd windows.Handle
 	// view is the browser embedded in the window. It is only ever touched on the
 	// solver thread.
 	view *edge.Chromium
-
-	// pumped is closed once the message loop has finished, so a caller can wait
-	// for the window to be gone instead of assuming it.
-	pumped chan struct{}
-
-	// task and done carry one submitted closure to the pump. They are written by
-	// the submitting goroutine and read by the pump, so access is guarded.
-	mu   sync.Mutex
-	task func()
-	done chan struct{}
 }
 
 // cookieManager returns the browser's cookie manager. It must be called on the
@@ -161,7 +157,7 @@ func newHostWindow(show bool) (*hostWindow, error) {
 		procSetForeground.Call(hwnd)
 		procUpdateWindow.Call(hwnd)
 	}
-	return &hostWindow{hwnd: windows.Handle(hwnd), pumped: make(chan struct{})}, nil
+	return &hostWindow{hwnd: windows.Handle(hwnd)}, nil
 }
 
 // show reveals the window and brings it to the front, so a challenge that needs a
@@ -179,11 +175,25 @@ func (w *hostWindow) hide() {
 	procShowWindow.Call(uintptr(w.hwnd), swHide)
 }
 
-// pump dispatches window messages until the window is asked to close. The browser
-// requires this: without a message loop on the owning thread, navigation and
-// script execution stall.
-func (w *hostWindow) pump() {
-	defer close(w.pumped)
+// solverThread is the pinned thread the browser is driven from.
+//
+// It owns the message loop for the whole life of the solver. Windows are created
+// and destroyed inside the loop rather than owning it, so a window can be torn
+// down with the browser view it held and a later solve can open another.
+type solverThread struct {
+	id uint32
+
+	mu   sync.Mutex
+	task func()
+	done chan struct{}
+}
+
+// run pumps the thread queue until the thread is asked to stop.
+//
+// The queue is read with a null window handle, which is what makes one loop
+// serve both the browser and submitted work: the browser's apartment posts its
+// own messages here, and a submitted task is posted here too.
+func (t *solverThread) run() {
 	var msg message
 	for {
 		got, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
@@ -192,13 +202,11 @@ func (w *hostWindow) pump() {
 		}
 		switch msg.id {
 		case wmClose:
-			// Handled here rather than dispatched, so the loop ends without
-			// waiting on a window that is on its way out.
 			return
 		case wmRunTask:
-			w.mu.Lock()
-			task, done := w.task, w.done
-			w.mu.Unlock()
+			t.mu.Lock()
+			task, done := t.task, t.done
+			t.mu.Unlock()
 			if task != nil {
 				task()
 			}
@@ -212,31 +220,26 @@ func (w *hostWindow) pump() {
 	}
 }
 
-// postClose wakes the pump and asks it to stop. The message goes to the window
-// rather than the calling thread's queue, because the loop runs on the thread
-// that owns the window.
-func (w *hostWindow) postClose() {
-	if w.hwnd != 0 {
-		procPostMessage.Call(uintptr(w.hwnd), wmClose, 0, 0)
-	}
+// postClose asks the loop to stop.
+func (t *solverThread) postClose() {
+	procPostThreadMessage.Call(uintptr(t.id), wmClose, 0, 0)
 }
 
-// runTask runs a closure on the pump.
+// runTask runs a closure on the loop.
 //
-// This is how work reaches the browser. The closure is run inside the loop
-// rather than on the submitting goroutine, so it must not wait for anything the
-// loop itself has to deliver.
-func (w *hostWindow) runTask(task func()) {
-	w.mu.Lock()
-	w.task = task
-	w.done = make(chan struct{})
-	done := w.done
-	w.mu.Unlock()
+// This is how work reaches the browser. The closure runs inside the loop rather
+// than on the submitting goroutine, so it must not wait for anything the loop
+// itself has to deliver.
+func (t *solverThread) runTask(task func()) {
+	t.mu.Lock()
+	t.task = task
+	t.done = make(chan struct{})
+	done := t.done
+	t.mu.Unlock()
 
-	if w.hwnd == 0 {
-		return
-	}
-	procPostMessage.Call(uintptr(w.hwnd), wmRunTask, 0, 0)
+	// The message goes to the thread rather than to a window, because no window
+	// has to exist for work to be submitted.
+	procPostThreadMessage.Call(uintptr(t.id), wmRunTask, 0, 0)
 	<-done
 }
 
@@ -298,19 +301,12 @@ type message struct {
 
 type point struct{ x, y int32 }
 
-// startHost creates the window the browser will be driven from. It is hidden
-// until a solve needs it on screen.
-func startHost() (threadHost, error) {
-	window, err := newHostWindow(false)
-	if err != nil {
+// startThread prepares the solver thread. No window is created here: a window
+// belongs to a solve and is destroyed with it, while this thread and its
+// apartment outlive every solve.
+func startThread() (threadHost, error) {
+	if err := initThread(); err != nil {
 		return nil, err
 	}
-	return window, nil
-}
-
-// run pumps messages for the life of the solver and releases the window on the
-// way out.
-func (w *hostWindow) run() {
-	w.pump()
-	w.destroy()
+	return &solverThread{id: windows.GetCurrentThreadId()}, nil
 }

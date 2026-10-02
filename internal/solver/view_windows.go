@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"syscall"
 	"time"
@@ -79,25 +80,57 @@ func teardown() error {
 // thread; only the browser inside it comes and goes. A dedicated profile keeps a
 // clearance the machine already holds from being mistaken for one obtained here,
 // and keeps one source clearance from being replayed against another.
+// openView creates a window for one solve, embeds a browser in it, and shows or
+// hides the window.
+//
+// The window is created here rather than once for the solver, because the browser
+// library cannot release its own objects and destroying the parent window is the
+// only teardown available. Each solve therefore gets a window that goes away
+// with the browser it holds.
 func (s *Solver) openView(ctx context.Context, show bool) error {
-	return s.onSolver(func() error {
-		window := s.host()
+	if s.profileDir != "" {
+		if err := os.MkdirAll(s.profileDir, 0o700); err != nil {
+			return fmt.Errorf("create solver profile: %w", err)
+		}
+	}
+
+	// The window is made in its own pass so the loop returns to GetMessage
+	// between creating it and attaching a browser. Window creation posts messages
+	// that have to be dispatched before a child window is added, and a browser
+	// attached first waits on a window that has not finished being built.
+	if err := s.onSolver(func() error {
+		if s.viewHost != nil {
+			return fmt.Errorf("a view is already open")
+		}
+		window, err := newHostWindow(show)
+		if err != nil {
+			return fmt.Errorf("create solver window: %w", err)
+		}
+		s.viewHost = window
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if err := s.onSolver(func() error {
+		window := s.viewHost
 		if window == nil {
 			return fmt.Errorf("the solver window is not available")
 		}
-		if window.view != nil {
-			return fmt.Errorf("a view is already open")
-		}
-		if s.profileDir != "" {
-			if err := os.MkdirAll(s.profileDir, 0o700); err != nil {
-				return fmt.Errorf("create solver profile: %w", err)
-			}
-		}
-
 		chromium := edge.NewChromium()
 		if chromium == nil {
 			return fmt.Errorf("%w: could not create a browser view", ErrUnavailable)
 		}
+		// The browser library routes every internal failure through one callback
+		// and calls it without a nil check, so an unset callback turns any error it
+		// reports into a call through a null function pointer. Failures here are
+		// logged rather than allowed to end the process; the surrounding calls
+		// return their own errors, which is what a caller acts on.
+		chromium.SetErrorCallback(func(err error) {
+			if err != nil && !errors.Is(err, windows.ERROR_IO_PENDING) {
+				slog.Debug("browser reported an error", "err", err)
+			}
+		})
 		if s.profileDir != "" {
 			chromium.DataPath = s.profileDir
 		}
@@ -109,34 +142,42 @@ func (s *Solver) openView(ctx context.Context, show bool) error {
 		// The view is sized to the client area immediately. Waiting for a later
 		// resize leaves it at its initial bounds, which shows as an empty window.
 		chromium.Resize()
+		window.view = chromium
+		activeView = chromium
 		if show {
-			// The window is raised and focused so a challenge needing a click is
-			// usable straight away rather than hidden behind other work.
-			window.show()
 			if err := chromium.Show(); err != nil {
 				return fmt.Errorf("show browser: %w", err)
 			}
 		} else if err := chromium.Hide(); err != nil {
 			return fmt.Errorf("hide browser: %w", err)
 		}
-
-		window.view = chromium
-		activeView = chromium
 		return nil
-	})
+	}); err != nil {
+		// The window made above is discarded with the same teardown a finished
+		// solve uses, so a failure here leaves nothing behind.
+		s.closeView(ctx)
+		return err
+	}
+	return nil
 }
 
-// closeView releases the browser and hides the window. The window itself stays,
-// because destroying it would stop the pump this view depends on.
+// closeView releases the browser and destroys its window.
+//
+// The browser library keeps no reference it will release, so the window is the
+// teardown: the browser's own window is a child of it and is destroyed with it.
+// Destroying it also ends any further message being dispatched into a view the
+// runtime no longer holds state for. The solver thread and its apartment survive,
+// so a later solve can open another window.
 func (s *Solver) closeView(ctx context.Context) {
 	_ = s.onSolver(func() error {
-		window := s.host()
-		if window == nil || window.view == nil {
+		window := s.viewHost
+		if window == nil {
 			return nil
 		}
+		s.viewHost = nil
 		window.view = nil
 		activeView = nil
-		window.hide()
+		window.destroy()
 		return nil
 	})
 }
@@ -270,10 +311,8 @@ func (s *Solver) beginSolve(origin string, sink *reports) error {
 	})
 }
 
-// host returns the solver window in its concrete type. The Solver holds it
-// behind an interface so the package builds where there is no browser, and this
-// is where that indirection is undone.
+// host returns the window currently holding a browser, if one is open. It is nil
+// between solves, because each solve creates its own window and destroys it.
 func (s *Solver) host() *hostWindow {
-	window, _ := s.window.(*hostWindow)
-	return window
+	return s.viewHost
 }

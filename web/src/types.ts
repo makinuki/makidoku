@@ -190,6 +190,33 @@ export type ClearanceSummary = {
   // replay failing.
   userAgent?: string;
 };
+
+// SolverCapability reports whether this machine can present a challenge in a
+// browser. Availability belongs to the machine rather than to a source, so it is
+// fetched once and decides whether the browser check is offered or whether
+// pasting a cookie by hand is the only route.
+export type SolverCapability = {
+  available: boolean;
+  reason?: string;
+};
+
+// SolveResult is one solve. Captured and verified are separate because they
+// answer different questions: captured says material was read, verified says a
+// request that was previously blocked now succeeds.
+export type SolveResult = {
+  origin: string;
+  captured: boolean;
+  verified: boolean;
+  // needsInteraction describes the window: a challenge was on screen and went
+  // unanswered. That is an expected middle state, not a failure.
+  needsInteraction: boolean;
+  // challenge describes the site: it is still refusing requests. It is never true
+  // at the same time as verified.
+  challenge: boolean;
+  // cookies lists the names that were stored. Values are never returned.
+  cookies: string[];
+  message: string;
+};
 // SourceChallenge is the per-source view of an outstanding browser check.
 export type SourceChallenge = {
   // state is "challenged" when a check can be cleared, or "blocked" when the

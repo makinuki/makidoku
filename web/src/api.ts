@@ -36,6 +36,8 @@
   TachibackupProgress,
   TachibackupReport,
   ClearanceSummary,
+  SolveResult,
+  SolverCapability,
   SourceChallenge,
   TachibackupSummary,
 } from "./types";
@@ -260,6 +262,18 @@ export const api = {
     ),
   clearance: (id: string) =>
     request<ClearanceSummary[]>(`/api/sources/${encodeURIComponent(id)}/clearance`),
+  // solverCapability reports whether this machine can present a challenge in a
+  // browser. It decides whether the browser check is offered at all or whether
+  // pasting a cookie by hand is the only route.
+  solverCapability: () => request<SolverCapability>("/api/challenge-solver"),
+  // solve presents the origin in a visible window and holds the request until it
+  // finishes. The answer carries capture and verification separately, because a
+  // stored cookie is not the same as a site accepting it.
+  solve: (id: string, origin?: string) =>
+    request<SolveResult>(
+      `/api/sources/${encodeURIComponent(id)}/clearance/solve`,
+      { method: "POST", body: JSON.stringify(origin ? { origin } : {}) },
+    ),
   deleteClearance: (id: string, origin?: string) =>
     request<void>(
       `/api/sources/${encodeURIComponent(id)}/clearance${origin ? `?origin=${encodeURIComponent(origin)}` : ""}`,

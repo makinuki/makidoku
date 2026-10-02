@@ -30,6 +30,7 @@ import type {
   MigrationSource,
   SavedSearch,
   SearchResult,
+  SolveResult,
   Source,
 } from "../../types";
 import { MigrationModal } from "../manga/DetailsPage";
@@ -620,6 +621,12 @@ function PluginsTab() {
   const [cookie, setCookie] = useState("");
   const [userAgent, setUserAgent] = useState("");
   const clearanceSection = useRef<HTMLElement | null>(null);
+  // solverAvailable is null until it has been answered, which keeps the browser
+  // check from being hidden during the first paint. Null must not read as
+  // unavailable, because that would offer the paste form before we know better.
+  const [solverAvailable, setSolverAvailable] = useState<boolean | null>(null);
+  const [solvingSource, setSolvingSource] = useState("");
+  const [solveResult, setSolveResult] = useState<SolveResult | null>(null);
 
   // blockedSources lists the sources refused access outright, where a
   // browser check cannot help.
@@ -632,6 +639,38 @@ function PluginsTab() {
   // focusClearanceForm selects a source in the clearance form and scrolls
   // to it. The form is the interim path until a source can be solved in
   // place; the WebView flow reuses the same entry point.
+  // Capability is a property of the machine, so it is fetched once and reused for
+  // every source rather than asked per source.
+  useEffect(() => {
+    let live = true;
+    void api
+      .solverCapability()
+      .then((capability) => {
+        if (live) setSolverAvailable(capability.available);
+      })
+      .catch(() => {
+        // An unanswered capability means the browser check is not offered, which
+        // leaves the paste form as the route rather than showing a control that
+        // cannot work.
+        if (live) setSolverAvailable(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // checkInBrowser opens a visible window on the source's origin and waits for it
+  // to finish. The request is held for the duration, so the checking state is not
+  // a spinner over a short call; it is the window being answered.
+  const checkInBrowser = (sourceId: string) => {
+    setSolvingSource(sourceId);
+    setSolveResult(null);
+    void run("solve", async () => {
+      const result = await api.solve(sourceId);
+      setSolveResult(result);
+    }, "Browser check finished.").finally(() => setSolvingSource(""));
+  };
+
   const focusClearanceForm = (sourceId: string) => {
     if (blockedSources.has(sourceId)) return;
     setCookieSource(sourceId);
@@ -728,17 +767,29 @@ function PluginsTab() {
                 </div>
                 {source.challenge ? (
                   <button
-                    onClick={() => focusClearanceForm(source.id)}
+                    onClick={() => {
+                      // The grid button is the entry point: it selects the source
+                      // for the section and starts the check, so the reader does
+                      // not have to find the form as well.
+                      setCookieSource(source.id);
+                      focusClearanceForm(source.id);
+                      if (source.challenge?.state !== "blocked" && solverAvailable !== false) {
+                        checkInBrowser(source.id);
+                      }
+                    }}
+                    disabled={solvingSource !== ""}
                     title={
                       source.challenge.state === "blocked"
                         ? "This source refused access, and a browser check will not clear it."
                         : `This source is checking your browser (${source.challenge.origins.join(", ")}).`
                     }
-                    className="shrink-0 rounded-lg border border-amber-500/40 px-2 py-1.5 text-xs text-amber-300"
+                    className="shrink-0 rounded-lg border border-amber-500/40 px-2 py-1.5 text-xs text-amber-300 disabled:opacity-40"
                   >
-                    {source.challenge.state === "blocked"
-                      ? "Blocked"
-                      : "Needs check"}
+                    {solvingSource === source.id
+                      ? "Checking"
+                      : source.challenge.state === "blocked"
+                        ? "Blocked"
+                        : "Needs check"}
                   </button>
                 ) : (
                   source.hasClearance && (
@@ -836,54 +887,117 @@ function PluginsTab() {
           <ShieldCheck size={17} className="text-amber-300" />
           <h2 className="font-semibold">Browser clearance</h2>
         </div>
-        <p className="mt-1 text-xs text-zinc-500">
-          Paste the cookie and user agent from a browser session where you have passed the
-          check. The app applies them to every later request for that source.
-        </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <select
-            value={cookieSource}
-            onChange={(event) => setCookieSource(event.target.value)}
-            aria-label="Plugin"
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
-          >
-            <option value="">Plugin</option>
-            {sources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.name}
-              </option>
-            ))}
-          </select>
-          <input
-            value={cookie}
-            onChange={(event) => setCookie(event.target.value)}
-            placeholder="Clearance cookie"
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
-          />
-          <input
-            value={userAgent}
-            onChange={(event) => setUserAgent(event.target.value)}
-            placeholder="Browser user agent"
-            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
-          />
-        </div>
-        <button
-          disabled={!cookieSource || !cookie || !userAgent || busy.includes("clearance")}
-          onClick={() =>
-            void run(
-              "clearance",
-              async () => {
-                await api.submitClearance(cookieSource, cookie, userAgent);
-                setCookie("");
-                setUserAgent("");
-              },
-              "Browser session saved.",
-            )
-          }
-          className="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
-        >
-          Save browser session
-        </button>
+        {solverAvailable !== false ? (
+          <>
+            <p className="mt-1 text-xs text-zinc-500">
+              A window opens on the site and answers the check for you. It may clear on its own
+              or wait for a click.
+            </p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <select
+                value={cookieSource}
+                onChange={(event) => setCookieSource(event.target.value)}
+                aria-label="Plugin"
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
+              >
+                <option value="">Plugin</option>
+                {sources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                disabled={!cookieSource || solvingSource !== ""}
+                onClick={() => cookieSource && checkInBrowser(cookieSource)}
+                className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-300 disabled:opacity-40 sm:col-span-2"
+              >
+                {solvingSource ? "Waiting for the site..." : "Check in browser"}
+              </button>
+            </div>
+            {solveResult && (
+              <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={
+                      solveResult.verified
+                        ? "text-emerald-300"
+                        : solveResult.challenge
+                          ? "text-amber-300"
+                          : "text-zinc-400"
+                    }
+                  >
+                    {solveResult.verified
+                      ? "Cleared"
+                      : solveResult.captured
+                        ? "Stored, not accepted"
+                        : solveResult.needsInteraction
+                          ? "Waiting for you"
+                          : "No check needed"}
+                  </span>
+                  <span className="text-zinc-500">{solveResult.message}</span>
+                </div>
+                {solveResult.cookies.length > 0 && (
+                  <p className="mt-1 text-zinc-500">
+                    Stored {solveResult.cookies.join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-xs text-zinc-500">
+              The browser check is unavailable on this machine. Paste the cookie and user agent
+              from a browser session where you have passed the check. The app applies them to
+              every later request for that source.
+            </p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <select
+                value={cookieSource}
+                onChange={(event) => setCookieSource(event.target.value)}
+                aria-label="Plugin"
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
+              >
+                <option value="">Plugin</option>
+                {sources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={cookie}
+                onChange={(event) => setCookie(event.target.value)}
+                placeholder="Clearance cookie"
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
+              />
+              <input
+                value={userAgent}
+                onChange={(event) => setUserAgent(event.target.value)}
+                placeholder="Browser user agent"
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base sm:text-sm"
+              />
+            </div>
+            <button
+              disabled={!cookieSource || !cookie || !userAgent || busy.includes("clearance")}
+              onClick={() =>
+                void run(
+                  "clearance",
+                  async () => {
+                    await api.submitClearance(cookieSource, cookie, userAgent);
+                    setCookie("");
+                    setUserAgent("");
+                  },
+                  "Browser session saved.",
+                )
+              }
+              className="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm disabled:opacity-40"
+            >
+              Save browser session
+            </button>
+          </>
+        )}
       </section>
       {confirmRemoval && (
         <Modal title="Remove plugin" onClose={() => setConfirmRemoval(undefined)}>

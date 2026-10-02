@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/makinuki/makidoku/internal/config"
 	"github.com/makinuki/makidoku/internal/db"
@@ -26,12 +27,32 @@ type autoSolver struct {
 	// blocked on the same origin would each open a window.
 	mu       sync.Mutex
 	inFlight map[string]bool
+	// on is read on the request path and written when the reader flips the
+	// preference, so it is read atomically. The hook is registered whatever this
+	// says, because a toggle that took effect only on the next start would be
+	// useless to someone who just answered a challenge.
+	on atomic.Bool
 }
 
-// startAutoSolve registers the challenge hook when the toggle is on, and returns
-// nil when it is off so there is nothing to keep alive.
+// SetEnabled turns the automatic path on or off while the daemon is running.
+func (a *autoSolver) SetEnabled(enabled bool) {
+	if a == nil {
+		return
+	}
+	a.on.Store(enabled)
+	if enabled {
+		slog.Info("auto-solve is on, a challenge will open a window without a button press",
+			"attemptsPerOrigin", autoSolveAttemptsPerOrigin)
+		return
+	}
+	slog.Info("auto-solve is off, a challenge will wait for the button again")
+}
+
+// startAutoSolve registers the challenge hook when a browser is available, and
+// returns nil when there is none. Whether the automatic path acts is decided per
+// challenge by the current setting, so the toggle applies without a restart.
 func startAutoSolve(cfg config.Config, eng *engine.Engine, challenger solver.Challenger, broker *engine.ClearanceBroker) *autoSolver {
-	if !cfg.AutoSolve || challenger == nil {
+	if challenger == nil {
 		return nil
 	}
 	auto := &autoSolver{
@@ -41,8 +62,11 @@ func startAutoSolve(cfg config.Config, eng *engine.Engine, challenger solver.Cha
 		inFlight:   make(map[string]bool),
 	}
 	broker.SetChallengeHook(auto.onChallenged)
-	slog.Info("auto-solve is on, a challenge will open a window without a button press",
-		"attemptsPerOrigin", autoSolveAttemptsPerOrigin)
+	auto.on.Store(cfg.AutoSolve)
+	if cfg.AutoSolve {
+		slog.Info("auto-solve is on, a challenge will open a window without a button press",
+			"attemptsPerOrigin", autoSolveAttemptsPerOrigin)
+	}
 	return auto
 }
 
@@ -51,11 +75,16 @@ func startAutoSolve(cfg config.Config, eng *engine.Engine, challenger solver.Cha
 // without letting a hopeless one interrupt the reader repeatedly.
 const autoSolveAttemptsPerOrigin = 3
 
+// autoSolveSettingKey is the stored preference the reader flips. It matches the
+// key the settings API writes, so a choice made in the interface survives a
+// restart and is applied without one.
+const autoSolveSettingKey = "anti_bot.auto_solve"
+
 // onChallenged runs on the request path, so it does the deciding here and the
 // solving on its own goroutine. A blocked request is already parked and waiting;
 // blocking it further would defeat the point.
 func (a *autoSolver) onChallenged(sourceID, origin string) {
-	if a == nil || origin == "" {
+	if a == nil || origin == "" || !a.on.Load() {
 		return
 	}
 	if !a.claim(origin) {

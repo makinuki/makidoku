@@ -360,6 +360,7 @@ var definitionList = []Definition{
 	}},
 	{Key: "browse.chapter_languages", Type: "string", Default: `""`, Description: "Default chapter languages for sources without their own selection", Validate: languageList()},
 	{Key: "privacy.incognito", Type: "boolean", Default: "false", Description: "Start in incognito mode, which does not record reading activity", Validate: boolean},
+	{Key: "anti_bot.auto_solve", Type: "boolean", Default: "false", Description: "Open a browser window by itself when a site checks for a browser, instead of waiting for you to press the button", Validate: boolean},
 	{Key: "advanced.log_level", Type: "string", Default: `"info"`, Description: "How much detail is written to the log", Validate: enum("debug", "info", "warn", "error")},
 	{Key: "advanced.image_cache_days", Type: "number", Default: "30", Description: "Days to keep processed page images", Validate: number(1, 3650)},
 	{Key: "library.view.sort", Type: "string", Default: `"recent"`, Description: "Library ordering", Validate: enum("recent", "title", "added", "last_read", "unread"), Hidden: true},

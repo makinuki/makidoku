@@ -64,6 +64,9 @@ type Server struct {
 	// construction because it owns a thread and a window, and a build without an
 	// embedded browser leaves it nil.
 	challenger solver.Challenger
+	// onAutoSolveChanged is told when the auto-solve preference is written, so the
+	// change applies to the running daemon rather than the next start.
+	onAutoSolveChanged func(bool)
 	// A solve already in flight, keyed by origin. A second window for one origin
 	// would show the reader two windows answering a single challenge, so a repeat
 	// request for the same origin is refused while the first is open.
@@ -163,6 +166,15 @@ func (s *Server) solverCapabilityRoute(w http.ResponseWriter, r *http.Request) {
 		capability.Reason = err.Error()
 	}
 	writeJSON(w, http.StatusOK, capability)
+}
+
+// autoSolveSettingKey is the preference the auto-solve toggle reads and writes.
+const autoSolveSettingKey = "anti_bot.auto_solve"
+
+// SetAutoSolveObserver registers a callback told when the auto-solve preference
+// changes, so the daemon can apply it without waiting for a restart.
+func (s *Server) SetAutoSolveObserver(fn func(bool)) {
+	s.onAutoSolveChanged = fn
 }
 
 // SetChallenger attaches the component that presents anti-bot challenges in a

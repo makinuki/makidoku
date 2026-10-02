@@ -168,6 +168,12 @@ func New(cfg config.Config) (*Server, error) {
 	// The automatic path is registered only when the toggle is on, so with it off
 	// no hook exists and nothing in the engine is told a challenge happened.
 	autoSolver := startAutoSolve(cfg, eng, challenger, eng.ChallengeBroker())
+	// The stored preference wins over the flag, so a reader who chose the
+	// toggle in the interface keeps that choice across restarts.
+	if raw, err := preferences.Get(autoSolveSettingKey); err == nil && raw != "" {
+		autoSolver.SetEnabled(raw == "true")
+	}
+	server.SetAutoSolveObserver(autoSolver.SetEnabled)
 
 	sweepOnce(imageCache, repo.ListCachedPaths)
 	server.Mount(router)

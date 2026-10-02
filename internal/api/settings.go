@@ -89,6 +89,11 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 	if key == "advanced.log_level" {
 		_ = logger.SetLevelFromRaw(raw)
 	}
+	if key == autoSolveSettingKey && s.onAutoSolveChanged != nil {
+		// Applied rather than left for the next start, so turning the toggle on
+		// takes effect for the challenge that prompted the reader to look at it.
+		s.onAutoSolveChanged(raw == "true")
+	}
 	entries, err := s.settings.List()
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)

@@ -62,5 +62,7 @@ func init() {
 	serveCmd.Flags().StringVar(&cfg.Bind, "bind", "127.0.0.1", "bind address")
 	serveCmd.Flags().BoolVar(&serveTray, "tray", false, "run with system tray (requires tray build tag)")
 	serveCmd.Flags().BoolVar(&serveNoTray, "no-tray", false, "disable system tray even when built with tray tag")
+	serveCmd.Flags().BoolVar(&cfg.AutoSolve, "auto-solve", config.DefaultAutoSolve(),
+		"open the browser window on a challenge instead of waiting for the button")
 	rootCmd.AddCommand(serveCmd)
 }

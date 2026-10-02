@@ -48,3 +48,29 @@ func TestResolveDownloadDirDefaultsUnderDataDir(t *testing.T) {
 		t.Fatalf("download dir = %q, want %q", got, want)
 	}
 }
+
+// The auto-solve toggle decides whether a classified challenge opens a window on
+// its own. Only an explicit true turns it on: being wrong in that direction
+// takes over the reader's screen, while being wrong the other way costs one
+// button press.
+func TestDefaultAutoSolve(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"", false},
+		{"true", true},
+		{"TRUE", true},
+		{" True ", true},
+		{"false", false},
+		{"1", false},
+		{"yes", false},
+		{"on", false},
+	}
+	for _, c := range cases {
+		t.Setenv("MAKIDOKU_AUTO_SOLVE", c.value)
+		if got := DefaultAutoSolve(); got != c.want {
+			t.Errorf("MAKIDOKU_AUTO_SOLVE=%q gave %v, want %v", c.value, got, c.want)
+		}
+	}
+}

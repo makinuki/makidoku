@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,7 +21,11 @@ type Config struct {
 	RegistryURL string
 	// ChallengeWait is how long a request blocked by an anti-bot challenge
 	// waits for clearance to be submitted through the API before it fails.
-	ChallengeWait   time.Duration
+	ChallengeWait time.Duration
+	// AutoSolve opens the solve window on a classified challenge without waiting
+	// for the user to press a button. It is off by default; see DefaultAutoSolve
+	// for why the default is the conservative one.
+	AutoSolve       bool
 	DownloadDir     string
 	DownloadWorkers int
 	PageInterval    time.Duration
@@ -141,6 +146,20 @@ func DefaultChallengeWait() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// DefaultAutoSolve reports whether a classified challenge should open the solve
+// window without the user asking for it.
+//
+// It is off by default. An unprompted window takes over the screen, so opening
+// one is a decision the reader makes, not one the daemon makes on their behalf.
+// With it off, a challenge surfaces in the browse grid behind a button.
+//
+// Only an explicit true turns it on. An unset, empty, unrecognised or false value
+// leaves it off, because the cost of being wrong here is an intrusion and the
+// cost of being wrong the other way is one button press.
+func DefaultAutoSolve() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("MAKIDOKU_AUTO_SOLVE")), "true")
 }
 
 // DefaultImageCacheMaxBytes returns the processed image cache size budget

@@ -224,12 +224,16 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 	// names the origin to present. A malformed one is still rejected.
 	var body struct {
 		Origin string `json:"origin"`
+		// URL is the address that was actually blocked. A guard may issue its
+		// material only for the challenged address, so solving the site root can
+		// return nothing even where solving the blocked page would have worked.
+		URL string `json:"url"`
 	}
 	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
 		return
 	}
 
-	target, err := s.resolveTarget(r, sourceID, body.Origin)
+	target, err := s.resolveTarget(r, sourceID, body.Origin, body.URL)
 	if err != nil {
 		writeLocalError(w, http.StatusBadRequest, err)
 		return
@@ -346,16 +350,32 @@ type solveTarget struct {
 
 // resolveTarget returns the address to present, preferring the caller's choice
 // and falling back to the source base address.
-func (s *Server) resolveTarget(r *http.Request, sourceID, requested string) (solveTarget, error) {
+func (s *Server) resolveTarget(r *http.Request, sourceID, requested, requestedURL string) (solveTarget, error) {
 	if requested = strings.TrimSpace(requested); requested != "" {
 		return targetFor(requested)
 	}
-	// A source whose pages and images sit on different domains reports one entry
-	// per origin, so the first outstanding one is the origin the reader is being
-	// asked about.
+	// The address the fetcher was blocked on is preferred, because a guard may
+	// issue material only for that address. A source whose pages and images sit on
+	// different domains reports one entry per origin.
 	for _, state := range s.engine.ChallengeStates() {
 		if state.SourceID == sourceID && state.Origin != "" {
-			return targetFor(state.Origin)
+			resolved, err := targetFor(state.Origin)
+			if err != nil {
+				return solveTarget{}, err
+			}
+			if trimmed := strings.TrimSpace(requestedURL); trimmed != "" {
+				if blocked, err := targetFor(trimmed); err == nil {
+					blocked.origin = resolved.origin
+					return blocked, nil
+				}
+			}
+			if state.URL != "" {
+				if blocked, err := targetFor(state.URL); err == nil {
+					blocked.origin = resolved.origin
+					return blocked, nil
+				}
+			}
+			return resolved, nil
 		}
 	}
 	// The base address is read from the source record rather than asked of the

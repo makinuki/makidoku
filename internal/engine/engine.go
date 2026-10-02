@@ -667,7 +667,7 @@ func (e *Engine) SourceBaseURL(sourceID string) (string, error) {
 
 // SetChallengeHook registers a host callback told when a request starts waiting
 // for clearance. It is the seam an automatic solver uses, and it is optional.
-func (e *Engine) SetChallengeHook(hook func(sourceID, origin string)) {
+func (e *Engine) SetChallengeHook(hook func(sourceID, origin, blockedURL string)) {
 	e.clearance.SetChallengeHook(hook)
 }
 

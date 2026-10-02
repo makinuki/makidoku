@@ -41,7 +41,7 @@ type ClearanceBroker struct {
 	// the waiters because it is set once at start-up and read on every blocked
 	// request.
 	hookMu sync.Mutex
-	hook   func(sourceID, origin string)
+	hook   func(sourceID, origin, blockedURL string)
 }
 
 func NewClearanceBroker(store *db.Repository, legacy Storage, wait time.Duration) *ClearanceBroker {
@@ -188,20 +188,22 @@ func originOf(raw string) string {
 // is ignored, because a cookie is only valid for the client identity that
 // obtained it.
 // SetChallengeHook registers a function told when a request has begun waiting for
-// clearance, so a host that can answer the challenge itself may do so.
+// clearance, so a host that can answer the challenge itself may do so. The URL is
+// the one that was blocked, because a guard may issue its material only for the
+// address that was challenged rather than for the site as a whole.
 //
 // It is optional and set after construction, because the engine has no business
 // knowing whether an embedded browser exists. The hook must not block: it runs
 // on the request path, and the wait that follows is what the reader is waiting
 // on.
-func (b *ClearanceBroker) SetChallengeHook(hook func(sourceID, origin string)) {
+func (b *ClearanceBroker) SetChallengeHook(hook func(sourceID, origin, blockedURL string)) {
 	b.hookMu.Lock()
 	b.hook = hook
 	b.hookMu.Unlock()
 }
 
 // challengeHook returns the registered hook, or nil.
-func (b *ClearanceBroker) challengeHook() func(sourceID, origin string) {
+func (b *ClearanceBroker) challengeHook() func(sourceID, origin, blockedURL string) {
 	b.hookMu.Lock()
 	defer b.hookMu.Unlock()
 	return b.hook
@@ -221,7 +223,7 @@ func (b *ClearanceBroker) Resolve(ctx context.Context, sourceID, usedCookie stri
 	// challenge starts doing so while this request is still parked rather than
 	// after it has already given up.
 	if hook := b.challengeHook(); hook != nil {
-		hook(sourceID, origin)
+		hook(sourceID, origin, challenge.URL)
 	}
 
 	slog.Info("engine blocked by anti-bot challenge, waiting for clearance",

@@ -132,7 +132,7 @@ func TestChallengeHookIsCalledWhileTheRequestWaits(t *testing.T) {
 	broker, release := challengeBrokerFixture(t)
 
 	announced := make(chan string, 1)
-	broker.SetChallengeHook(func(sourceID, origin string) {
+	broker.SetChallengeHook(func(sourceID, origin, blockedURL string) {
 		announced <- sourceID + "|" + origin
 	})
 
@@ -164,7 +164,7 @@ func TestChallengeHookIsNotCalledWhenTheDaemonDoesNotWait(t *testing.T) {
 	broker := engine.NewClearanceBroker(store, nil, 0)
 
 	announced := false
-	broker.SetChallengeHook(func(string, string) { announced = true })
+	broker.SetChallengeHook(func(string, string, string) { announced = true })
 
 	if broker.Resolve(context.Background(), "s", "", engine.HttpError{
 		URL: "https://kagane.to/search?q=x", Status: 403,
@@ -187,7 +187,7 @@ func TestChallengeHookIsNotCalledWhenClearanceAlreadyExists(t *testing.T) {
 	}
 
 	announced := false
-	broker.SetChallengeHook(func(string, string) { announced = true })
+	broker.SetChallengeHook(func(string, string, string) { announced = true })
 
 	if !broker.Resolve(context.Background(), "s", "", engine.HttpError{
 		URL: "https://kagane.to/search?q=x", Status: 403,

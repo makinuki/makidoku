@@ -18,7 +18,12 @@ const (
 	// settleDelay is how long a page is given before it is believed. A challenge
 	// interstitial renders immediately, so substantial content this soon means the
 	// site served the request rather than challenging it.
-	settleDelay = 4 * time.Second
+	//
+	// It is deliberately long. Guard interstitials take seconds to appear and
+	// resolve, and the measured time for a site to hand over material runs to
+	// several seconds; bailing sooner than the site needs concludes a site needs no
+	// check while it is still deciding to issue one.
+	settleDelay = 15 * time.Second
 	// agentGrace bounds the wait for the page to report the identity the clearance
 	// was issued to. It is short because the cookie is usually accompanied by a
 	// report already, so the wait is only ever paid when the message is late.
@@ -26,6 +31,24 @@ const (
 	// agentPollInterval is how often that wait re-reads the latest report.
 	agentPollInterval = 100 * time.Millisecond
 )
+
+// jarChanged reports whether the jar gained a name the earlier read did not have.
+//
+// Values are not compared, because a guard may rewrite the value it issued
+// without that meaning anything on its own. A new name is the signal that the
+// site issued material in response to the challenge.
+//
+// Any new name counts. Which one matters is decided by whether a request carrying
+// the jar gets through, not by the name itself: a guard that is not Cloudflare
+// issues its own cookie, and naming it here would mean one solver per guard.
+func jarChanged(before, after map[string]string) bool {
+	for name := range after {
+		if _, existed := before[name]; !existed {
+			return true
+		}
+	}
+	return false
+}
 
 // ErrSolveAbandoned reports that the attempt ended without clearance. It is a
 // normal outcome, not a fault: a challenge can need a click that never came, or
@@ -54,6 +77,15 @@ func (s *Solver) Solve(ctx context.Context, origin string) (*Result, error) {
 	sink := newReports()
 	defer s.closeView(context.Background())
 
+	// The jar is read before the site is asked anything, so a cookie the site
+	// issues in response can be told apart from one already on the profile. A
+	// clearance cookie left over from an earlier run would otherwise look like a
+	// fresh answer and end the attempt before the challenge had been seen.
+	baseline, err := s.readCookies(ctx, origin)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := s.beginSolve(origin, sink); err != nil {
 		return nil, err
 	}
@@ -69,10 +101,7 @@ func (s *Solver) Solve(ctx context.Context, origin string) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := snapshot.jar[ClearanceName]; ok {
-			// The cookie can be written before the page has reported in, so a
-			// short bounded wait is taken for the identity rather than returning
-			// a bundle that will replay under the wrong agent.
+		if jarChanged(baseline.jar, snapshot.jar) {
 			if state.UserAgent == "" {
 				if waited := sink.waitForAgent(ctx, agentGrace); waited != nil {
 					state = *waited

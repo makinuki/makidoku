@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"sync"
 	"sync/atomic"
 
@@ -83,7 +84,7 @@ const autoSolveSettingKey = "anti_bot.auto_solve"
 // onChallenged runs on the request path, so it does the deciding here and the
 // solving on its own goroutine. A blocked request is already parked and waiting;
 // blocking it further would defeat the point.
-func (a *autoSolver) onChallenged(sourceID, origin string) {
+func (a *autoSolver) onChallenged(sourceID, origin, blockedURL string) {
 	if a == nil || origin == "" || !a.on.Load() {
 		return
 	}
@@ -98,8 +99,20 @@ func (a *autoSolver) onChallenged(sourceID, origin string) {
 	}
 	go func() {
 		defer a.release(origin)
-		a.solve(sourceID, origin)
+		a.solve(sourceID, origin, solveTarget(blockedURL, origin))
 	}()
+}
+
+// solveTarget prefers the address that was actually blocked over the bare origin,
+// because a guard may issue its material only for the challenged address. It falls
+// back to the origin when the blocked address is not usable.
+func solveTarget(blockedURL, origin string) string {
+	if blockedURL != "" {
+		if parsed, err := url.Parse(blockedURL); err == nil && parsed.Scheme != "" && parsed.Hostname() != "" {
+			return blockedURL
+		}
+	}
+	return "https://" + origin + "/"
 }
 
 // claim reserves an origin for one solve and reports whether it was free.
@@ -122,14 +135,14 @@ func (a *autoSolver) release(origin string) {
 // solve opens the window, stores what it captured, and verifies it. A verified
 // result clears the origin's allowance because the origin is demonstrably
 // working again; a capture the site refused leaves the allowance spent.
-func (a *autoSolver) solve(sourceID, origin string) {
+func (a *autoSolver) solve(sourceID, origin, target string) {
 	if err := a.challenger.Available(context.Background()); err != nil {
 		slog.Warn("auto-solve skipped, the browser cannot be presented", "origin", origin, "err", err)
 		return
 	}
 
-	slog.Info("auto-solve opening a window", "source", sourceID, "origin", origin)
-	result, err := a.challenger.Solve(context.Background(), "https://"+origin+"/")
+	slog.Info("auto-solve opening a window", "source", sourceID, "origin", origin, "url", target)
+	result, err := a.challenger.Solve(context.Background(), target)
 	if err != nil || result == nil {
 		slog.Warn("auto-solve did not produce a result", "origin", origin, "err", err)
 		return

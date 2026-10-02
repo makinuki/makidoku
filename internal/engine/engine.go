@@ -621,8 +621,17 @@ func (e *Engine) ProbeClearance(ctx context.Context, sourceID, origin string) (b
 		origin = originOf(row.BaseURL)
 	}
 
+	// The probe uses the scheme the source declared, so a source registered over
+	// plain HTTP is probed the way it is reached rather than being forced onto
+	// TLS. Every registry source declares HTTPS, so this only differs where a
+	// source says otherwise.
+	scheme := "https"
+	if declared, err := url.Parse(row.BaseURL); err == nil && declared.Scheme != "" {
+		scheme = declared.Scheme
+	}
+
 	response, httpErr := e.fetcher.Do(ctx, row.ID, HttpRequest{
-		URL:    "https://" + origin + "/",
+		URL:    scheme + "://" + origin + "/",
 		Method: "GET",
 	})
 	if httpErr != nil {
@@ -640,6 +649,20 @@ func (e *Engine) ProbeClearance(ctx context.Context, sourceID, origin string) (b
 		_ = e.clearance.MarkChallenged(row.ID, origin)
 	}
 	return reachable, nil
+}
+
+// SourceBaseURL returns the base address a source is registered with.
+//
+// The record is read directly rather than asked of the plugin, so an address can
+// be resolved for a source whose plugin has not been loaded. A source that is
+// being challenged is exactly the case where loading its plugin is least
+// reliable.
+func (e *Engine) SourceBaseURL(sourceID string) (string, error) {
+	row, err := e.row(sourceID)
+	if err != nil {
+		return "", err
+	}
+	return row.BaseURL, nil
 }
 
 // ClearanceBundles returns the stored clearance material for a source. Cookie

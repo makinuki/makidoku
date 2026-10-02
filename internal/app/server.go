@@ -23,6 +23,7 @@ import (
 	"github.com/makinuki/makidoku/internal/imagecache"
 	"github.com/makinuki/makidoku/internal/logger"
 	"github.com/makinuki/makidoku/internal/settings"
+	"github.com/makinuki/makidoku/internal/solver"
 	"github.com/makinuki/makidoku/internal/tracker"
 	"github.com/makinuki/makidoku/internal/updater"
 	"github.com/makinuki/makidoku/web"
@@ -39,8 +40,11 @@ type Server struct {
 	syncer    *tracker.SyncWorker
 	updater   *updater.Service
 	settings  *settings.Service
-	http      *http.Server
-	api       *api.Server
+	// challenger presents anti-bot challenges. It owns a thread and a window, so it
+	// is created with the server and released with it.
+	challenger *solver.Solver
+	http       *http.Server
+	api        *api.Server
 }
 
 func waitForBackground(downloadErrs, syncErrs <-chan error, downloadConsumed, syncConsumed bool) error {
@@ -148,20 +152,30 @@ func New(cfg config.Config) (*Server, error) {
 	updateService.SetEnqueue(server.EnqueueNewChapters)
 	server.SetUpdater(updateService)
 	server.SetImageCache(imageCache)
+
+	// The solver owns a pinned thread and a window, so it is created once for the
+	// life of the daemon rather than per request. A build without an embedded
+	// browser still constructs one; it reports itself unavailable, and the solve
+	// route returns that plainly instead of failing.
+	solverProfile := filepath.Join(cfg.DataDir, "solver", "profile")
+	challenger := solver.New(solverProfile)
+	server.SetChallenger(challenger)
+
 	sweepOnce(imageCache, repo.ListCachedPaths)
 	server.Mount(router)
 	web.Mount(router)
 
 	return &Server{
-		cfg:       cfg,
-		db:        database,
-		engine:    eng,
-		downloads: downloads,
-		trackers:  trackers,
-		syncer:    syncer,
-		updater:   updateService,
-		settings:  preferences,
-		api:       server,
+		cfg:        cfg,
+		db:         database,
+		engine:     eng,
+		downloads:  downloads,
+		trackers:   trackers,
+		syncer:     syncer,
+		updater:    updateService,
+		settings:   preferences,
+		api:        server,
+		challenger: challenger,
 		http: &http.Server{
 			Addr:              net.JoinHostPort(cfg.Bind, fmt.Sprint(cfg.Port)),
 			Handler:           router,
@@ -299,6 +313,13 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// The solver goes first: it holds a window and a thread, and releasing it
+	// after the database would let a solve finish against a closed handle.
+	if s.challenger != nil {
+		if err := s.challenger.Close(); err != nil {
+			slog.Error("closing the challenge solver failed", "err", err)
+		}
+	}
 	s.engine.Close(ctx)
 	if err := s.db.Close(); err != nil {
 		slog.Error("closing database failed", "err", err)

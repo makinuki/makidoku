@@ -19,7 +19,7 @@
 // back into a handler that the runtime dispatches on the thread that issued the
 // call. That call is therefore issued on the solver thread and awaited on the
 // caller's goroutine, because a caller that blocked the solver thread would stop
-// the very thread that owes it the answer.
+// the thread responsible for producing the answer.
 package solver
 
 import (
@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -55,6 +56,24 @@ type Capture struct {
 	UserAgent string
 	// SecChUa holds the client hint values the view reported, if any.
 	SecChUa map[string]string
+}
+
+// Challenger presents an anti-bot challenge in a browser and captures the
+// clearance the site issues.
+//
+// The API depends on this rather than on the concrete solver so that a build
+// without an embedded browser still satisfies the interface, and reports itself
+// unavailable instead of failing to compile.
+type Challenger interface {
+	// Available reports whether a solve window can be presented at all.
+	Available(ctx context.Context) error
+	// Solve presents origin in a visible window and returns what was captured.
+	//
+	// The window is always shown. A site may clear its own challenge or may wait
+	// for a click, and both are ordinary outcomes, so whether the caller opened
+	// this window by itself or because the user asked for it does not change what
+	// happens next.
+	Solve(ctx context.Context, origin string) (*Result, error)
 }
 
 // Result reports what one solve produced.
@@ -115,8 +134,14 @@ type Solver struct {
 	// ready is closed once the window exists and the pump is about to run. Work
 	// submitted before that would otherwise wait on a window that does not exist
 	// yet, which looks like a hang rather than a startup race.
-	ready  chan struct{}
-	closed sync.Once
+	ready chan struct{}
+	// start brings the thread up on first use. Constructing a solver does no work
+	// by itself, so a daemon that never meets a challenge creates no window and no
+	// thread, and a program that only reads configuration pays nothing for the
+	// capability.
+	start   sync.Once
+	started atomic.Bool
+	closed  sync.Once
 
 	// initErr records a failure to prepare the thread, so a caller learns about
 	// it instead of waiting for a browser that will never arrive.
@@ -124,29 +149,49 @@ type Solver struct {
 	initErr error
 }
 
-// New starts a solver. The profile directory holds the browser user data and is
+// New creates a solver. The profile directory holds the browser user data and is
 // reused across solves, so clearance survives a restart.
 //
-// The thread starts even where no browser exists, so callers have one consistent
-// place to ask whether solving is possible.
+// The browser thread starts on first use rather than here.
 func New(profileDir string) *Solver {
-	s := &Solver{
+	return &Solver{
 		profileDir: profileDir,
 		stopped:    make(chan struct{}),
 		ready:      make(chan struct{}),
 	}
-	go s.run()
-	return s
+}
+
+// ensure brings the solver thread up and waits until it is either ready or has
+// failed to start.
+func (s *Solver) ensure() error {
+	s.start.Do(func() {
+		s.started.Store(true)
+		go s.run()
+	})
+	select {
+	case <-s.ready:
+		return nil
+	case <-s.stopped:
+		if err := s.threadInitError(); err != nil {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		return ErrUnavailable
+	}
+}
+
+func (s *Solver) threadInitError() error {
+	s.initMu.Lock()
+	defer s.initMu.Unlock()
+	return s.initErr
 }
 
 // run is the solver thread.
 //
 // It is pinned because window messages and COM both belong to the thread that
-// created them, and it then becomes the window message pump for the life of the
-// solver. An earlier arrangement started the pump on a separate goroutine, which
-// looks equivalent and is not: messages posted to a window are delivered to the
-// queue of the thread that owns it, so a pump on another thread receives nothing
-// and the view stops answering.
+// created them, and it then serves as the window message pump for the life of the
+// solver. Messages posted to a window are delivered to the queue of the thread
+// that owns the window, so the pump must be that thread; a pump on any other
+// thread receives nothing and the view stops answering.
 //
 // Because the pump occupies this thread, work reaches the browser by being posted
 // to the window rather than handed over on a channel.
@@ -180,9 +225,9 @@ func (s *Solver) setInitError(err error) {
 
 // onThread runs a closure on the solver thread and waits for it to finish.
 //
-// The closure must not wait on the thread own message pump. Anything that
+// The closure must not wait on the thread's own message pump. Anything that
 // completes asynchronously has to be issued here and awaited by the caller, or
-// the thread that owes the answer is the thread being blocked.
+// the thread responsible for producing the answer is the thread being blocked.
 func (s *Solver) onThread(fn func()) {
 	// Waiting for readiness first means a caller that arrives during start-up
 	// waits for the window rather than posting to one that does not exist.
@@ -205,9 +250,15 @@ func (s *Solver) onSolver(fn func() error) error {
 }
 
 // Close stops the solver thread and releases the browser.
+//
+// A solver that was never used has no thread to stop, and this returns at once
+// rather than waiting for one that will never arrive.
 func (s *Solver) Close() error {
 	var err error
 	s.closed.Do(func() {
+		if !s.started.Load() {
+			return
+		}
 		if s.window != nil {
 			s.onThread(func() { err = teardown() })
 			s.window.postClose()
@@ -224,11 +275,8 @@ func (s *Solver) Available(ctx context.Context) error {
 	if err := platformSupport(); err != nil {
 		return err
 	}
-	s.initMu.Lock()
-	initErr := s.initErr
-	s.initMu.Unlock()
-	if initErr != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, initErr)
+	if err := s.ensure(); err != nil {
+		return err
 	}
 	var err error
 	s.onThread(func() { err = runtimePresent() })

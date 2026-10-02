@@ -15,8 +15,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// rpcSFalse is the result of initializing an apartment that is already present on
-// the thread. It is success for our purposes rather than a failure.
+// rpcSFalse is the status returned when an apartment is already present on the
+// thread. For this component that is a success rather than a failure.
 const rpcSFalse = 1
 
 // Bounds so a wedged browser reports rather than hangs. The jar read is the one
@@ -42,8 +42,8 @@ const scriptProbe = `
 // touches the thread.
 func initThread() error {
 	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); err != nil {
-		// An apartment that is already present on the thread reports this code, and
-		// for our purposes that is success rather than a failure.
+		// An apartment already present on the thread reports this code, which is
+		// treated as success for this component.
 		if !errors.Is(err, syscall.Errno(rpcSFalse)) {
 			return fmt.Errorf("initialize COM: %w", err)
 		}

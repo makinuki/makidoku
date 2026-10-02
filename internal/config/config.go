@@ -118,13 +118,23 @@ func DefaultRegistryURL() string {
 	return os.Getenv("MAKIDOKU_REGISTRY_URL")
 }
 
+// defaultChallengeWait is how long a blocked request waits for clearance when
+// nothing says otherwise.
+//
+// A blocked request is held rather than failed so the answer can arrive while the
+// user is still looking at the window. Two minutes is long enough to notice a
+// window, answer a challenge, and let the retry land, and short enough that an
+// abandoned solve does not strand a goroutine, a plugin call, and a browser
+// connection indefinitely. Zero is still accepted and means fail immediately.
+const defaultChallengeWait = 2 * time.Minute
+
 // DefaultChallengeWait returns the anti-bot clearance wait from the
-// environment. An unset or unparsable value disables waiting, so a challenged
-// request fails immediately.
+// environment, falling back to defaultChallengeWait. An unparsable or negative
+// value disables waiting, so a challenged request fails immediately.
 func DefaultChallengeWait() time.Duration {
 	v := os.Getenv("MAKIDOKU_CHALLENGE_WAIT")
 	if v == "" {
-		return 0
+		return defaultChallengeWait
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil || d < 0 {

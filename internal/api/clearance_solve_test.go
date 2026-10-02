@@ -266,6 +266,80 @@ func TestSolveDoesNotReportCaptureAloneAsSuccess(t *testing.T) {
 	}
 }
 
+// A window can end on an unanswered challenge while the material it captured is
+// already working. Reporting the site as still refusing in that case would be
+// self-contradictory, so verified and challenge are kept exclusive.
+func TestSolveKeepsVerifiedAndChallengeExclusive(t *testing.T) {
+	site := plainPage(t)
+	router, server := solveFixture(t, site.URL)
+	server.SetChallenger(&fakeChallenger{result: &solver.Result{
+		Captured:         true,
+		NeedsInteraction: true,
+		Capture:          solver.Capture{Cookies: map[string]string{"cf_clearance": "material"}},
+	}})
+
+	status, payload := postSolve(router, "")
+
+	if status != http.StatusOK {
+		t.Fatalf("status=%d, want %d", status, http.StatusOK)
+	}
+	if !payload.Verified {
+		t.Fatal("verified is false although the site accepted the material")
+	}
+	if payload.Verified && payload.Challenge {
+		t.Fatal("verified and challenge are both set, which no state can be")
+	}
+	if payload.Challenge {
+		t.Fatal("challenge is set although a live request carrying the material succeeded")
+	}
+	if !payload.NeedsInteraction {
+		t.Fatal("needsInteraction is not set for a challenge that went unanswered")
+	}
+}
+
+// A capture the site still refuses is the common failure. It must not read as a
+// cleared site, and the site must be reported as still holding us off.
+func TestSolveReportsTheSiteStillRefusingAfterACapture(t *testing.T) {
+	site := challengingPage(t)
+	router, server := solveFixture(t, site.URL)
+	server.SetChallenger(&fakeChallenger{result: &solver.Result{
+		Captured: true,
+		Capture:  solver.Capture{Cookies: map[string]string{"cf_clearance": "material"}},
+	}})
+
+	_, payload := postSolve(router, "")
+
+	if payload.Verified {
+		t.Fatal("verified is true for a site that is still challenging")
+	}
+	if !payload.Challenge {
+		t.Fatal("challenge is false although the site refused a request carrying the material")
+	}
+	if payload.NeedsInteraction {
+		t.Fatal("needsInteraction is set although no challenge was shown in the window")
+	}
+}
+
+// Without a capture there is nothing to replay, so a challenge showing in the
+// window is the only evidence the site is holding requests off.
+func TestSolveReportsAChallengeWhenNothingWasCaptured(t *testing.T) {
+	router, server := solveFixture(t, "https://source.test")
+	server.SetChallenger(&fakeChallenger{result: &solver.Result{
+		Captured:         false,
+		NeedsInteraction: true,
+	}})
+
+	_, payload := postSolve(router, "")
+
+	if payload.Challenge != payload.NeedsInteraction {
+		t.Fatalf("challenge=%v with no capture and needsInteraction=%v, want them to agree",
+			payload.Challenge, payload.NeedsInteraction)
+	}
+	if !payload.Challenge {
+		t.Fatal("challenge is false for a challenge that went unanswered")
+	}
+}
+
 func TestSolveStoresTheCapturedBundle(t *testing.T) {
 	site := plainPage(t)
 	router, server := solveFixture(t, site.URL)

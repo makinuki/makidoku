@@ -157,9 +157,13 @@ type solveResponse struct {
 	Verified bool   `json:"verified"`
 	// NeedsInteraction reports that a challenge was on screen and unanswered when
 	// the attempt ended. This is an expected state, not a fault: some challenges
-	// wait for a click.
+	// wait for a click. It describes the window, not the site.
 	NeedsInteraction bool `json:"needsInteraction"`
-	// Challenge reports that the site was still challenging after the attempt.
+	// Challenge reports that the site is still refusing requests once the attempt
+	// is over. It is not the same as NeedsInteraction: a window can close on an
+	// unanswered challenge while the material it captured is already working, and
+	// a capture can fail to verify without a challenge ever having been shown.
+	// Verified and Challenge are exclusive.
 	Challenge bool `json:"challenge"`
 	// Cookies lists the names that were stored. Values are never returned.
 	Cookies []string `json:"cookies"`
@@ -222,7 +226,6 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 		Origin:           target.origin,
 		Captured:         result.Captured,
 		NeedsInteraction: result.NeedsInteraction,
-		Challenge:        result.NeedsInteraction,
 		Cookies:          []string{},
 	}
 
@@ -238,6 +241,13 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Verified = verified
 		response.Cookies = cookieNames(result.Capture.Cookies)
+		// With material in hand, the site is still refusing exactly when a live
+		// request carrying it did not get through.
+		response.Challenge = !verified
+	} else {
+		// Nothing was captured, so there is nothing to replay. A challenge showing
+		// in the window is the only evidence that the site is holding us off.
+		response.Challenge = result.NeedsInteraction
 	}
 
 	switch {

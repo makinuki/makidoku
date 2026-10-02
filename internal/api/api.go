@@ -64,7 +64,12 @@ type Server struct {
 	// construction because it owns a thread and a window, and a build without an
 	// embedded browser leaves it nil.
 	challenger solver.Challenger
-	lifetime   atomic.Pointer[context.Context]
+	// A solve already in flight, keyed by origin. A second window for one origin
+	// would show the reader two windows answering a single challenge, so a repeat
+	// request for the same origin is refused while the first is open.
+	solving  sync.Mutex
+	inFlight map[string]struct{}
+	lifetime atomic.Pointer[context.Context]
 	// incognito is the runtime no-trace flag: while set, reading progress is
 	// not recorded and no automatic tracker activity is produced.
 	incognito atomic.Bool
@@ -181,7 +186,7 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	origin, err := s.resolveOrigin(r, sourceID, body.Origin)
+	target, err := s.resolveTarget(r, sourceID, body.Origin)
 	if err != nil {
 		writeLocalError(w, http.StatusBadRequest, err)
 		return
@@ -197,7 +202,14 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, solveErr := s.challenger.Solve(r.Context(), "https://"+origin+"/")
+	if !s.claimOrigin(target.origin) {
+		writeLocalError(w, http.StatusConflict, errors.New(
+			"a solve is already open for this origin; close that window first"))
+		return
+	}
+	defer s.releaseOrigin(target.origin)
+
+	result, solveErr := s.challenger.Solve(r.Context(), target.url)
 	if result == nil {
 		if solveErr == nil {
 			solveErr = errors.New("the solve produced no result")
@@ -207,7 +219,7 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := solveResponse{
-		Origin:           origin,
+		Origin:           target.origin,
 		Captured:         result.Captured,
 		NeedsInteraction: result.NeedsInteraction,
 		Challenge:        result.NeedsInteraction,
@@ -215,11 +227,11 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result.Captured {
-		if err := s.storeCapture(r, sourceID, result); err != nil {
+		if err := s.storeCapture(r, sourceID, target.origin, result); err != nil {
 			writeLocalError(w, http.StatusInternalServerError, err)
 			return
 		}
-		verified, err := s.engine.ProbeClearance(r.Context(), sourceID, origin)
+		verified, err := s.engine.ProbeClearance(r.Context(), sourceID, target.origin)
 		if err != nil {
 			writeLocalError(w, http.StatusInternalServerError, err)
 			return
@@ -242,56 +254,100 @@ func (s *Server) solveClearance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+// claimOrigin reserves an origin for one solve and reports whether it was free.
+func (s *Server) claimOrigin(origin string) bool {
+	s.solving.Lock()
+	defer s.solving.Unlock()
+	if s.inFlight == nil {
+		s.inFlight = make(map[string]struct{})
+	}
+	if _, held := s.inFlight[origin]; held {
+		return false
+	}
+	s.inFlight[origin] = struct{}{}
+	return true
+}
+
+// releaseOrigin frees an origin once its solve has finished.
+func (s *Server) releaseOrigin(origin string) {
+	s.solving.Lock()
+	defer s.solving.Unlock()
+	delete(s.inFlight, origin)
+}
+
 // storeCapture writes a captured bundle and releases any request waiting on it.
-func (s *Server) storeCapture(r *http.Request, sourceID string, result *solver.Result) error {
+func (s *Server) storeCapture(r *http.Request, sourceID, origin string, result *solver.Result) error {
 	return s.engine.SubmitClearanceBundle(sourceID, db.ClearanceBundle{
-		Origin:    result.Capture.Origin,
+		Origin:    origin,
 		Cookies:   result.Capture.Cookies,
 		UserAgent: result.Capture.UserAgent,
 		SecChUa:   result.Capture.SecChUa,
 	})
 }
 
-// resolveOrigin returns the host to present, preferring the caller's choice and
-// falling back to the source base address.
-func (s *Server) resolveOrigin(r *http.Request, sourceID, requested string) (string, error) {
-	requested = strings.TrimSpace(requested)
-	if requested != "" {
-		return hostOnly(requested), nil
+// solveTarget is the address presented to the browser and the identity the
+// clearance bundle is stored under.
+type solveTarget struct {
+	// origin is the bare host. Clearance is keyed by host, so it carries no port
+	// and no scheme.
+	origin string
+	// url is the address to navigate to, using the scheme the source declared.
+	url string
+}
+
+// resolveTarget returns the address to present, preferring the caller's choice
+// and falling back to the source base address.
+func (s *Server) resolveTarget(r *http.Request, sourceID, requested string) (solveTarget, error) {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return targetFor(requested)
 	}
 	// A source whose pages and images sit on different domains reports one entry
 	// per origin, so the first outstanding one is the origin the reader is being
 	// asked about.
 	for _, state := range s.engine.ChallengeStates() {
 		if state.SourceID == sourceID && state.Origin != "" {
-			return state.Origin, nil
+			return targetFor(state.Origin)
 		}
 	}
-	metadata, err := s.engine.Metadata(r.Context(), sourceID)
+	// The base address is read from the source record rather than asked of the
+	// plugin, so a solve can be started for a source whose plugin has not been
+	// loaded.
+	baseURL, err := s.engine.SourceBaseURL(sourceID)
 	if err != nil {
-		return "", fmt.Errorf("resolve source: %w", err)
+		return solveTarget{}, fmt.Errorf("resolve source: %w", err)
 	}
-	host := hostOnly(metadata.BaseURL)
-	if host == "" {
-		return "", errors.New("the source has no base address to present")
+	target, err := targetFor(baseURL)
+	if err != nil {
+		return solveTarget{}, err
 	}
-	return host, nil
+	return target, nil
 }
 
-// hostOnly reduces a URL or host to a bare hostname.
-func hostOnly(raw string) string {
+// targetFor reduces a URL or bare host to a host and a navigable address. A bare
+// host with no scheme is treated as HTTPS, which is what a registry source uses.
+func targetFor(raw string) (solveTarget, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return ""
+		return solveTarget{}, errors.New("no origin was given to present")
 	}
 	if !strings.Contains(raw, "//") {
 		raw = "https://" + raw
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return ""
+		return solveTarget{}, errors.New("the origin could not be read as an address")
 	}
-	return strings.ToLower(parsed.Hostname())
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "" {
+		scheme = "https"
+	}
+	// Host is used rather than Hostname so a non-default port survives. A registry
+	// source has no port, so origin is the bare host in every real case.
+	host := strings.ToLower(parsed.Host)
+	if host == "" {
+		return solveTarget{}, errors.New("the origin has no host to present")
+	}
+	return solveTarget{origin: host, url: scheme + "://" + host + "/"}, nil
 }
 
 // cookieNames lists cookie names in a stable order. Values are never returned

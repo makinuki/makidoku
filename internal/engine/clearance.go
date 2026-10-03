@@ -108,6 +108,14 @@ func (b *ClearanceBroker) Bundles(sourceID string) ([]db.ClearanceBundle, error)
 // Bundle returns the material for one source and origin. When no bundle exists,
 // the reserved plugin_storage keys are consulted so installs that predate the
 // bundle table keep working, and the result is written back.
+//
+// A subdomain with no bundle of its own falls back to the material stored for its
+// parent domain. A source commonly serves its documents from one host and its
+// images from another, and both sit behind the same guard, so material captured
+// for the parent is accepted by the subdomain rather than forcing a second solve
+// for an origin that was never challenged in its own right. The fallback only
+// widens within one registrable domain: an unrelated domain is never offered
+// another domain's material.
 func (b *ClearanceBroker) Bundle(sourceID, origin string) *db.ClearanceBundle {
 	origin = normalizeOrigin(origin)
 	bundle, found, err := b.store.GetClearanceBundle(sourceID, origin)
@@ -118,6 +126,9 @@ func (b *ClearanceBroker) Bundle(sourceID, origin string) *db.ClearanceBundle {
 	if found {
 		return bundle
 	}
+	if inherited := b.parentBundle(sourceID, origin); inherited != nil {
+		return inherited
+	}
 	migrated := b.legacyBundle(sourceID)
 	if migrated == nil {
 		return nil
@@ -126,6 +137,39 @@ func (b *ClearanceBroker) Bundle(sourceID, origin string) *db.ClearanceBundle {
 		slog.Warn("write through legacy clearance", "source", sourceID, "error", err)
 	}
 	return migrated
+}
+
+// parentBundle returns the nearest stored bundle for an ancestor of origin. The
+// most specific ancestor wins, so a bundle held for a subdomain is preferred over
+// one held for the registrable domain.
+func (b *ClearanceBroker) parentBundle(sourceID, origin string) *db.ClearanceBundle {
+	held, err := b.store.ListClearanceBundles(sourceID)
+	if err != nil {
+		slog.Warn("list clearance bundles", "source", sourceID, "error", err)
+		return nil
+	}
+	var best *db.ClearanceBundle
+	for i := range held {
+		candidate := held[i]
+		if candidate.Origin == origin || !isAncestorDomain(candidate.Origin, origin) {
+			continue
+		}
+		if best == nil || len(candidate.Origin) > len(best.Origin) {
+			best = &held[i]
+		}
+	}
+	return best
+}
+
+// isAncestorDomain reports whether ancestor is a strict parent of host. The
+// comparison is on label boundaries, so "notexample.com" is not a child of
+// "example.com". The reserved fallback origin is never treated as a parent,
+// because it names no domain at all.
+func isAncestorDomain(ancestor, host string) bool {
+	if ancestor == "" || host == "" || ancestor == fallbackOrigin {
+		return false
+	}
+	return strings.HasSuffix(host, "."+ancestor)
 }
 
 // legacyBundle reads the reserved plugin_storage keys written by earlier
@@ -263,8 +307,13 @@ func (b *ClearanceBroker) fresh(sourceID, origin, usedCookie string) bool {
 
 // MarkChallenged records that material for an origin met a challenge, advancing
 // the generation so a burst of parallel failures counts once.
+//
+// The mark lands on the origin that stores the material, which for a subdomain
+// serving inherited clearance is its parent. Marking the subdomain instead would
+// address a row that does not exist, leaving the bundle reported as usable while
+// the site is refusing every request that presents it.
 func (b *ClearanceBroker) MarkChallenged(sourceID, origin string) error {
-	origin = normalizeOrigin(origin)
+	origin = b.holdingOrigin(sourceID, normalizeOrigin(origin))
 	bundle, found, err := b.store.GetClearanceBundle(sourceID, origin)
 	if err != nil {
 		return fmt.Errorf("read clearance bundle: %w", err)
@@ -276,9 +325,20 @@ func (b *ClearanceBroker) MarkChallenged(sourceID, origin string) error {
 }
 
 // MarkUsable records that a request carrying the material succeeded, which is the
-// only reliable evidence that it still works.
+// only reliable evidence that it still works. As with MarkChallenged, the record
+// lands on the origin that stores the material.
 func (b *ClearanceBroker) MarkUsable(sourceID, origin string) error {
-	return b.store.TouchClearanceSuccess(sourceID, normalizeOrigin(origin))
+	return b.store.TouchClearanceSuccess(sourceID, b.holdingOrigin(sourceID, normalizeOrigin(origin)))
+}
+
+// holdingOrigin returns the origin under which material for the requested origin
+// is actually stored: the origin itself when it holds a bundle, otherwise the
+// nearest ancestor that does.
+func (b *ClearanceBroker) holdingOrigin(sourceID, origin string) string {
+	if inherited := b.parentBundle(sourceID, origin); inherited != nil {
+		return inherited.Origin
+	}
+	return origin
 }
 
 func (b *ClearanceBroker) subscribe(sourceID string) <-chan struct{} {

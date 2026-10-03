@@ -300,6 +300,13 @@ func (f *Fetcher) doWith(ctx context.Context, sourceID string, req HttpRequest, 
 		return nil, herr
 	}
 	if Classify(replayed.Status, replayed.Headers, replayed.Body) == ClassSolvable {
+		// Material that was just applied and then refused again is marked, so the
+		// record does not keep reporting clearance as usable while the site is
+		// turning it away. The generation bound means a burst of parallel replays
+		// counts once.
+		if f.resolver != nil {
+			_ = f.resolver.MarkChallenged(sourceID, originOf(req.URL))
+		}
 		challenge.Status = replayed.Status
 		challenge.Message = "anti-bot challenge persisted after clearance replay"
 		return nil, &challenge

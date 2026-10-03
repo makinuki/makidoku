@@ -244,9 +244,18 @@ func (f *Fetcher) doWith(ctx context.Context, sourceID string, req HttpRequest, 
 	// involved. Warming the origin up can settle the session on its own,
 	// because the reply often carries the bot-management cookie the challenge
 	// page was missing.
-	if warmed := f.warmUp(ctx, sourceID, pick); warmed != nil {
+	//
+	// The warm-up settles the session; it does not answer the request. The
+	// original request is made again rather than handing back the warm-up's
+	// document, because the two are different resources and a caller expecting a
+	// chapter listing or an image cannot use the origin root in its place.
+	if warmed := f.warmUp(ctx, sourceID, req.URL, pick); warmed != nil {
 		if Classify(warmed.Status, warmed.Headers, warmed.Body) != ClassSolvable {
-			return warmed, nil
+			if retried, _, retryErr := f.attemptWith(ctx, sourceID, method, req, pick); retryErr == nil {
+				if Classify(retried.Status, retried.Headers, retried.Body) != ClassSolvable {
+					return retried, nil
+				}
+			}
 		}
 	}
 
@@ -384,15 +393,26 @@ func (f *Fetcher) ChallengeStates() map[string]ChallengeState {
 	return out
 }
 
-// warmUp makes one request to the origin root before a challenge is escalated to
-// a human. Many gated origins hand out their bot-management cookie on a plain
-// root visit, and the follow-up request then succeeds without any interaction.
+// warmUp makes one request to the root of the challenged host before a challenge
+// is escalated to a human. Many gated origins hand out their bot-management
+// cookie on a plain root visit, and the follow-up request then succeeds without
+// any interaction.
 //
-// It returns nil when the warm-up cannot be made or did not itself complete, so
-// the caller falls through to the normal resolution path.
-func (f *Fetcher) warmUp(ctx context.Context, sourceID string, pick clientPicker) *rawHTTPResponse {
-	target, err := url.Parse(f.originRoot(sourceID))
-	if err != nil {
+// The warmed host is the one that answered with the challenge, not the source's
+// recorded base address. A source that serves its documents from one host and its
+// images from another is challenged on the image host, so warming the document
+// host reaches an origin that never issued the challenge.
+//
+// It returns nil when the source has no recorded base address, when the warm-up
+// cannot be made, or when it did not itself complete, so the caller falls through
+// to the normal resolution path.
+func (f *Fetcher) warmUp(ctx context.Context, sourceID, blockedURL string, pick clientPicker) *rawHTTPResponse {
+	base := f.originRoot(sourceID)
+	if base == "" {
+		return nil
+	}
+	target, err := url.Parse(challengedRoot(blockedURL, base))
+	if err != nil || target.Host == "" {
 		return nil
 	}
 	// A short budget keeps a stalled origin from delaying the real error. The
@@ -408,6 +428,16 @@ func (f *Fetcher) warmUp(ctx context.Context, sourceID string, pick clientPicker
 		return nil
 	}
 	return resp
+}
+
+// challengedRoot returns the root address of the host that produced a challenge,
+// falling back to the source's base address when the challenged address names no
+// host.
+func challengedRoot(blockedURL, base string) string {
+	if parsed, err := url.Parse(strings.TrimSpace(blockedURL)); err == nil && parsed.Host != "" {
+		return parsed.Scheme + "://" + parsed.Host + "/"
+	}
+	return base
 }
 
 // originRoot returns the scheme and host of the source's base URL, used for the
@@ -490,6 +520,10 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 		httpReq.Header.Set("User-Agent", f.userAgent)
 	}
 
+	// The source's own base address is sent as the referrer and the origin, so an
+	// asset host that refuses a request without them still serves the bytes.
+	applyRefererHeaders(httpReq, f.baseURLs[sourceID])
+
 	httpResp, err := pick(sourceID).Do(httpReq)
 	if err != nil {
 		// A dropped connection and an expired deadline share one code, so no
@@ -552,6 +586,29 @@ func applyBrowserHeaders(req *http.Request) {
 		if req.Header.Get(name) == "" {
 			req.Header.Set(name, value)
 		}
+	}
+}
+
+// applyRefererHeaders sets Referer and Origin from the source's own base address.
+//
+// Some origins refuse an asset whose request carries no Referer.
+//
+// Both fall back to the request's own address when the source has no recorded
+// base, and neither replaces a value a plugin set for itself.
+func applyRefererHeaders(req *http.Request, base string) {
+	referer := strings.TrimRight(base, "/")
+	if referer == "" {
+		referer = req.URL.String()
+	}
+	if req.Header.Get("Referer") == "" {
+		req.Header.Set("Referer", referer)
+	}
+	if req.Header.Get("Origin") == "" {
+		origin := referer
+		if parsed, err := url.Parse(referer); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			origin = parsed.Scheme + "://" + parsed.Host
+		}
+		req.Header.Set("Origin", origin)
 	}
 }
 

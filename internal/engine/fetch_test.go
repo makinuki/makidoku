@@ -126,13 +126,13 @@ func TestFetchReplaysGetAfterClearance(t *testing.T) {
 
 	broker, _ := newTestBroker(t, 0)
 	resolver := &bundleResolver{broker: broker, install: func() {
-		if err := broker.Submit("kagane", hostOnly(server.URL), "solved", "cleared-agent"); err != nil {
+		if err := broker.Submit(testSourceID, hostOnly(server.URL), "solved", "cleared-agent"); err != nil {
 			t.Fatalf("submit clearance: %v", err)
 		}
 	}}
 
 	fetcher := NewFetcher(NewMemoryStorage(), resolver)
-	resp, herr := fetcher.Do(context.Background(), "kagane", HttpRequest{URL: server.URL})
+	resp, herr := fetcher.Do(context.Background(), testSourceID, HttpRequest{URL: server.URL})
 	if herr != nil {
 		t.Fatalf("host error: %+v", herr)
 	}
@@ -202,6 +202,67 @@ func TestFetchCapsResponseBody(t *testing.T) {
 	_, herr := fetcher.Do(context.Background(), "mangadex", HttpRequest{URL: server.URL})
 	if herr == nil || herr.Error != CodeMemoryLimitExceeded {
 		t.Fatalf("error = %+v, want %s", herr, CodeMemoryLimitExceeded)
+	}
+}
+
+// An asset host that refuses a request without a referrer is a form of hotlink
+// protection. The source's base address is sent as Referer and Origin, and a
+// value the plugin set for itself is left alone.
+func TestFetchSendsTheSourceBaseAsReferrerAndOrigin(t *testing.T) {
+	type seenHeaders struct {
+		referer string
+		origin  string
+	}
+	got := make(chan seenHeaders, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seenHeaders{referer: r.Header.Get("Referer"), origin: r.Header.Get("Origin")}
+	}))
+	defer server.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	fetcher.SetBaseURL("source", "https://gate.test/")
+
+	if _, herr := fetcher.Do(context.Background(), "source", HttpRequest{
+		URL: server.URL + "/img/1/2/3.jpg",
+	}); herr != nil {
+		t.Fatalf("host error: %+v", herr)
+	}
+
+	first := <-got
+	if first.referer != "https://gate.test" {
+		t.Fatalf("referer = %q, want the source base address", first.referer)
+	}
+	if first.origin != "https://gate.test" {
+		t.Fatalf("origin = %q, want the scheme and host of the base address", first.origin)
+	}
+
+	if _, herr := fetcher.Do(context.Background(), "source", HttpRequest{
+		URL:     server.URL + "/img/1/2/4.jpg",
+		Headers: map[string]string{"Referer": "https://elsewhere.test/page"},
+	}); herr != nil {
+		t.Fatalf("host error: %+v", herr)
+	}
+	if second := <-got; second.referer != "https://elsewhere.test/page" {
+		t.Fatalf("referer = %q, want the plugin supplied value left alone", second.referer)
+	}
+}
+
+// With no recorded base the request's own address is used, so the header is
+// present rather than sometimes absent.
+func TestFetchFallsBackToTheRequestAddressWithoutABase(t *testing.T) {
+	referer := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		referer <- r.Header.Get("Referer")
+	}))
+	defer server.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	if _, herr := fetcher.Do(context.Background(), "source", HttpRequest{URL: server.URL}); herr != nil {
+		t.Fatalf("host error: %+v", herr)
+	}
+
+	if got := <-referer; got != server.URL {
+		t.Fatalf("referer = %q, want the request address %q", got, server.URL)
 	}
 }
 
@@ -343,6 +404,109 @@ func TestWarmUpClearsChallengeWithoutResolve(t *testing.T) {
 	}
 }
 
+// The warm-up settles a session; it does not answer the request. A source that
+// serves documents from one host and images from another is challenged on the
+// image host, and the warm-up must not hand the document host's page back as
+// though it were the image.
+func TestWarmUpDoesNotAnswerTheRequestFromAnotherHost(t *testing.T) {
+	base := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><body>document host home page</body></html>"))
+	}))
+	defer base.Close()
+
+	images := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cf-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(challengeBody))
+	}))
+	defer images.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	fetcher.SetBaseURL("source", base.URL+"/")
+
+	body, err := fetcher.FetchImage(context.Background(), "source", images.URL+"/img/1.jpg", nil)
+	if err == nil {
+		t.Fatalf("a challenged image must not resolve to a %d byte body from another host", len(body))
+	}
+	if strings.Contains(string(body), "document host home page") {
+		t.Fatal("the document host's page was returned in place of the image")
+	}
+}
+
+// The warm-up reaches the host that issued the challenge. Warming the source's
+// base address instead touches a host that never answered with a challenge.
+func TestWarmUpWarmsTheChallengedHost(t *testing.T) {
+	warmed := make(chan string, 4)
+	images := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		warmed <- r.URL.Path
+		if r.URL.Path == "/" {
+			_, _ = w.Write([]byte("<title>ok</title>"))
+			return
+		}
+		w.Header().Set("Cf-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(challengeBody))
+	}))
+	defer images.Close()
+
+	base := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the document host must not be warmed for an image host challenge")
+		_, _ = w.Write([]byte("<title>wrong host</title>"))
+	}))
+	defer base.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	fetcher.SetBaseURL("source", base.URL+"/")
+
+	if _, err := fetcher.FetchImage(context.Background(), "source", images.URL+"/img/1.jpg", nil); err == nil {
+		t.Fatal("the image was expected to stay blocked, the warm-up only proves it is challenged")
+	}
+
+	sawRoot := false
+	for len(warmed) > 0 {
+		if <-warmed == "/" {
+			sawRoot = true
+		}
+	}
+	if !sawRoot {
+		t.Fatal("the challenged host was never warmed")
+	}
+}
+
+// A warm origin answers the retry with the requested resource, not with the
+// origin root.
+func TestWarmUpSettlesTheSessionAndTheRequestIsMadeAgain(t *testing.T) {
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			w.Header().Set("Cf-Mitigated", "challenge")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(challengeBody))
+			return
+		}
+		if r.URL.Path == "/series/1" {
+			_, _ = w.Write([]byte(`{"title":"the requested listing"}`))
+			return
+		}
+		_, _ = w.Write([]byte("<title>origin root</title>"))
+	}))
+	defer server.Close()
+
+	fetcher := NewFetcher(NewMemoryStorage(), nil)
+	fetcher.SetBaseURL("source", server.URL)
+
+	resp, herr := fetcher.Do(context.Background(), "source", HttpRequest{
+		URL:    server.URL + "/series/1",
+		Method: http.MethodGet,
+	})
+	if herr != nil {
+		t.Fatalf("host error: %+v", herr)
+	}
+	if !strings.Contains(resp.Body, "the requested listing") {
+		t.Fatalf("body = %q, want the requested listing rather than the origin root", resp.Body)
+	}
+}
+
 // TestChallengeIsRecordedAndResolvedOnce checks that a challenge is surfaced
 // and that repeated requests on one origin resolve it a single time.
 func TestChallengeIsRecordedAndResolvedOnce(t *testing.T) {
@@ -362,7 +526,7 @@ func TestChallengeIsRecordedAndResolvedOnce(t *testing.T) {
 	// No base URL is recorded, so the warm-up is skipped and the resolver path
 	// is exercised on its own.
 	fetcher := NewFetcher(NewMemoryStorage(), resolver)
-	_, herr := fetcher.Do(context.Background(), "kagane", HttpRequest{
+	_, herr := fetcher.Do(context.Background(), testSourceID, HttpRequest{
 		URL:    server.URL + "/series/1",
 		Method: http.MethodGet,
 	})
@@ -371,7 +535,7 @@ func TestChallengeIsRecordedAndResolvedOnce(t *testing.T) {
 	}
 
 	states := fetcher.ChallengeStates()
-	state, ok := states[hostKey("kagane", server.URL)]
+	state, ok := states[hostKey(testSourceID, server.URL)]
 	if !ok {
 		t.Fatalf("no state recorded, got %+v", states)
 	}
@@ -379,7 +543,7 @@ func TestChallengeIsRecordedAndResolvedOnce(t *testing.T) {
 		t.Fatalf("hits = %d, want 1", state.Hits)
 	}
 
-	_, _ = fetcher.Do(context.Background(), "kagane", HttpRequest{
+	_, _ = fetcher.Do(context.Background(), testSourceID, HttpRequest{
 		URL:    server.URL + "/series/2",
 		Method: http.MethodGet,
 	})
@@ -403,13 +567,13 @@ func TestJarSharedBetweenPageAndImage(t *testing.T) {
 	defer server.Close()
 
 	fetcher := NewFetcher(NewMemoryStorage(), nil)
-	if _, herr := fetcher.Do(context.Background(), "kagane", HttpRequest{
+	if _, herr := fetcher.Do(context.Background(), testSourceID, HttpRequest{
 		URL:    server.URL + "/series/1",
 		Method: http.MethodGet,
 	}); herr != nil {
 		t.Fatalf("page request: %+v", herr)
 	}
-	if _, err := fetcher.FetchImage(context.Background(), "kagane", server.URL+"/page.jpg", nil); err != nil {
+	if _, err := fetcher.FetchImage(context.Background(), testSourceID, server.URL+"/page.jpg", nil); err != nil {
 		t.Fatalf("image request: %v", err)
 	}
 	if atomic.LoadInt32(&sawCookie) == 0 {
@@ -516,9 +680,9 @@ func TestClassifySeparatesTerminalFromSolvable(t *testing.T) {
 		{"geo block", http.StatusForbidden, nil, "Error 1020 You have been blocked", ClassTerminal},
 		{"access denied", http.StatusForbidden, nil, "Access denied", ClassTerminal},
 		{"rate limited", http.StatusTooManyRequests, map[string]string{"retry-after": "30"}, "slow down", ClassRateLimited},
-		{"ok page", http.StatusOK, nil, "<title>Kagane</title>", ClassNone},
+		{"ok page", http.StatusOK, nil, "<title>Example</title>", ClassNone},
 		{"ok page naming a challenge", http.StatusOK, nil,
-			"<title>Kagane</title>ads will be disabled for 15 minutes in just a moment", ClassNone},
+			"<title>Example</title>ads will be disabled for 15 minutes in just a moment", ClassNone},
 		{"script path is not a challenge", http.StatusOK, nil,
 			"<script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script>", ClassNone},
 		{"not found carrying a phrase", http.StatusNotFound, nil, "just a moment", ClassNone},

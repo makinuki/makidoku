@@ -5,14 +5,17 @@ import (
 	"compress/zlib"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
-
-	"github.com/makinuki/makidoku/internal/settings"
 	"sync"
 	"time"
+
+	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/makinuki/makidoku/internal/settings"
 
 	"github.com/makinuki/makidoku/internal/db"
 )
@@ -531,10 +534,14 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	// asset host that refuses a request without them still serves the bytes.
 	applyRefererHeaders(httpReq, f.baseURLs[sourceID])
 
+	started := time.Now()
 	httpResp, err := pick(sourceID).Do(httpReq)
 	if err != nil {
 		// A dropped connection and an expired deadline share one code, so no
 		// further discrimination is needed here.
+		slog.Warn("source request failed",
+			"source", sourceID, "method", method, "url", target.String(),
+			"elapsed_ms", elapsedMs(started), "err", err)
 		return nil, usedCookie, &HttpError{
 			Error:   CodeNetworkTimeout,
 			URL:     target.String(),
@@ -565,9 +572,16 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 		}
 	}
 
+	class := Classify(httpResp.StatusCode, flattenHeaders(httpResp.Header), raw)
+	// A challenged or refused response is worth a record at info, because that is
+	// what a report should contain without the owner raising the level. An
+	// ordinary success stays at debug, because a chapter view produces a great
+	// many of them.
+	logFetch(ctx, sourceID, method, target, httpResp, class, started, len(raw), usedCookie)
+
 	// A protected origin answering without a challenge is the only reliable
 	// evidence that the stored material still works.
-	if bundle != nil && Classify(httpResp.StatusCode, nil, raw) != ClassSolvable {
+	if bundle != nil && class != ClassSolvable {
 		_ = f.resolver.MarkUsable(sourceID, originOf(target.String()))
 	}
 
@@ -673,4 +687,59 @@ func flattenHeaders(header http.Header) map[string]string {
 		out[strings.ToLower(name)] = strings.Join(values, ", ")
 	}
 	return out
+}
+
+// requestIDFromContext returns the identifier assigned by the API layer, or an
+// empty string when the work was not triggered by an inbound request. A
+// background download has no inbound request, so the field is absent rather than
+// empty in that case.
+func requestIDFromContext(ctx context.Context) string {
+	return middleware.GetReqID(ctx)
+}
+
+// elapsedMs renders a duration the way a record reads best: whole milliseconds,
+// so a slow request and a fast refusal can be compared at a glance.
+func elapsedMs(started time.Time) int64 {
+	return time.Since(started).Milliseconds()
+}
+
+// logFetch writes one record for a completed source request. The field set is
+// chosen to answer the question a failed refresh raises: which source, which URL,
+// what came back, how long it took, and whether stored material was applied.
+//
+// No body is ever written, and usedCookie is reduced to a boolean before it reaches
+// the handler. A record can therefore state that clearance was applied without
+// disclosing any part of it.
+func logFetch(ctx context.Context, sourceID, method string, target *url.URL, resp *http.Response, class ChallengeClass, started time.Time, bodyLen int, usedCookie string) {
+	attrs := []any{
+		"source", sourceID,
+		"method", method,
+		"url", target.String(),
+		"status", resp.StatusCode,
+		"elapsed_ms", elapsedMs(started),
+		"bytes", bodyLen,
+		"classification", string(class),
+	}
+	// The correlation identifier is present when the request came in through the
+	// API, and absent for a background download, which is why it is added
+	// conditionally rather than as an empty field.
+	if id := requestIDFromContext(ctx); id != "" {
+		attrs = append(attrs, "request_id", id)
+	}
+	if usedCookie != "" {
+		attrs = append(attrs, "clearance_applied", true)
+	}
+
+	// A challenge is raised to info, since that is what a report should contain
+	// without the owner raising the level. An outright refusal is raised as well,
+	// because it is the case this logging exists to explain. An ordinary response
+	// stays at debug, because reading a chapter produces a great many of them.
+	switch class {
+	case ClassSolvable:
+		slog.InfoContext(ctx, "source challenged", attrs...)
+	case ClassTerminal, ClassRateLimited:
+		slog.InfoContext(ctx, "source refused", attrs...)
+	default:
+		slog.DebugContext(ctx, "source request", attrs...)
+	}
 }

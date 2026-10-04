@@ -58,14 +58,11 @@ type cookieSnapshot struct {
 // beginSolve is never reached, because Availability reports unsupported first.
 func (s *Solver) beginSolve(origin string, sink *reports) error { return platformSupport() }
 
-// unavailableHost stands in for the window on a platform with no browser. The
-// solver thread still starts so callers have one place to ask, but nothing can
-// be posted to it.
-type unavailableHost struct{}
+// hostWindow is the window the browser is embedded in. This build has no
+// browser, so the type exists only to satisfy the field the shared solver holds.
+// Nothing constructs one, and the methods below are the whole of its surface.
+type hostWindow struct{}
 
-func (unavailableHost) runTask(func()) {}
-func (unavailableHost) postClose()     {}
-
-// startHost has nothing to build on a platform with no browser, and reports that
-// so the solver thread stops instead of pretending to be ready.
-func startHost() (threadHost, error) { return nil, platformSupport() }
+// startThread has nothing to build on a platform with no browser, and reports
+// that so the solver thread stops instead of pretending to be ready.
+func startThread() (threadHost, error) { return nil, platformSupport() }

@@ -15,7 +15,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - windows
-      - linux
     goarch:
       - amd64
       - arm64
@@ -27,9 +26,7 @@ builds:
 archives:
   - builds: [makidoku]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        format: zip
+    format: zip
 
 checksum:
   name_template: checksums.txt
@@ -49,4 +46,4 @@ release:
     ### Tray builds
 
     Headless binaries above are `CGO_ENABLED=0` cross-compiled and have no system tray.
-    Tray-enabled binaries (`makidoku-tray`) are built separately on per-OS runners with `CGO_ENABLED=1 -tags tray` via the release workflow and attached to the same GitHub Release.
+    Tray-enabled binaries (`makidoku-tray`) are built separately on a Windows runner with `CGO_ENABLED=1 -tags tray` via the release workflow and attached to the same GitHub Release.

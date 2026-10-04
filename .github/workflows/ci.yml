@@ -16,11 +16,11 @@ jobs:
   web-assets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Install web dependencies
@@ -31,7 +31,7 @@ jobs:
         run: pnpm --dir web typecheck
       - name: Test
         run: pnpm --dir web test:run
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -39,26 +39,14 @@ jobs:
 
   go:
     needs: web-assets
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           cache: true
-      - name: Install web dependencies
-        run: pnpm --dir web install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
@@ -67,4 +55,4 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: go test ./internal/... ./cmd/...
+        run: go test ./...

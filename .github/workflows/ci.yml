@@ -53,6 +53,13 @@ jobs:
       - name: Build
         run: go build ./...
       - name: Vet
-        run: go vet ./...
+        # The unsafeptr analyzer is disabled for one known false positive: a COM
+        # interface pointer supplied to a cgo callback has to be converted from a
+        # uintptr, which the analyzer cannot distinguish from a real Go pointer.
+        # The conversion it would otherwise demand reads a vtable out of the stack
+        # and crashes the process, so the analyzer is off rather than the code
+        # changed. Every other vet check still runs. See the comment on
+        # readCookieList in internal/solver/browser_windows.go.
+        run: go vet -unsafeptr=false ./...
       - name: Test
         run: go test ./...

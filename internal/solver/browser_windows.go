@@ -131,15 +131,19 @@ func completionRelease(_ uintptr) uintptr              { return 1 }
 // readCookieList reads a completed list.
 //
 // The runtime supplies the list as a plain integer, so recovering the object
-// behind it means converting an integer back to a pointer, and there is no other
-// way to reach it. The pointer check is therefore disabled for this function.
-// The self check covers the call: if a dependency change alters the interface
-// layout, the check fails here instead of the process faulting during normal use.
+// behind it means recovering a pointer from an integer. The address is taken of
+// the parameter rather than converted from the integer itself, which is the form
+// the unsafe.Pointer documentation prescribes for a uintptr holding a pointer: it
+// keeps the conversion in a single expression and leaves the compiler free to
+// keep the value in memory. The pointer check is therefore disabled for this
+// function. The self check covers the call: if a dependency change alters the
+// interface layout, the check fails here instead of the process faulting during
+// normal use.
 //
 //go:nocheckptr
 func readCookieList(list uintptr) cookieSnapshot {
 	snapshot := cookieSnapshot{jar: map[string]string{}}
-	items := (*edge.ICoreWebView2CookieList)(unsafe.Pointer(list))
+	items := (*edge.ICoreWebView2CookieList)(unsafe.Pointer(&list))
 	count, err := items.GetCount()
 	if err != nil {
 		return snapshot

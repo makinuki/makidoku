@@ -131,19 +131,35 @@ func completionRelease(_ uintptr) uintptr              { return 1 }
 // readCookieList reads a completed list.
 //
 // The runtime supplies the list as a plain integer, so recovering the object
-// behind it means recovering a pointer from an integer. The address is taken of
-// the parameter rather than converted from the integer itself, which is the form
-// the unsafe.Pointer documentation prescribes for a uintptr holding a pointer: it
-// keeps the conversion in a single expression and leaves the compiler free to
-// keep the value in memory. The pointer check is therefore disabled for this
-// function. The self check covers the call: if a dependency change alters the
-// interface layout, the check fails here instead of the process faulting during
-// normal use.
+// behind it means converting that integer back into a pointer. The conversion
+// has to be spelled as unsafe.Pointer(list): the parameter already holds the
+// interface address, and list is not a Go object whose location could change.
+//
+// That spelling is what the vet unsafeptr analyzer reports as a possible misuse,
+// and the report is correct in general and wrong here. The analyzer cannot tell
+// a genuine Go pointer from a foreign one, and this value arrives from a cgo
+// callback rather than from Go. No local form of the conversion satisfies the
+// analyzer, because the blessed cases are a reflect header, reflect.Value.Pointer,
+// and a round trip from a real Go pointer, and none of them describe a COM
+// interface pointer. CI therefore runs vet with the unsafeptr analyzer disabled
+// rather than with this line changed.
+//
+// The warning must not be resolved by editing this conversion. Taking the
+// address of the parameter, unsafe.Pointer(&list), reads as a near miss and
+// satisfies the analyzer, but it yields the address of the stack slot rather
+// than the interface address it holds. The call that follows then reads a vtable
+// out of the stack and jumps through it, which faults the process outright at a
+// null address rather than raising a recoverable panic. That mistake shipped
+// once and was later reverted; the analyzer has no way to warn against it.
+//
+// The runtime pointer check is disabled for this function for the same reason:
+// the pointer being converted is not a Go allocation, so checkptr cannot
+// validate it either.
 //
 //go:nocheckptr
 func readCookieList(list uintptr) cookieSnapshot {
 	snapshot := cookieSnapshot{jar: map[string]string{}}
-	items := (*edge.ICoreWebView2CookieList)(unsafe.Pointer(&list))
+	items := (*edge.ICoreWebView2CookieList)(unsafe.Pointer(list))
 	count, err := items.GetCount()
 	if err != nil {
 		return snapshot

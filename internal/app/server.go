@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/makinuki/makidoku/internal/solver"
 	"github.com/makinuki/makidoku/internal/tracker"
 	"github.com/makinuki/makidoku/internal/updater"
+	"github.com/makinuki/makidoku/internal/version"
 	"github.com/makinuki/makidoku/web"
 )
 
@@ -83,6 +85,13 @@ func New(cfg config.Config) (*Server, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// The data directory is resolved before anything else so the log file can be
+	// opened next to the database. A failure here is returned rather than swallowed:
+	// silently losing the log is the one outcome that would make a later report
+	// unexplainable.
+	if err := logger.OpenFile(cfg.DataDir); err != nil {
+		return nil, fmt.Errorf("open log file: %w", err)
+	}
 	eng := engine.New(database, engine.Options{
 		DataDir:       cfg.DataDir,
 		RegistryURL:   cfg.RegistryURL,
@@ -132,6 +141,10 @@ func New(cfg config.Config) (*Server, error) {
 	// not trust client supplied forwarding headers.
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
+	// Correlate records the request and its outcome once, under the identifier
+	// RequestID assigned, so the records beneath one operation can be found
+	// together. It must follow RequestID to have an identifier to use.
+	router.Use(api.Correlate)
 
 	trackers := tracker.NewRegistry(repo)
 	// Credential storage is unavailable without the encryption secret, so the
@@ -250,6 +263,19 @@ func (s *Server) Run(ctx context.Context) error {
 
 	errs := make(chan error, 1)
 	go func() {
+		// Without this, there is no way to tell which build answered a question,
+		// or whether the solver can run on this machine at all.
+		slog.Info("makidoku starting",
+			"version", version.Version,
+			"commit", version.Commit,
+			"build_date", version.Date,
+			"data_dir", s.cfg.DataDir,
+			"log_file", logger.LogFilePath(),
+			"port", s.cfg.Port,
+			"log_level", logger.CurrentLevel().String(),
+			"challenge_wait", s.cfg.ChallengeWait,
+			"solver_available", s.challenger.Available(context.Background()) == nil,
+		)
 		slog.Info("makidoku listening", "addr", s.http.Addr, "data", s.cfg.DataDir)
 		if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errs <- err
@@ -344,5 +370,10 @@ func (s *Server) close() {
 	s.engine.Close(ctx)
 	if err := s.db.Close(); err != nil {
 		slog.Error("closing database failed", "err", err)
+	}
+	// The log is closed last so every record above reaches the file before the
+	// handle is released.
+	if err := logger.CloseFile(); err != nil {
+		fmt.Fprintf(os.Stderr, "closing the log file failed: %v\n", err)
 	}
 }

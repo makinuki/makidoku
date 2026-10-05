@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/engine"
 	"github.com/makinuki/makidoku/internal/identity"
+	"github.com/makinuki/makidoku/internal/settings"
 )
 
 // A placeholder source created by a restore is not served by the engine, so
@@ -132,8 +134,7 @@ func TestApplyMigrationRetiresOldChapters(t *testing.T) {
 			Manga      db.Manga `json:"manga"`
 			SourceName string   `json:"sourceName"`
 		} `json:"manga"`
-		Source     string `json:"source"`
-		ChapterMap map[string]string
+		Source string `json:"source"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -267,31 +268,155 @@ func TestMigrationCandidatesReportFailedSources(t *testing.T) {
 	_ = newSource
 }
 
-// Reading progress carries over when the replacement source has a chapter
-// with the same number.
-func TestRemapProgressMatchesByChapterNumber(t *testing.T) {
-	oldNumber := 7.0
-	other := 9.0
-	retired := []db.Chapter{
-		{ID: "old-7", ChapterNumber: &oldNumber},
-		{ID: "old-9", ChapterNumber: &other},
-	}
-	newNumber := 7.0
-	replacement := []db.Chapter{
-		{ID: "new-7", ChapterNumber: &newNumber},
-	}
-	progress := db.ReadingProgress{MangaID: "m", LastReadChapterID: "old-7", LastReadPage: 3, TotalPages: 20, LastReadAt: 42}
+// The migration preferences come from the settings store, and an explicit
+// request value overrides them.
+func TestMigrationFlagsResolveFromSettings(t *testing.T) {
+	repo, _, _, _ := migrationTestRouter(t)
+	server := NewServer(repo, nil)
+	service := settings.New(repo)
+	server.SetSettings(service)
 
-	mapped := remapProgress(progress, retired, replacement)
-	if mapped == nil || mapped.LastReadChapterID != "new-7" {
-		t.Fatalf("remapped progress = %+v, want it moved to new-7", mapped)
+	if flags := server.migrationFlags(); !flags.has(migrationFlagChapter) || !flags.has(migrationFlagRemoveDownload) {
+		t.Fatalf("default flags = %d, want both enabled", flags)
 	}
-	if mapped.LastReadPage != 3 || mapped.TotalPages != 20 || mapped.LastReadAt != 42 {
-		t.Fatalf("remapped progress lost its state: %+v", mapped)
+	if err := service.Set("migration.carry_read_state", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Set("migration.remove_downloads", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if flags := server.migrationFlags(); flags != 0 {
+		t.Fatalf("flags after disabling both = %d, want 0", flags)
+	}
+	if !migrationFlag(0).valid() || !migrationFlagDefault.valid() {
+		t.Fatal("known flag masks should be valid")
+	}
+	if migrationFlag(1 << 4).valid() {
+		t.Fatal("an unknown flag bit should be rejected")
+	}
+}
+
+// Read state carries as a boundary: the replacement chapters at or below the
+// highest number read become read, and the progress pointer follows the
+// highest of them. Unnumbered chapters never qualify.
+func TestHighestAtOrBelowPicksCarryBoundary(t *testing.T) {
+	one, three, seven := 1.0, 3.0, 7.0
+	chapters := []db.Chapter{
+		{ID: "c1", ChapterNumber: &one},
+		{ID: "c3", ChapterNumber: &three},
+		{ID: "c7", ChapterNumber: &seven},
+		{ID: "extra"},
+	}
+	boundary := highestAtOrBelow(chapters, 5)
+	if boundary == nil || boundary.ID != "c3" {
+		t.Fatalf("boundary = %+v, want c3", boundary)
+	}
+	if !boundaryIsLast(chapters, &chapters[2]) {
+		t.Fatal("c7 should be the last numbered chapter")
+	}
+	if boundaryIsLast(chapters, boundary) {
+		t.Fatal("c3 should not be the last numbered chapter")
+	}
+	if highestAtOrBelow(chapters, 0) != nil {
+		t.Fatal("no chapter qualifies below the lowest number")
+	}
+}
+
+// The read-state boundary and bookmarks are read and written through the
+// repository: everything at or below the boundary becomes read, and the
+// chapter above it stays untouched.
+func TestMigrationReadStateCarryInRepository(t *testing.T) {
+	repo, _, oldSource, _ := migrationTestRouter(t)
+	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chapters []db.Chapter
+	for _, number := range []float64{1, 2, 3, 4} {
+		value := number
+		chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceID: oldSource, SourceChapterID: fmt.Sprintf("chapter-%v", number), ChapterNumber: &value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		chapters = append(chapters, chapter)
+	}
+	if err := repo.SetChapterRead(chapters[1].ID, manga.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetChapterBookmark(chapters[2].ID, true); err != nil {
+		t.Fatal(err)
 	}
 
-	missing := remapProgress(progress, retired, nil)
-	if missing != nil {
-		t.Fatalf("unmatched progress = %+v, want nil", missing)
+	highest, err := repo.HighestReadChapterNumber(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if highest == nil || *highest != 2 {
+		t.Fatalf("highest read = %v, want 2", highest)
+	}
+	bookmarks, err := repo.ListBookmarkedChapterNumbers(manga.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bookmarks) != 1 || bookmarks[0] != 3 {
+		t.Fatalf("bookmarks = %v, want [3]", bookmarks)
+	}
+
+	if _, err := repo.MarkChaptersReadThrough(manga.ID, 3); err != nil {
+		t.Fatal(err)
+	}
+	var readThrough int
+	if err := repo.DB().QueryRow(`SELECT COUNT(*) FROM chapter_read_state rs
+		JOIN chapters c ON c.id=rs.chapter_id
+		WHERE rs.manga_id=? AND rs.read=1 AND c.chapter_number<=3`, manga.ID).Scan(&readThrough); err != nil {
+		t.Fatal(err)
+	}
+	if readThrough != 3 {
+		t.Fatalf("read chapters at or below 3 = %d, want 3", readThrough)
+	}
+	var aboveBoundary int
+	if err := repo.DB().QueryRow(`SELECT COUNT(*) FROM chapter_read_state WHERE manga_id=? AND chapter_id=?`, manga.ID, chapters[3].ID).Scan(&aboveBoundary); err != nil {
+		t.Fatal(err)
+	}
+	if aboveBoundary != 0 {
+		t.Fatalf("chapter above the boundary was marked read")
+	}
+}
+
+// Removing downloads is a preference: with it off, the retired chapters still
+// leave the library but their files stay on disk.
+func TestApplyMigrationKeepsArtifactsWhenRemovalIsDisabled(t *testing.T) {
+	repo, router, oldSource, newSource := migrationTestRouter(t)
+	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := 1.0
+	chapter, err := repo.UpsertChapter(db.Chapter{MangaID: manga.ID, SourceID: oldSource, SourceChapterID: "chapter-a", ChapterNumber: &number})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "kept.cbz")
+	if err := os.WriteFile(artifact, []byte("pages"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkChapterDownloaded(chapter.ID, artifact); err != nil {
+		t.Fatal(err)
+	}
+	discovered, err := repo.UpsertManga(db.Manga{SourceID: newSource, SourceMangaID: "remote-b", Title: "Demo", Status: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"sourceId": newSource, "mangaId": discovered.ID, "flags": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/manga/"+manga.ID+"/migration/apply", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("artifact was removed despite the remove-download flag being off: %v", err)
 	}
 }

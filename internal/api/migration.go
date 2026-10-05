@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -38,9 +39,8 @@ type migrationCandidatesResponse struct {
 }
 
 type migrationResponse struct {
-	Manga      db.MangaAggregate `json:"manga"`
-	Source     string            `json:"source"`
-	ChapterMap map[string]string `json:"chapterMap"`
+	Manga  db.MangaAggregate `json:"manga"`
+	Source string            `json:"source"`
 }
 
 func (s *Server) mountMigration(r chi.Router) {
@@ -191,6 +191,9 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SourceID string `json:"sourceId"`
 		MangaID  string `json:"mangaId"`
+		// Flags overrides the stored migration preferences for this call. It
+		// is a bitmask; see migrationFlag.
+		Flags *int `json:"flags"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -239,19 +242,46 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retire the previous source's chapters and attach the replacement in one
-	// transaction, remembering the reading state for remapping once the
-	// replacement's chapters are known.
+	flags := s.migrationFlags()
+	if body.Flags != nil {
+		candidate := migrationFlag(*body.Flags)
+		if !candidate.valid() {
+			writeBadRequest(w, "flags contains an unsupported value")
+			return
+		}
+		flags = candidate
+	}
+	// Read state and bookmarks live on the chapters a migration retires, so
+	// capture them before the retirement deletes those rows.
 	progress, progressErr := s.repo.GetReadingProgress(oldID)
 	hasProgress := progressErr == nil
-	retired, artifacts, err := s.repo.MigrateMangaSource(oldID, discoveredSource.SourceID, body.MangaID)
+	var highestRead *float64
+	var bookmarks []float64
+	if flags.has(migrationFlagChapter) {
+		highestRead, err = s.repo.HighestReadChapterNumber(oldID)
+		if err != nil {
+			slog.Warn("migration reading highest read chapter failed", "manga", oldID, "err", err)
+			highestRead = nil
+		}
+		bookmarks, err = s.repo.ListBookmarkedChapterNumbers(oldID)
+		if err != nil {
+			slog.Warn("migration listing bookmarks failed", "manga", oldID, "err", err)
+			bookmarks = nil
+		}
+	}
+
+	// Retire the previous source's chapters and attach the replacement in one
+	// transaction.
+	_, artifacts, err := s.repo.MigrateMangaSource(oldID, discoveredSource.SourceID, body.MangaID)
 	if err != nil {
 		writeLocalError(w, http.StatusConflict, err)
 		return
 	}
-	for _, path := range artifacts {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			slog.Warn("migration removing artifact failed", "path", path, "err", err)
+	if flags.has(migrationFlagRemoveDownload) {
+		for _, path := range artifacts {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				slog.Warn("migration removing artifact failed", "path", path, "err", err)
+			}
 		}
 	}
 
@@ -276,55 +306,69 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 	// fresh read of the title would return.
 	aggregate.SourceName = s.sourceName(aggregate.Manga.SourceID)
 
-	// Remap reading state and report the old-to-new chapter matches.
-	chapterMap := map[string]string{}
-	for i := range retired {
-		if next := findSameNumber(aggregate.Chapters, retired[i].ChapterNumber); next != nil {
-			chapterMap[retired[i].ID] = next.ID
-		}
+	if flags.has(migrationFlagChapter) {
+		s.carryReadState(oldID, aggregate.Chapters, highestRead, bookmarks, progress, hasProgress)
 	}
-	if hasProgress {
-		if mapped := remapProgress(progress, retired, aggregate.Chapters); mapped != nil {
-			if _, err := s.repo.UpsertReadingProgress(*mapped); err != nil {
-				slog.Warn("migration remapping progress failed", "manga", oldID, "err", err)
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, migrationResponse{Manga: aggregate, Source: body.SourceID, ChapterMap: chapterMap})
+	writeJSON(w, http.StatusOK, migrationResponse{Manga: aggregate, Source: body.SourceID})
 }
 
-// findSameNumber locates a chapter with the given number in the list.
-func findSameNumber(chapters []db.Chapter, number *float64) *db.Chapter {
-	if number == nil {
-		return nil
+// carryReadState moves read state onto a replacement's chapters. Read state
+// carries as a boundary: every replacement chapter at or below the highest
+// chapter number read becomes read, because chapter numbering drifts between
+// sources. Bookmarks name specific chapters, so they carry by number. The
+// reading progress pointer follows the highest carried chapter.
+func (s *Server) carryReadState(mangaID string, chapters []db.Chapter, highestRead *float64, bookmarks []float64, previous db.ReadingProgress, hasProgress bool) {
+	if highestRead != nil {
+		if _, err := s.repo.MarkChaptersReadThrough(mangaID, *highestRead); err != nil {
+			slog.Warn("migration carrying read state failed", "manga", mangaID, "err", err)
+		}
 	}
+	for _, number := range bookmarks {
+		if err := s.repo.MarkChapterBookmarkedByNumber(mangaID, number); err != nil {
+			slog.Warn("migration carrying bookmark failed", "manga", mangaID, "err", err)
+		}
+	}
+	if !hasProgress || highestRead == nil {
+		return
+	}
+	boundary := highestAtOrBelow(chapters, *highestRead)
+	if boundary == nil {
+		return
+	}
+	mapped := previous
+	mapped.MangaID = mangaID
+	mapped.LastReadChapterID = boundary.ID
+	if mapped.TotalPages < 1 {
+		mapped.TotalPages = 1
+	}
+	if mapped.LastReadPage < 1 || mapped.LastReadPage > mapped.TotalPages {
+		mapped.LastReadPage = 1
+	}
+	mapped.IsCompleted = previous.IsCompleted && boundaryIsLast(chapters, boundary)
+	if _, err := s.repo.UpsertReadingProgress(mapped); err != nil {
+		slog.Warn("migration carrying progress failed", "manga", mangaID, "err", err)
+	}
+}
+
+// highestAtOrBelow returns the chapter with the greatest number at or below
+// the given value, or nil when none qualifies.
+func highestAtOrBelow(chapters []db.Chapter, number float64) *db.Chapter {
+	var best *db.Chapter
 	for i := range chapters {
-		if chapters[i].ChapterNumber != nil && *chapters[i].ChapterNumber == *number {
-			return &chapters[i]
+		current := &chapters[i]
+		if current.ChapterNumber == nil || *current.ChapterNumber > number {
+			continue
+		}
+		if best == nil || *best.ChapterNumber < *current.ChapterNumber {
+			best = current
 		}
 	}
-	return nil
+	return best
 }
 
-// remapProgress moves reading state onto the replacement chapter with the
-// same number. It reports nil when the state cannot carry over, which keeps
-// the progress store free of dangling references.
-func remapProgress(progress db.ReadingProgress, retired, replacement []db.Chapter) *db.ReadingProgress {
-	var old *db.Chapter
-	for i := range retired {
-		if retired[i].ID == progress.LastReadChapterID {
-			old = &retired[i]
-			break
-		}
-	}
-	if old == nil {
-		return nil
-	}
-	next := findSameNumber(replacement, old.ChapterNumber)
-	if next == nil {
-		return nil
-	}
-	mapped := progress
-	mapped.LastReadChapterID = next.ID
-	return &mapped
+// boundaryIsLast reports whether the chapter carries the greatest number in
+// the list, which decides whether a carried series counts as finished.
+func boundaryIsLast(chapters []db.Chapter, boundary *db.Chapter) bool {
+	last := highestAtOrBelow(chapters, math.MaxFloat64)
+	return last != nil && last.ID == boundary.ID
 }

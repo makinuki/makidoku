@@ -402,7 +402,6 @@ export type MigrationCandidates = {
 export type MigrationResponse = {
   manga: Aggregate;
   source: string;
-  chapterMap: Record<string, string>;
 };
 export type MigrationSource = { source: Source; count: number; imported?: boolean };
 

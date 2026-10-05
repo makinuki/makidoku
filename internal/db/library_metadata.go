@@ -259,3 +259,20 @@ func (r *Repository) SetChapterBookmark(chapterID string, bookmark bool) error {
 	}
 	return nil
 }
+
+// ListBookmarkedChapterNumbers returns the chapter numbers the user bookmarked.
+// A migration carries bookmarks by number, since only the number survives a
+// change of source.
+func (r *Repository) ListBookmarkedChapterNumbers(mangaID string) ([]float64, error) {
+	var numbers []float64
+	err := r.db.Select(&numbers, `SELECT chapter_number FROM chapters
+		WHERE manga_id=? AND bookmark=1 AND chapter_number IS NOT NULL`, mangaID)
+	return numbers, err
+}
+
+// MarkChapterBookmarkedByNumber bookmarks the chapter with the given number.
+func (r *Repository) MarkChapterBookmarkedByNumber(mangaID string, number float64) error {
+	_, err := r.db.Exec(`UPDATE chapters SET bookmark=1
+		WHERE manga_id=? AND chapter_number IS NOT NULL AND chapter_number=?`, mangaID, number)
+	return err
+}

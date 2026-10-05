@@ -1237,6 +1237,49 @@ func (r *Repository) ListChapterRead(mangaID string) ([]ChapterReadState, error)
 	return states, err
 }
 
+// HighestReadChapterNumber reports the greatest chapter number the title has
+// read, considering both per-chapter read flags and the current reading
+// progress. It returns nil when nothing has been read.
+func (r *Repository) HighestReadChapterNumber(mangaID string) (*float64, error) {
+	var number sql.NullFloat64
+	err := r.db.Get(&number, `
+		SELECT MAX(value) FROM (
+			SELECT c.chapter_number AS value
+			FROM chapter_read_state rs
+			JOIN chapters c ON c.id=rs.chapter_id
+			WHERE rs.manga_id=? AND rs.read=1 AND c.chapter_number IS NOT NULL
+			UNION ALL
+			SELECT c.chapter_number
+			FROM reading_progress p
+			JOIN chapters c ON c.id=p.last_read_chapter_id
+			WHERE p.manga_id=? AND c.chapter_number IS NOT NULL
+		)`, mangaID, mangaID)
+	if err != nil {
+		return nil, err
+	}
+	if !number.Valid {
+		return nil, nil
+	}
+	value := number.Float64
+	return &value, nil
+}
+
+// MarkChaptersReadThrough marks every chapter of a title at or below the given
+// number as read. Chapter numbering drifts between sources, so a migration
+// carries read state as a boundary rather than matching chapters one by one.
+func (r *Repository) MarkChaptersReadThrough(mangaID string, number float64) (int64, error) {
+	result, err := r.db.Exec(`INSERT INTO chapter_read_state(chapter_id,manga_id,read,read_at)
+		SELECT c.id,c.manga_id,1,?
+		FROM chapters c
+		WHERE c.manga_id=? AND c.chapter_number IS NOT NULL AND c.chapter_number<=?
+		ON CONFLICT(chapter_id) DO UPDATE SET read=1,read_at=excluded.read_at`,
+		time.Now().Unix(), mangaID, number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (r *Repository) ListHistoryEvents(limit int) ([]HistoryEvent, error) {
 	if limit <= 0 {
 		limit = 100

@@ -238,36 +238,6 @@ func TestApplyMigrationRejectsInLibraryReplacement(t *testing.T) {
 	}
 }
 
-// Candidate searches report how many plugins failed instead of presenting a
-// partial outage as an empty catalog.
-func TestMigrationCandidatesReportFailedSources(t *testing.T) {
-	repo, router, oldSource, newSource := migrationTestRouter(t)
-	manga, err := repo.UpsertManga(db.Manga{SourceID: oldSource, SourceMangaID: "remote-a", Title: "Demo", Status: "ongoing"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Both plugins point at unreachable hosts; both searches fail.
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/manga/"+manga.ID+"/migration/candidates", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
-	}
-	var payload struct {
-		Candidates    []db.Manga `json:"candidates"`
-		FailedSources int        `json:"failedSources"`
-		Searched      int        `json:"searched"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
-	}
-	// The title's own plugin is skipped; the remaining one fails on its
-	// missing binary.
-	if payload.FailedSources != 1 || payload.Searched != 1 {
-		t.Fatalf("failed = %d searched = %d, want the single other plugin counted", payload.FailedSources, payload.Searched)
-	}
-	_ = newSource
-}
-
 // The migration preferences come from the settings store, and an explicit
 // request value overrides them.
 func TestMigrationFlagsResolveFromSettings(t *testing.T) {

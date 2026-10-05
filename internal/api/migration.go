@@ -1,14 +1,12 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"math"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,25 +16,11 @@ import (
 )
 
 // migrationSearchTimeout bounds one plugin search. A source that never answers
-// must not hold the picker open, since the searches run together and the
-// dialog waits for the slowest of them.
+// must not hold a job open, since the searches run together and the job waits
+// for the slowest of them.
 const migrationSearchTimeout = 20 * time.Second
 
 var errEngineUnavailable = errors.New("sources are unavailable right now; try again later")
-
-type migrationCandidate struct {
-	Source engine.InstalledSource `json:"source"`
-	Result engine.MangaItem       `json:"result"`
-}
-
-// migrationCandidatesResponse separates the usable candidates from the
-// plugins that could not be searched, so a partial failure is visible
-// instead of looking like an empty catalog.
-type migrationCandidatesResponse struct {
-	Candidates    []migrationCandidate `json:"candidates"`
-	FailedSources int                  `json:"failedSources"`
-	Searched      int                  `json:"searched"`
-}
 
 type migrationResponse struct {
 	Manga  db.MangaAggregate `json:"manga"`
@@ -45,13 +29,11 @@ type migrationResponse struct {
 
 func (s *Server) mountMigration(r chi.Router) {
 	r.Get("/migration/sources", s.migrationSources)
-	r.Get("/migration/sources/{sourceID}/manga", s.migrationSourceManga)
 	r.Post("/migration/jobs", s.createMigrationJob)
 	r.Get("/migration/jobs/{jobID}/events", s.migrationJobEvents)
 	r.Post("/migration/jobs/{jobID}/cancel", s.cancelMigrationJob)
 	r.Post("/migration/jobs/{jobID}/titles/{mangaID}/cancel", s.cancelMigrationTitle)
 	r.Route("/manga/{mangaID}/migration", func(migration chi.Router) {
-		migration.Get("/candidates", s.migrationCandidates)
 		migration.Post("/apply", s.applyMigration)
 	})
 }
@@ -100,87 +82,6 @@ func (s *Server) migrationSources(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) migrationSourceManga(w http.ResponseWriter, r *http.Request) {
-	manga, err := s.repo.ListLibraryBySource(chi.URLParam(r, "sourceID"))
-	if err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, manga)
-}
-
-func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
-	if s.engine == nil {
-		writeLocalError(w, http.StatusServiceUnavailable, errEngineUnavailable)
-		return
-	}
-	manga, err := s.repo.GetManga(chi.URLParam(r, "mangaID"))
-	if err != nil {
-		writeLocalError(w, http.StatusNotFound, err)
-		return
-	}
-	sources, err := s.engine.Installed()
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if query == "" {
-		query = manga.Title
-	}
-	// The searches run concurrently. A dialog that waits for every plugin in
-	// turn takes as long as the sum of their latencies, and a single slow or
-	// unreachable source is enough to make the picker feel broken.
-	targets := make([]engine.InstalledSource, 0, len(sources))
-	for _, source := range sources {
-		if source.ID == manga.SourceID {
-			continue
-		}
-		targets = append(targets, source)
-	}
-	searches := make([][]engine.MangaItem, len(targets))
-	failures := make([]error, len(targets))
-	var group sync.WaitGroup
-	for i, source := range targets {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			ctx, cancel := context.WithTimeout(r.Context(), migrationSearchTimeout)
-			defer cancel()
-			page, searchErr := s.engine.Search(ctx, source.ID, engine.SearchQuery{Query: query, Page: 1})
-			if searchErr != nil {
-				failures[i] = searchErr
-				return
-			}
-			searches[i] = page.Items
-		}()
-	}
-	group.Wait()
-
-	results := make([]migrationCandidate, 0)
-	failed := 0
-	for i, source := range targets {
-		if failures[i] != nil {
-			slog.Warn("migration candidate search failed", "source", source.Name, "err", failures[i])
-			failed++
-			continue
-		}
-		for _, result := range searches[i] {
-			materialized, materializeErr := s.repo.UpsertMangaStub(db.Manga{SourceID: source.ID, SourceMangaID: result.ID, SourcePageURL: result.URL, Title: result.Title, CoverURL: engine.SelectCover(result.CoverURL, result.Covers, engine.PreferredCoverWidth), Status: "unknown"})
-			if materializeErr != nil {
-				continue
-			}
-			result.ID = materialized.ID
-			results = append(results, migrationCandidate{Source: source, Result: result})
-		}
-	}
-	writeJSON(w, http.StatusOK, migrationCandidatesResponse{
-		Candidates:    results,
-		FailedSources: failed,
-		Searched:      len(results) + failed,
-	})
 }
 
 func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {

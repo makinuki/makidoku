@@ -432,7 +432,10 @@ export type MigrationFrame = {
   titles?: MigrationTitleEvent[];
 };
 
-export type MigrationJob = { jobId: string; count: number };
+// MigrationJob identifies a started job. sourceId is the library source the
+// job was scoped to, so the client can offer every other plugin for a manual
+// search.
+export type MigrationJob = { jobId: string; count: number; sourceId?: string };
 
 export type MangaMerge = {
   id: string;

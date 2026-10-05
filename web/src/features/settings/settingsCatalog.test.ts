@@ -19,6 +19,7 @@ describe("settings catalog", () => {
     expect(sectionForKey("appearance.date_format")).toBe("appearance");
     expect(sectionForKey("backup.auto_keep")).toBe("data");
     expect(sectionForKey("tracking.auto_sync")).toBe("tracking");
+    expect(sectionForKey("migration.carry_read_state")).toBe("migration");
   });
 
   it("falls back to advanced for an unknown prefix", () => {

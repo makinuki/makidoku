@@ -18,6 +18,7 @@ import { TrackingSection } from "./features/settings/sections/TrackingSection";
 import { BrowseSection } from "./features/settings/sections/BrowseSection";
 import { DataSection } from "./features/settings/sections/DataSection";
 import { PrivacySection } from "./features/settings/sections/PrivacySection";
+import { MigrationSection } from "./features/settings/sections/MigrationSection";
 import { AntiBotSection } from "./features/settings/sections/AntiBotSection";
 import { AdvancedSection } from "./features/settings/sections/AdvancedSection";
 import { UpdatesPage } from "./features/updates/UpdatesPage";
@@ -70,6 +71,7 @@ export default function App() {
             <Route path="browse" element={<BrowseSection />} />
             <Route path="data" element={<DataSection />} />
             <Route path="privacy" element={<PrivacySection />} />
+            <Route path="migration" element={<MigrationSection />} />
       <Route path="anti_bot" element={<AntiBotSection />} />
             <Route path="advanced" element={<AdvancedSection />} />
             <Route path="*" element={<Navigate to="/settings" replace />} />

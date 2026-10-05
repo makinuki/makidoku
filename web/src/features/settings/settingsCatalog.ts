@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   BookOpen,
   Compass,
   Database,
@@ -22,6 +23,7 @@ export type SettingsSectionId =
   | "browse"
   | "data"
   | "privacy"
+  | "migration"
   | "anti_bot"
   | "advanced";
 
@@ -92,6 +94,13 @@ export const settingsSections: SettingsSection[] = [
     prefixes: ["privacy"],
   },
   {
+    id: "migration",
+    title: "Migration",
+    subtitle: "What moves with a title",
+    icon: ArrowLeftRight,
+    prefixes: ["migration"],
+  },
+  {
     id: "anti_bot",
     title: "Browser check",
     subtitle: "Answering a site check in a window",
@@ -147,6 +156,8 @@ const settingLabelOverrides: Record<string, string> = {
   "backup.auto_interval": "Automatic backups",
   "backup.auto_keep": "Backups to keep",
   "browse.hide_nsfw": "Hide adult sources",
+  "migration.carry_read_state": "Carry read state and bookmarks",
+  "migration.remove_downloads": "Delete retired downloads",
   "privacy.incognito": "Incognito mode",
   "advanced.log_level": "Log detail",
   "advanced.image_cache_days": "Image cache lifetime",

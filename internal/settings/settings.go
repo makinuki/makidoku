@@ -379,6 +379,8 @@ var definitionList = []Definition{
 	}},
 	{Key: "backup.auto_interval", Type: "duration", Default: "0", Description: "How often automatic backups are created", Validate: number(0, 30*24*60*60*1e9)},
 	{Key: "backup.auto_keep", Type: "number", Default: "5", Description: "How many automatic backups to keep", Validate: number(1, 100)},
+	{Key: "migration.carry_read_state", Type: "boolean", Default: "true", Description: "Carry read state and bookmarks onto the replacement when a title moves to another plugin", Validate: boolean},
+	{Key: "migration.remove_downloads", Type: "boolean", Default: "true", Description: "Delete the downloaded files of the chapters a migration retires", Validate: boolean},
 	{Key: "browse.hide_nsfw", Type: "boolean", Default: "false", Description: "Adult (NSFW) sources do not appear in Browse", Validate: func(v any) error {
 		if _, ok := v.(bool); !ok {
 			return errors.New("value must be boolean")

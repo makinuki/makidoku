@@ -828,7 +828,7 @@ func (s *Server) createMigrationJob(w http.ResponseWriter, r *http.Request) {
 		targets:              selectTargets(sources, sourceID, body.TargetSourceIDs),
 		titles:               titles,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"jobId": job.id, "count": len(titles)})
+	writeJSON(w, http.StatusOK, map[string]any{"jobId": job.id, "count": len(titles), "sourceId": sourceID})
 }
 
 // migrationJobEvents streams one job's per-title results, starting with a

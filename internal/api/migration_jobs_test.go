@@ -516,14 +516,18 @@ func TestCreateMigrationJobEndpoint(t *testing.T) {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
 	var payload struct {
-		JobID string `json:"jobId"`
-		Count int    `json:"count"`
+		JobID    string `json:"jobId"`
+		Count    int    `json:"count"`
+		SourceID string `json:"sourceId"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if payload.Count != 1 {
 		t.Fatalf("count = %d, want 1", payload.Count)
+	}
+	if payload.SourceID != "old" {
+		t.Fatalf("sourceId = %q, want the scoped source", payload.SourceID)
 	}
 	job := server.migration.get(payload.JobID)
 	if job == nil {
@@ -555,14 +559,18 @@ func TestCreateMigrationJobScopesToManga(t *testing.T) {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
 	var payload struct {
-		JobID string `json:"jobId"`
-		Count int    `json:"count"`
+		JobID    string `json:"jobId"`
+		Count    int    `json:"count"`
+		SourceID string `json:"sourceId"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if payload.Count != 1 {
 		t.Fatalf("count = %d, want 1", payload.Count)
+	}
+	if payload.SourceID != "old" {
+		t.Fatalf("sourceId = %q, want the title's own source", payload.SourceID)
 	}
 	job := server.migration.get(payload.JobID)
 	if job == nil {

@@ -51,8 +51,16 @@ type downloadQueue interface {
 
 // Server holds the dependencies shared by the REST handlers.
 type Server struct {
-	repo          *db.Repository
-	engine        *engine.Engine
+	repo   *db.Repository
+	engine *engine.Engine
+	// searcher is the engine surface the migration job uses. It is the engine
+	// in production and a substitute in tests.
+	searcher migrationSearcher
+	// migrationRepo is the stored-state surface the migration job uses,
+	// separate from repo so a job can run against a substitute in tests.
+	migrationRepo migrationRepository
+	// migration owns the streaming migration jobs.
+	migration     *migrationManager
 	downloads     downloadQueue
 	trackers      *tracker.Registry
 	syncer        *tracker.SyncWorker
@@ -137,7 +145,13 @@ func (s *Server) Lifetime() context.Context {
 }
 
 func NewServer(repo *db.Repository, eng *engine.Engine, downloads ...downloadQueue) *Server {
-	server := &Server{repo: repo, engine: eng, trackerEvents: newTrackerBroker()}
+	server := &Server{repo: repo, engine: eng, trackerEvents: newTrackerBroker(), migration: newMigrationManager()}
+	if eng != nil {
+		server.searcher = eng
+	}
+	if repo != nil {
+		server.migrationRepo = repo
+	}
 	if len(downloads) > 0 && downloads[0] != nil {
 		server.downloads = downloads[0]
 	}

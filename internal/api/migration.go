@@ -46,6 +46,10 @@ type migrationResponse struct {
 func (s *Server) mountMigration(r chi.Router) {
 	r.Get("/migration/sources", s.migrationSources)
 	r.Get("/migration/sources/{sourceID}/manga", s.migrationSourceManga)
+	r.Post("/migration/jobs", s.createMigrationJob)
+	r.Get("/migration/jobs/{jobID}/events", s.migrationJobEvents)
+	r.Post("/migration/jobs/{jobID}/cancel", s.cancelMigrationJob)
+	r.Post("/migration/jobs/{jobID}/titles/{mangaID}/cancel", s.cancelMigrationTitle)
 	r.Route("/manga/{mangaID}/migration", func(migration chi.Router) {
 		migration.Get("/candidates", s.migrationCandidates)
 		migration.Post("/apply", s.applyMigration)

@@ -191,8 +191,9 @@ describe("MakiDoku app shell", () => {
     expect(screen.getAllByText("Connected as example-reader").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByRole("heading", { name: "Kitsu" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
-    await user.click(screen.getByRole("button", { name: "Migrate" }));
-    expect(screen.getByRole("heading", { name: "Migrate plugin" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Migrate" }));
+    expect(await screen.findByRole("heading", { name: "Migrate" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/migration");
   });
 
   it("opens the tracking modal when the aggregate carries null collections", async () => {
@@ -828,26 +829,34 @@ describe("MakiDoku app shell", () => {
     );
   });
 
-  it("shows progress while a migration applies", async () => {
-    window.history.pushState({}, "", `/manga/${mangaId}`);
-    const aggregate = {
-      manga: {
-        id: mangaId,
-        sourceId: "0198c0de-7a00-7000-8000-00000000abcd",
-        title: "Yosuga no Sora",
-        status: "completed",
-        coverUrl: "/api/manga/" + mangaId + "/cover",
-        inLibrary: true,
-        downloadFormat: "cbz",
-        createdAt: 1,
-        updatedAt: 1,
-      },
-      categories: [],
-      chapters: [],
-      trackers: [],
-      sourceName: "MangaDex",
+  it("streams migration matches and applies a row", async () => {
+    const sockets: Array<{
+      url: string;
+      onmessage: ((event: { data: string }) => void) | null;
+    }> = [];
+    class FakeSocket {
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor(public url: string) {
+        sockets.push(this);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+    window.history.pushState({}, "", "/migration");
+    const source = {
+      id: "asurascans",
+      name: "Asura Scans",
+      version: "1",
+      abiVersion: 1,
+      lang: "en",
+      baseUrl: "https://asurascans.test",
+      iconUrl: "",
+      nsfw: false,
+      installedAt: 1,
+      loaded: true,
+      hasClearance: false,
     };
-    let mangaGets = 0;
     let resolveApply!: (value: Response) => void;
     const applyGate = new Promise<Response>((resolve) => {
       resolveApply = resolve;
@@ -856,42 +865,16 @@ describe("MakiDoku app shell", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
-        if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) {
-          return Response.json({
-            candidates: [
-              {
-                source: {
-                  id: "asurascans",
-                  name: "Asura Scans",
-                  version: "1",
-                  abiVersion: 1,
-                  lang: "en",
-                  baseUrl: "https://asurascans.test",
-                  iconUrl: "",
-                  nsfw: false,
-                  installedAt: 1,
-                  loaded: true,
-                  hasClearance: false,
-                },
-                result: {
-                  id: "discovered-1",
-                  sourceId: "asurascans",
-                  title: "Yosuga no Sora",
-                  coverUrl: "https://example.test/cover.jpg",
-                },
-              },
-            ],
-            failedSources: 0,
-            searched: 1,
-          });
+        if (path === "/api/migration/sources") {
+          return Response.json([
+            { source: { ...source, id: "mangadex", name: "MangaDex" }, count: 1 },
+          ]);
+        }
+        if (path === "/api/migration/jobs" && init?.method === "POST") {
+          return Response.json({ jobId: "job-1", count: 1 });
         }
         if (path.includes("/migration/apply") && init?.method === "POST") {
           return await applyGate;
-        }
-        if (path.includes(`/api/manga/${mangaId}`)) {
-          if (!init?.method) mangaGets++;
-          return Response.json(aggregate);
         }
         return Response.json([]);
       }),
@@ -902,19 +885,49 @@ describe("MakiDoku app shell", () => {
       </BrowserRouter>,
     );
     const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /MangaDex/ }));
+    await waitFor(() =>
+      expect(sockets.some((socket) => socket.url.includes("/migration/jobs/"))).toBe(true),
+    );
+    const socket = sockets.find((candidate) => candidate.url.includes("/migration/jobs/"));
+    const match = {
+      mangaId,
+      title: "Yosuga no Sora",
+      status: "success",
+      source,
+      manga: {
+        id: "discovered-1",
+        sourceId: "asurascans",
+        title: "Yosuga no Sora",
+        status: "unknown",
+        coverUrl: "/api/manga/discovered-1/cover",
+        inLibrary: false,
+        downloadFormat: "cbz",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      score: 1,
+      chapterCount: 5,
+      latestChapter: 5,
+    };
+    act(() => {
+      socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          jobId: "job-1",
+          titles: [{ mangaId, title: "Yosuga no Sora", status: "searching" }],
+        }),
+      });
+    });
+    act(() => {
+      socket?.onmessage?.({ data: JSON.stringify({ type: "title", jobId: "job-1", title: match }) });
+    });
     await user.click(await screen.findByRole("button", { name: "Migrate" }));
-    await user.click(await screen.findByRole("button", { name: /Yosuga no Sora/ }));
-    await user.click(screen.getByRole("button", { name: "Apply" }));
     expect(screen.getByRole("button", { name: /Migrating/ })).toBeDisabled();
-
-    // The daemon now reports the replacement plugin; the details view must
-    // refetch even though migration kept the canonical id.
-    const getsBeforeApplyResolved = mangaGets;
-    aggregate.sourceName = "Asura Scans";
-    resolveApply(Response.json({ manga: aggregate, source: "asurascans", chapterMap: {} }));
-    await waitFor(() => expect(mangaGets).toBe(getsBeforeApplyResolved + 1));
-    expect(await screen.findByText("Asura Scans · completed")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Migrate" })).toBeInTheDocument();
+    resolveApply(
+      Response.json({ manga: { manga: { id: mangaId } }, source: "asurascans", chapterMap: {} }),
+    );
+    expect(await screen.findByText("Migrated")).toBeInTheDocument();
   });
 
   it("uploads a backup only after confirming from settings", async () => {

@@ -146,38 +146,17 @@ describe("BrowsePage migrate tab", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sorts library sources by count or name", async () => {
+  it("links to the migration review page", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const path = String(input);
-        if (path === "/api/migration/sources") {
-          return Response.json([
-            { source: source("z", "Zeta"), count: 1, imported: false },
-            { source: source("a", "Alpha"), count: 9, imported: false },
-          ]);
-        }
-        return Response.json([]);
-      }),
+      vi.fn(async () => Response.json([])),
     );
     render(
       <MemoryRouter initialEntries={["/browse?tab=migrate"]}>
         <BrowsePage />
       </MemoryRouter>,
     );
-    const alphaFirst = () =>
-      Boolean(
-        screen
-          .getByRole("button", { name: /Alpha/ })
-          .compareDocumentPosition(screen.getByRole("button", { name: /Zeta/ })) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-    await screen.findByRole("button", { name: /Alpha/ });
-    // Default: largest library first.
-    expect(alphaFirst()).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "name" }));
-    expect(alphaFirst()).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Sort descending" }));
-    expect(alphaFirst()).toBe(true);
+    const link = await screen.findByRole("link", { name: "Open migration" });
+    expect(link).toHaveAttribute("href", "/migration");
   });
 });

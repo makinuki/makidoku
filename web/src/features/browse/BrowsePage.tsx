@@ -1,7 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   Bookmark,
   ChevronLeft,
   ChevronRight,
@@ -17,23 +15,22 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { CoverImg } from "../../components/CoverImg";
 import { Modal } from "../../components/Modal";
+import { SourceIcon } from "../../components/SourceIcon";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../../components/States";
 import type {
   CatalogEntry,
   Feed,
   FilterSchema,
   Manga,
-  MigrationSource,
   SavedSearch,
   SearchResult,
   SolveResult,
   Source,
 } from "../../types";
-import { MigrationModal } from "../manga/DetailsPage";
 import { SourceSettingsDialog } from "../sources/SourceSettingsDialog";
 
 type Tab = "sources" | "plugins" | "migrate";
@@ -81,7 +78,7 @@ export function BrowsePage() {
       ) : tab === "plugins" ? (
         <PluginsTab />
       ) : (
-        <MigrateTab />
+        <MigrationLink />
       )}
     </div>
   );
@@ -1035,164 +1032,20 @@ function PluginsTab() {
   );
 }
 
-function MigrateTab() {
-  const navigate = useNavigate();
-  const [sources, setSources] = useState<MigrationSource[]>([]);
-  const [selectedSource, setSelectedSource] = useState<string>();
-  const [manga, setManga] = useState<Manga[]>([]);
-  const [query, setQuery] = useState("");
-  const [selectedManga, setSelectedManga] = useState<Manga>();
-  const [sort, setSort] = useState<"name" | "count">("count");
-  const [ascending, setAscending] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    void api
-      .migrationSources()
-      .then(setSources)
-      .catch((e) => setError(e instanceof Error ? e.message : "Unable to load migration sources"));
-  }, []);
-  useEffect(() => {
-    if (!selectedSource) {
-      setManga([]);
-      return;
-    }
-    void api
-      .migrationSourceManga(selectedSource)
-      .then(setManga)
-      .catch((e) => setError(e instanceof Error ? e.message : "Unable to load library titles"));
-  }, [selectedSource]);
-  const visible = manga.filter((item) =>
-    item.title.toLowerCase().includes(query.trim().toLowerCase()),
-  );
-  const ordered = [...sources].sort((a, b) => {
-    const order = sort === "count" ? a.count - b.count : a.source.name.localeCompare(b.source.name);
-    return ascending ? order : -order;
-  });
+function MigrationLink() {
   return (
-    <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
-      {error && (
-        <div className="lg:col-span-2">
-          <ErrorState message={error} />
-        </div>
-      )}
-      <aside className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-        <h2 className="px-2 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-          Library sources
-        </h2>
-        <div className="mb-2 flex items-center gap-1 px-2" role="group" aria-label="Sort sources">
-          {(["count", "name"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              aria-pressed={sort === mode}
-              onClick={() => setSort(mode)}
-              className={`min-h-11 rounded-lg px-3 text-xs font-medium capitalize ${
-                sort === mode ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              {mode}
-            </button>
-          ))}
-          <button
-            type="button"
-            aria-label={ascending ? "Sort ascending" : "Sort descending"}
-            onClick={() => setAscending((value) => !value)}
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white"
-          >
-            {ascending ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
-          </button>
-        </div>
-        <div className="mt-1 max-h-72 space-y-1 overflow-y-auto lg:max-h-none">
-          {ordered.map((item) => (
-            <button
-              key={item.source.id}
-              onClick={() => setSelectedSource(item.source.id)}
-              className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left ${
-                selectedSource === item.source.id
-                  ? "bg-amber-400/10 text-amber-200"
-                  : "hover:bg-zinc-800"
-              }`}
-            >
-              <SourceIcon source={item.source} />
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {item.source.name}
-                {item.imported && (
-                  <small className="ml-1 rounded bg-zinc-800 px-1 text-[10px] text-amber-300">
-                    imported
-                  </small>
-                )}
-              </span>
-              <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-                {item.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      </aside>
-      <section>
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2">
-          <Search size={16} className="text-zinc-500" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter library titles"
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-          />
-        </div>
-        {selectedSource ? (
-          visible.length ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {visible.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setSelectedManga(item)}
-                  className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-left hover:border-amber-500/50"
-                >
-                  <CoverImg src={item.coverUrl} className="h-20 w-14 rounded-md object-cover" />
-                  <span className="min-w-0">
-                    <b className="line-clamp-2 text-sm">{item.title}</b>
-                    <small className="mt-1 block text-zinc-500">Choose replacement source</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title="No titles" text="No library titles match this filter." />
-          )
-        ) : (
-          <EmptyState
-            title="Choose a source"
-            text="Select the current source of a library title to begin migration."
-          />
-        )}
-      </section>
-      {selectedManga && (
-        <MigrationModal
-          manga={selectedManga}
-          onClose={() => setSelectedManga(undefined)}
-          onApplied={(mangaId) => {
-            setSelectedManga(undefined);
-            navigate(`/manga/${encodeURIComponent(mangaId)}`);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function SourceIcon({ source }: { source: Source }) {
-  const [failed, setFailed] = useState(false);
-  return source.iconUrl && !failed ? (
-    <img
-      src={api.sourceIcon(source.id)}
-      alt=""
-      onError={() => setFailed(true)}
-      className="size-9 shrink-0 rounded-lg object-cover"
+    <EmptyState
+      title="Migrate plugins"
+      text="Review every match before anything is written, then move titles one at a time or all at once."
+      action={
+        <Link
+          to="/migration"
+          className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950"
+        >
+          Open migration
+        </Link>
+      }
     />
-  ) : (
-    <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-zinc-800 text-xs font-bold">
-      {source.name.slice(0, 2).toUpperCase()}
-    </span>
   );
 }
 

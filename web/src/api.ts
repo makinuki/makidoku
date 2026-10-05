@@ -415,7 +415,8 @@ export const api = {
       body: JSON.stringify({ sourceId: replacementSourceId, mangaId: replacementMangaId }),
     }),
   startMigrationJob: (body: {
-    sourceId: string;
+    sourceId?: string;
+    mangaId?: string;
     query?: string;
     targetSourceIds?: string[];
     deep?: boolean;

@@ -23,6 +23,7 @@ import { AdvancedSection } from "./features/settings/sections/AdvancedSection";
 import { UpdatesPage } from "./features/updates/UpdatesPage";
 import { GlobalSearch } from "./features/search/GlobalSearch";
 import { RecommendationsPage } from "./features/manga/RecommendationsPage";
+import { MigrationPage } from "./features/migration/MigrationPage";
 import { StatsPage } from "./features/stats/StatsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/" element={<LibraryPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/browse" element={<BrowsePage />} />
+          <Route path="/migration" element={<MigrationPage />} />
           <Route path="/manga/:mangaId" element={<DetailsPage />} />
           <Route path="/manga/:mangaId/recommendations" element={<RecommendationsPage />} />
           <Route path="/downloads" element={<DownloadsPage />} />

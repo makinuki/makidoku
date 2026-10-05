@@ -25,7 +25,6 @@ import type {
   Binding,
   Category,
   Chapter,
-  MigrationCandidate,
   Recommendation,
   TrackerSearchResult,
   TrackerStatus,
@@ -55,7 +54,7 @@ export function DetailsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<
-    "tracker" | "migration" | "custom" | "sources" | "categories"
+    "tracker" | "custom" | "sources" | "categories"
   >();
   const [categoryMode, setCategoryMode] = useState<"add" | "edit">("add");
   const [refreshing, setRefreshing] = useState(false);
@@ -414,12 +413,12 @@ export function DetailsPage() {
             >
               <Layers size={15} /> Sources
             </button>
-            <button
-              onClick={() => setModal("migration")}
+            <Link
+              to={`/migration?mangaId=${encodeURIComponent(manga.id)}`}
               className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm"
             >
               <RefreshCw size={15} /> Migrate
-            </button>
+            </Link>
             <button
               aria-label="Refresh details"
               disabled={refreshing}
@@ -705,18 +704,6 @@ export function DetailsPage() {
           bindings={data.trackers ?? []}
           onClose={() => setModal(undefined)}
           onChanged={reload}
-        />
-      )}
-      {modal === "migration" && (
-        <MigrationModal
-          manga={manga}
-          onClose={() => setModal(undefined)}
-          onApplied={(nextMangaId) => {
-            // Migration keeps the canonical id, so the route often stays the
-            // same: refetch explicitly instead of relying on remounting.
-            void reload();
-            navigate(`/manga/${encodeURIComponent(nextMangaId)}`);
-          }}
         />
       )}
       {modal === "custom" && (
@@ -1313,114 +1300,3 @@ function parseTrackerDate(value: string) {
 function formatTrackerNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
-
-export function MigrationModal({
-  manga,
-  onClose,
-  onApplied,
-}: {
-  manga: SourceManga;
-  onClose: () => void;
-  onApplied: (mangaId: string) => void;
-}) {
-  const [items, setItems] = useState<MigrationCandidate[]>([]);
-  const [failedSources, setFailedSources] = useState(0);
-  const [selected, setSelected] = useState<MigrationCandidate>();
-  const [applying, setApplying] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    // A new title restarts the search, so the previous result and its selection
-    // must not stay on screen while the new query runs.
-    setLoading(true);
-    setItems([]);
-    setSelected(undefined);
-    setError("");
-    void api
-      .migrationCandidates(manga.id)
-      .then((payload) => {
-        setItems(payload.candidates);
-        setFailedSources(payload.failedSources);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [manga.id]);
-  return (
-    <Modal title="Migrate plugin" onClose={onClose}>
-      <p className="text-sm text-zinc-400">
-        Select a matching title from another installed plugin. Reading state and tracker bindings
-        are preserved.
-      </p>
-      {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-      {failedSources > 0 && !error && !loading && (
-        <p className="mt-3 text-sm text-amber-300/90">
-          {failedSources} plugin{failedSources === 1 ? "" : "s"} failed to respond and{" "}
-          {failedSources === 1 ? " was" : " were"} skipped.
-        </p>
-      )}
-      <div className="mt-4 grid gap-2">
-        {/* The search waits on every installed plugin, so the empty state has to
-            wait too. Reporting "no candidates" while the request is still in
-            flight reads as a result rather than as progress. */}
-        {loading && (
-          <div className="flex items-center gap-2 py-6 text-sm text-zinc-400">
-            <LoaderCircle size={16} className="animate-spin" />
-            Searching installed plugins for &ldquo;{manga.title}&rdquo;
-          </div>
-        )}
-        {!loading &&
-          items.map((item) => (
-            <button
-              key={`${item.source.id}:${item.result.id}`}
-              onClick={() => setSelected(item)}
-              className={`flex items-center gap-3 rounded-lg border p-3 text-left ${selected?.result.id === item.result.id ? "border-amber-400 bg-amber-400/10" : "border-zinc-800"}`}
-            >
-              <span className="grid size-9 place-items-center rounded-full bg-zinc-800 text-xs">
-                {item.source.name.slice(0, 2).toUpperCase()}
-              </span>
-              <span>
-                <b className="block">{item.result.title}</b>
-                <small className="text-zinc-500">{item.source.name}</small>
-              </span>
-            </button>
-          ))}
-        {!loading && !items.length && !error && (
-          <p className="text-sm text-zinc-500">No replacement candidates found.</p>
-        )}
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onClose} className="rounded-lg border border-zinc-700 px-3 py-2 text-sm">
-          Cancel
-        </button>
-        <button
-          disabled={!selected || applying}
-          onClick={async () => {
-            if (!selected || applying) return;
-            setApplying(true);
-            setError("");
-            try {
-              // Applying re-fetches the replacement's chapters server-side,
-              // so the round-trip can take a while.
-              const result = await api.applyMigration(
-                manga.id,
-                selected.source.id,
-                selected.result.id,
-              );
-              onApplied(result.manga.manga.id);
-            } catch (e) {
-              setError(e instanceof Error ? e.message : "Unable to apply migration");
-            } finally {
-              setApplying(false);
-            }
-          }}
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-3 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
-        >
-          {applying && <LoaderCircle size={14} className="animate-spin" />}
-          {applying ? "Migrating…" : "Apply"}
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-type SourceManga = Aggregate["manga"];

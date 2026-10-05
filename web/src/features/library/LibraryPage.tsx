@@ -18,6 +18,7 @@ import {
   Download,
   FolderPlus,
   Play,
+  RefreshCw,
   SlidersHorizontal,
   Trash2,
   X,
@@ -243,9 +244,17 @@ export function LibraryPage() {
   return (
     <div className={`mx-auto max-w-7xl p-5 sm:p-8 ${selectionMode ? "pb-28" : ""}`}>
       <PageHeader title="Library">
-        <span className="text-sm text-zinc-500">
-          {visible.length} of {items.length} {items.length === 1 ? "title" : "titles"}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-zinc-500">
+            {visible.length} of {items.length} {items.length === 1 ? "title" : "titles"}
+          </span>
+          <Link
+            to="/migration"
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm"
+          >
+            <RefreshCw size={15} /> Migrate
+          </Link>
+        </div>
       </PageHeader>
       <div
         role="tablist"

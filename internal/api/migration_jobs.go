@@ -34,6 +34,7 @@ type migrationSearcher interface {
 // migrationRepository is the stored-state surface a migration job needs.
 type migrationRepository interface {
 	ListLibraryBySource(sourceID string) ([]db.Manga, error)
+	GetManga(id string) (db.Manga, error)
 	UpsertMangaStub(manga db.Manga) (db.Manga, error)
 }
 
@@ -774,6 +775,7 @@ func (s *Server) createMigrationJob(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		SourceID             string   `json:"sourceId"`
+		MangaID              string   `json:"mangaId"`
 		Query                string   `json:"query"`
 		TargetSourceIDs      []string `json:"targetSourceIds"`
 		Deep                 bool     `json:"deep"`
@@ -784,14 +786,30 @@ func (s *Server) createMigrationJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.SourceID = strings.TrimSpace(body.SourceID)
-	if body.SourceID == "" {
-		writeBadRequest(w, "sourceId is required")
+	body.MangaID = strings.TrimSpace(body.MangaID)
+	if body.SourceID == "" && body.MangaID == "" {
+		writeBadRequest(w, "sourceId or mangaId is required")
 		return
 	}
-	titles, err := s.migrationRepo.ListLibraryBySource(body.SourceID)
-	if err != nil {
-		writeLocalError(w, http.StatusInternalServerError, err)
-		return
+	sourceID := body.SourceID
+	var titles []db.Manga
+	if body.MangaID != "" {
+		// A single title scopes the job to one row and takes its source from
+		// the title, so the caller does not need to know it.
+		manga, err := s.migrationRepo.GetManga(body.MangaID)
+		if err != nil {
+			writeLocalError(w, http.StatusNotFound, err)
+			return
+		}
+		titles = []db.Manga{manga}
+		sourceID = manga.SourceID
+	} else {
+		list, err := s.migrationRepo.ListLibraryBySource(body.SourceID)
+		if err != nil {
+			writeLocalError(w, http.StatusInternalServerError, err)
+			return
+		}
+		titles = list
 	}
 	sources, err := s.searcher.Installed()
 	if err != nil {
@@ -802,12 +820,12 @@ func (s *Server) createMigrationJob(w http.ResponseWriter, r *http.Request) {
 		searcher:             s.searcher,
 		repo:                 s.migrationRepo,
 		parent:               s.Lifetime(),
-		sourceID:             body.SourceID,
+		sourceID:             sourceID,
 		query:                body.Query,
 		additionalQuery:      body.AdditionalQuery,
 		deep:                 body.Deep,
 		prioritizeByChapters: body.PrioritizeByChapters,
-		targets:              selectTargets(sources, body.SourceID, body.TargetSourceIDs),
+		targets:              selectTargets(sources, sourceID, body.TargetSourceIDs),
 		titles:               titles,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"jobId": job.id, "count": len(titles)})

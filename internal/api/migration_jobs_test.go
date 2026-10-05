@@ -95,6 +95,15 @@ func (f *fakeMigrationRepo) ListLibraryBySource(sourceID string) ([]db.Manga, er
 	return out, nil
 }
 
+func (f *fakeMigrationRepo) GetManga(id string) (db.Manga, error) {
+	for _, manga := range f.titles {
+		if manga.ID == id {
+			return manga, nil
+		}
+	}
+	return db.Manga{}, fmt.Errorf("manga %q not found", id)
+}
+
 func (f *fakeMigrationRepo) UpsertMangaStub(manga db.Manga) (db.Manga, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -522,5 +531,50 @@ func TestCreateMigrationJobEndpoint(t *testing.T) {
 	}
 	if len(job.spec.targets) != 1 || job.spec.targets[0].ID != "a" {
 		t.Fatalf("targets = %+v, want only the source that is not the title's own", job.spec.targets)
+	}
+}
+
+// A single title scopes the job to that title and takes its source from the
+// stored row, which is what the details page entry point needs.
+func TestCreateMigrationJobScopesToManga(t *testing.T) {
+	server := NewServer(nil, nil)
+	searcher := &fakeSearcher{sources: []engine.InstalledSource{{ID: "old", Name: "Old"}, {ID: "a", Name: "A"}}}
+	server.searcher = searcher
+	server.migrationRepo = &fakeMigrationRepo{titles: []db.Manga{
+		{ID: "lib1", SourceID: "old", Title: "One"},
+		{ID: "lib2", SourceID: "old", Title: "Two"},
+	}}
+	ts := startTestServer(t, server)
+
+	response, err := http.Post(ts.URL+"/api/migration/jobs", "application/json", strings.NewReader(`{"mangaId":"lib2"}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	var payload struct {
+		JobID string `json:"jobId"`
+		Count int    `json:"count"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Count != 1 {
+		t.Fatalf("count = %d, want 1", payload.Count)
+	}
+	job := server.migration.get(payload.JobID)
+	if job == nil {
+		t.Fatalf("job %q missing", payload.JobID)
+	}
+	if len(job.spec.titles) != 1 || job.spec.titles[0].ID != "lib2" {
+		t.Fatalf("titles = %+v, want only lib2", job.spec.titles)
+	}
+	if job.spec.sourceID != "old" {
+		t.Fatalf("source = %q, want the title's own source", job.spec.sourceID)
+	}
+	if len(job.spec.targets) != 1 || job.spec.targets[0].ID != "a" {
+		t.Fatalf("targets = %+v, want the other source only", job.spec.targets)
 	}
 }

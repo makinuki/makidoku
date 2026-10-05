@@ -12,7 +12,6 @@
   SourceDownloadsPolicy,
   Binding,
   CatalogEntry,
-  MigrationCandidates,
   MigrationResponse,
   MigrationJob,
   Feed,
@@ -402,13 +401,7 @@ export const api = {
   trackerStatuses: (mangaId: string) =>
     request<TrackerStatus[]>(`/api/manga/${idPath(mangaId)}/trackers/status`),
   syncJobs: () => request<TrackerSyncJob[]>("/api/tracker-sync"),
-  migrationCandidates: (mangaId: string, query?: string) =>
-    request<MigrationCandidates>(
-      `/api/manga/${idPath(mangaId)}/migration/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`,
-    ),
   migrationSources: () => request<MigrationSource[]>("/api/migration/sources"),
-  migrationSourceManga: (sourceId: string) =>
-    request<Manga[]>(`/api/migration/sources/${encodeURIComponent(sourceId)}/manga`),
   applyMigration: (mangaId: string, replacementSourceId: string, replacementMangaId: string) =>
     request<MigrationResponse>(`/api/manga/${idPath(mangaId)}/migration/apply`, {
       method: "POST",

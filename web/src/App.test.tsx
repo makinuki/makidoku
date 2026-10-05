@@ -153,9 +153,6 @@ describe("MakiDoku app shell", () => {
             },
           ]);
         }
-        if (path.includes("/migration/candidates")) {
-          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
-        }
         if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
@@ -203,9 +200,6 @@ describe("MakiDoku app shell", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) {
-          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
-        }
         if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
@@ -246,9 +240,6 @@ describe("MakiDoku app shell", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) {
-          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
-        }
         if (path.includes(`/api/manga/${mangaId}`)) {
           return Response.json({
             manga: {
@@ -351,9 +342,6 @@ describe("MakiDoku app shell", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/trackers") return Response.json([]);
-        if (path.includes("/migration/candidates")) {
-          return Response.json({ candidates: [], failedSources: 0, searched: 0 });
-        }
         if (path.includes(`/api/manga/${mangaId}/refresh`)) {
           if (init?.method === "POST") {
             return Response.json({

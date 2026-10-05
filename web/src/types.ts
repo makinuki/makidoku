@@ -393,12 +393,6 @@ export type ReadingStats = {
   trackers: { trackedTitleCount: number; meanScore: number; trackerCount: number };
   topTitles: { mangaId: string; title: string; seconds: number; chaptersRead: number }[];
 };
-export type MigrationCandidate = { source: Source; result: SearchResult };
-export type MigrationCandidates = {
-  candidates: MigrationCandidate[];
-  failedSources: number;
-  searched: number;
-};
 export type MigrationResponse = {
   manga: Aggregate;
   source: string;

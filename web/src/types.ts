@@ -406,6 +406,34 @@ export type MigrationResponse = {
 };
 export type MigrationSource = { source: Source; count: number; imported?: boolean };
 
+// MigrationStatus is the state of one title in a streaming migration job.
+export type MigrationStatus = "searching" | "success" | "notFound" | "failed" | "cancelled";
+
+export type MigrationTitleEvent = {
+  mangaId: string;
+  title: string;
+  status: MigrationStatus;
+  source?: Source;
+  manga?: Manga;
+  score?: number;
+  chapterCount?: number;
+  latestChapter?: number;
+  error?: string;
+};
+
+// MigrationFrame is one message on the migration websocket. A snapshot lists
+// every title's current state so a reconnecting client can resync; a title
+// frame carries one update; complete ends the job.
+export type MigrationFrame = {
+  type: "snapshot" | "title" | "complete";
+  jobId: string;
+  done?: boolean;
+  title?: MigrationTitleEvent;
+  titles?: MigrationTitleEvent[];
+};
+
+export type MigrationJob = { jobId: string; count: number };
+
 export type MangaMerge = {
   id: string;
   mangaId: string;

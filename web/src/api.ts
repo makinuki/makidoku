@@ -14,6 +14,7 @@
   CatalogEntry,
   MigrationCandidates,
   MigrationResponse,
+  MigrationJob,
   Feed,
   MangaMerge,
   MangaMetadata,
@@ -412,6 +413,20 @@ export const api = {
     request<MigrationResponse>(`/api/manga/${idPath(mangaId)}/migration/apply`, {
       method: "POST",
       body: JSON.stringify({ sourceId: replacementSourceId, mangaId: replacementMangaId }),
+    }),
+  startMigrationJob: (body: {
+    sourceId: string;
+    query?: string;
+    targetSourceIds?: string[];
+    deep?: boolean;
+    prioritizeByChapters?: boolean;
+    additionalQuery?: string;
+  }) => request<MigrationJob>("/api/migration/jobs", { method: "POST", body: JSON.stringify(body) }),
+  cancelMigrationJob: (jobId: string) =>
+    request<void>(`/api/migration/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+  cancelMigrationTitle: (jobId: string, mangaId: string) =>
+    request<void>(`/api/migration/jobs/${encodeURIComponent(jobId)}/titles/${idPath(mangaId)}/cancel`, {
+      method: "POST",
     }),
   importBackup: (file: File) =>
     request<void>("/api/import", {

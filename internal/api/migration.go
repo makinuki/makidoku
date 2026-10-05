@@ -1,17 +1,25 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/makinuki/makidoku/internal/db"
 	"github.com/makinuki/makidoku/internal/engine"
 )
+
+// migrationSearchTimeout bounds one plugin search. A source that never answers
+// must not hold the picker open, since the searches run together and the
+// dialog waits for the slowest of them.
+const migrationSearchTimeout = 20 * time.Second
 
 var errEngineUnavailable = errors.New("sources are unavailable right now; try again later")
 
@@ -118,19 +126,44 @@ func (s *Server) migrationCandidates(w http.ResponseWriter, r *http.Request) {
 	if query == "" {
 		query = manga.Title
 	}
-	results := make([]migrationCandidate, 0)
-	failed := 0
+	// The searches run concurrently. A dialog that waits for every plugin in
+	// turn takes as long as the sum of their latencies, and a single slow or
+	// unreachable source is enough to make the picker feel broken.
+	targets := make([]engine.InstalledSource, 0, len(sources))
 	for _, source := range sources {
 		if source.ID == manga.SourceID {
 			continue
 		}
-		page, searchErr := s.engine.Search(r.Context(), source.ID, engine.SearchQuery{Query: query, Page: 1})
-		if searchErr != nil {
-			slog.Warn("migration candidate search failed", "source", source.Name, "err", searchErr)
+		targets = append(targets, source)
+	}
+	searches := make([][]engine.MangaItem, len(targets))
+	failures := make([]error, len(targets))
+	var group sync.WaitGroup
+	for i, source := range targets {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			ctx, cancel := context.WithTimeout(r.Context(), migrationSearchTimeout)
+			defer cancel()
+			page, searchErr := s.engine.Search(ctx, source.ID, engine.SearchQuery{Query: query, Page: 1})
+			if searchErr != nil {
+				failures[i] = searchErr
+				return
+			}
+			searches[i] = page.Items
+		}()
+	}
+	group.Wait()
+
+	results := make([]migrationCandidate, 0)
+	failed := 0
+	for i, source := range targets {
+		if failures[i] != nil {
+			slog.Warn("migration candidate search failed", "source", source.Name, "err", failures[i])
 			failed++
 			continue
 		}
-		for _, result := range page.Items {
+		for _, result := range searches[i] {
 			materialized, materializeErr := s.repo.UpsertMangaStub(db.Manga{SourceID: source.ID, SourceMangaID: result.ID, SourcePageURL: result.URL, Title: result.Title, CoverURL: engine.SelectCover(result.CoverURL, result.Covers, engine.PreferredCoverWidth), Status: "unknown"})
 			if materializeErr != nil {
 				continue
@@ -220,7 +253,7 @@ func (s *Server) applyMigration(w http.ResponseWriter, r *http.Request) {
 
 	// Materialize the replacement's chapters right away so the title opens
 	// with a consistent list. A failed fetch keeps the migration; the title
-	// simply stays empty until the next refresh.
+	// stays empty until the next refresh.
 	source, err := s.repo.GetMangaSource(oldID)
 	if err != nil {
 		writeLocalError(w, http.StatusInternalServerError, err)

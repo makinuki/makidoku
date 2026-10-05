@@ -820,7 +820,7 @@ function chapterMeta(chapter: Chapter) {
 }
 
 // Upload times are stored as Unix seconds; an unset or unparsable value is
-// simply omitted from the chapter line.
+// omitted from the chapter line.
 function formatChapterDate(uploadedAt?: number) {
   if (!uploadedAt) return "";
   const date = new Date(uploadedAt * 1000);
@@ -1327,15 +1327,23 @@ export function MigrationModal({
   const [failedSources, setFailedSources] = useState(0);
   const [selected, setSelected] = useState<MigrationCandidate>();
   const [applying, setApplying] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   useEffect(() => {
+    // A new title restarts the search, so the previous result and its selection
+    // must not stay on screen while the new query runs.
+    setLoading(true);
+    setItems([]);
+    setSelected(undefined);
+    setError("");
     void api
       .migrationCandidates(manga.id)
       .then((payload) => {
         setItems(payload.candidates);
         setFailedSources(payload.failedSources);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, [manga.id]);
   return (
     <Modal title="Migrate plugin" onClose={onClose}>
@@ -1344,28 +1352,39 @@ export function MigrationModal({
         are preserved.
       </p>
       {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
-      {failedSources > 0 && !error && (
-        <p className="mt-3 text-sm text-red-300">
-          {failedSources} plugin{failedSources === 1 ? "" : "s"} failed to respond.
+      {failedSources > 0 && !error && !loading && (
+        <p className="mt-3 text-sm text-amber-300/90">
+          {failedSources} plugin{failedSources === 1 ? "" : "s"} failed to respond and{" "}
+          {failedSources === 1 ? " was" : " were"} skipped.
         </p>
       )}
       <div className="mt-4 grid gap-2">
-        {items.map((item) => (
-          <button
-            key={`${item.source.id}:${item.result.id}`}
-            onClick={() => setSelected(item)}
-            className={`flex items-center gap-3 rounded-lg border p-3 text-left ${selected?.result.id === item.result.id ? "border-amber-400 bg-amber-400/10" : "border-zinc-800"}`}
-          >
-            <span className="grid size-9 place-items-center rounded-full bg-zinc-800 text-xs">
-              {item.source.name.slice(0, 2).toUpperCase()}
-            </span>
-            <span>
-              <b className="block">{item.result.title}</b>
-              <small className="text-zinc-500">{item.source.name}</small>
-            </span>
-          </button>
-        ))}
-        {!items.length && !error && (
+        {/* The search waits on every installed plugin, so the empty state has to
+            wait too. Reporting "no candidates" while the request is still in
+            flight reads as a result rather than as progress. */}
+        {loading && (
+          <div className="flex items-center gap-2 py-6 text-sm text-zinc-400">
+            <LoaderCircle size={16} className="animate-spin" />
+            Searching installed plugins for &ldquo;{manga.title}&rdquo;
+          </div>
+        )}
+        {!loading &&
+          items.map((item) => (
+            <button
+              key={`${item.source.id}:${item.result.id}`}
+              onClick={() => setSelected(item)}
+              className={`flex items-center gap-3 rounded-lg border p-3 text-left ${selected?.result.id === item.result.id ? "border-amber-400 bg-amber-400/10" : "border-zinc-800"}`}
+            >
+              <span className="grid size-9 place-items-center rounded-full bg-zinc-800 text-xs">
+                {item.source.name.slice(0, 2).toUpperCase()}
+              </span>
+              <span>
+                <b className="block">{item.result.title}</b>
+                <small className="text-zinc-500">{item.source.name}</small>
+              </span>
+            </button>
+          ))}
+        {!loading && !items.length && !error && (
           <p className="text-sm text-zinc-500">No replacement candidates found.</p>
         )}
       </div>

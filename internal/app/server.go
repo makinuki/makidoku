@@ -105,8 +105,10 @@ func New(cfg config.Config) (*Server, error) {
 		}
 	}
 	// The browser identity is read once here and applied to the fetcher, so every
-	// request presents it rather than the transport naming itself as Go.
-	if agent, err := preferences.Get(settings.UserAgentKey); err == nil {
+	// request presents it rather than the transport naming itself as Go. The
+	// typed read decodes the stored JSON string, because the stored form carries
+	// the quotes and a quoted identity is rejected by an origin.
+	if agent, err := preferences.String(settings.UserAgentKey); err == nil {
 		eng.SetUserAgent(agent)
 	}
 	workers := cfg.DownloadWorkers

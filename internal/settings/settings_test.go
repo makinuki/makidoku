@@ -35,6 +35,34 @@ func TestServiceUsesDefaultsAndValidatesWrites(t *testing.T) {
 	}
 }
 
+// The stored form of a string setting is a JSON literal, so the typed read is
+// what yields the identity itself. Presenting the stored form would put the
+// surrounding quotes on the wire, where an origin reads them as part of the
+// product token.
+func TestUserAgentReadsAsABareIdentity(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "user-agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	service := New(db.NewRepository(handle))
+
+	stored, err := service.Get(UserAgentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(stored, `"`) {
+		t.Fatalf("stored user agent = %q, want the quoted JSON form", stored)
+	}
+	identity, err := service.String(UserAgentKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != DefaultUserAgent {
+		t.Fatalf("typed user agent = %q, want %q", identity, DefaultUserAgent)
+	}
+}
+
 func TestReaderDisplaySettingsValidate(t *testing.T) {
 	handle, err := db.Open(filepath.Join(t.TempDir(), "reader-display.db"))
 	if err != nil {

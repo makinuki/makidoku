@@ -46,6 +46,39 @@ func TestSettingsAPIValidatesAndPersistsValues(t *testing.T) {
 	}
 }
 
+// A user agent written through the interface reaches the fetch layer as the
+// identity itself rather than as the stored JSON literal, so a live change
+// presents the same value the next start reads.
+func TestUserAgentSettingNotifiesWithABareIdentity(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "user-agent-api.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	repo := db.NewRepository(handle)
+	server := NewServer(repo, nil)
+	server.SetSettings(settings.New(repo))
+	var seen []string
+	server.SetUserAgentObserver(func(agent string) { seen = append(seen, agent) })
+	router := chi.NewRouter()
+	server.Mount(router)
+
+	const identity = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+	payload, err := json.Marshal(map[string]string{"value": identity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/settings/anti_bot.user_agent", strings.NewReader(string(payload)))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("put status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(seen) != 1 || seen[0] != identity {
+		t.Fatalf("observer saw %q, want the bare identity", seen)
+	}
+}
+
 func TestChapterReadAndHistoryEndpoints(t *testing.T) {
 	handle, err := db.Open(filepath.Join(t.TempDir(), "read-api.db"))
 	if err != nil {

@@ -95,7 +95,11 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		s.onAutoSolveChanged(raw == "true")
 	}
 	if key == settings.UserAgentKey && s.onUserAgentChanged != nil {
-		s.onUserAgentChanged(raw)
+		// The observer expects the browser identity, not the stored JSON form,
+		// so the value that was just written is read back typed.
+		if agent, err := s.settings.String(key); err == nil {
+			s.onUserAgentChanged(agent)
+		}
 	}
 	entries, err := s.settings.List()
 	if err != nil {

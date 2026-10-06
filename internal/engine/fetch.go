@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -40,12 +41,14 @@ const (
 // Browser header defaults. Each is sent only when a plugin omits it, so a
 // plugin that captured a real browser session keeps its own values.
 //
-// Brotli and zstd are absent because this host cannot decode them, and
-// advertising an encoding that is not decoded yields an unparsable body.
+// The values are those a Chromium request carries on Windows. Brotli and zstd
+// are absent because this host cannot decode them, and advertising an encoding
+// that is not decoded yields an unparsable body.
 const (
-	defaultAccept         = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+	defaultAccept         = "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8"
 	defaultAcceptLang     = "en-US,en;q=0.9"
 	defaultAcceptEncoding = "gzip, deflate"
+	defaultCacheControl   = "max-age=0"
 )
 
 // ChallengeResolver is consulted when an anti-bot challenge blocks a request.
@@ -507,7 +510,6 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	for name, value := range req.Headers {
 		httpReq.Header.Set(name, value)
 	}
-	applyBrowserHeaders(httpReq)
 
 	bundle := f.clearance(sourceID, target.String())
 	usedCookie := ""
@@ -520,19 +522,32 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	// The stored agent must match the one the clearance cookie was issued to, so
 	// it wins over the plugin's value. With no stored clearance the plugin's own
 	// agent is left unchanged.
+	agent := httpReq.Header.Get("User-Agent")
 	if bundle != nil && bundle.UserAgent != "" {
-		httpReq.Header.Set("User-Agent", bundle.UserAgent)
-	} else if httpReq.Header.Get("User-Agent") == "" {
+		agent = bundle.UserAgent
+	} else if agent == "" {
 		// The transport otherwise writes a "Go-http-client/1.1" default that
 		// identifies the host to the origin. The configured browser identity is
 		// used instead, so an origin that refuses a Go transport on sight is not
 		// refused before a challenge is ever involved.
-		httpReq.Header.Set("User-Agent", f.userAgent)
+		agent = f.userAgent
 	}
+	httpReq.Header.Set("User-Agent", agent)
 
 	// The source's own base address is sent as the referrer and the origin, so an
-	// asset host that refuses a request without them still serves the bytes.
+	// asset host that refuses a request without them still serves the bytes. It
+	// is resolved before the browser headers because the fetch metadata is
+	// derived from the referrer.
 	applyRefererHeaders(httpReq, f.baseURLs[sourceID])
+	applyBrowserHeaders(httpReq, agent)
+
+	// Client hints captured with a clearance belong to the agent that earned it,
+	// so they replace the hints derived from the current agent.
+	if bundle != nil {
+		for name, value := range bundle.SecChUa {
+			httpReq.Header.Set(name, value)
+		}
+	}
 
 	started := time.Now()
 	httpResp, err := pick(sourceID).Do(httpReq)
@@ -592,21 +607,193 @@ func (f *Fetcher) attemptWith(ctx context.Context, sourceID, method string, req 
 	}, usedCookie, nil
 }
 
-// applyBrowserHeaders fills in the navigation headers a plugin would normally
-// send but often does not. Anything the plugin set explicitly is left alone, so
-// a plugin that captured a real session keeps its own values.
-func applyBrowserHeaders(req *http.Request) {
-	for name, value := range map[string]string{
-		"Accept":                    defaultAccept,
-		"Accept-Language":           defaultAcceptLang,
-		"Accept-Encoding":           defaultAcceptEncoding,
-		"Cache-Control":             "no-cache",
-		"Pragma":                    "no-cache",
-		"Upgrade-Insecure-Requests": "1",
-	} {
+// requestKind is how a request is presented to the origin. The kind decides the
+// destination, mode, and priority, so a request can describe a document, an
+// image, or a scripted call instead of every request claiming to be the first.
+type requestKind int
+
+const (
+	// kindFetch is a scripted request: an API call, a JSON document, or a
+	// wildcard Accept.
+	kindFetch requestKind = iota
+	// kindDocument is a top level document that was navigated to.
+	kindDocument
+	// kindImage is an image subresource.
+	kindImage
+)
+
+// classifyRequest infers the kind from the Accept header. An absent Accept takes
+// the document set, which is the request a plugin makes most often.
+func classifyRequest(accept string) requestKind {
+	switch {
+	case accept == "", strings.Contains(accept, "text/html"):
+		return kindDocument
+	case strings.Contains(accept, "image/"):
+		return kindImage
+	default:
+		return kindFetch
+	}
+}
+
+// applyBrowserHeaders fills in the headers a Chromium request carries but a
+// plugin often does not. Anything the plugin set explicitly is left alone, so a
+// plugin that captured a real session keeps its own values.
+//
+// The client hints are derived from agent, so the hints and the agent cannot
+// name different versions of the browser they claim to be.
+func applyBrowserHeaders(req *http.Request, agent string) {
+	// An absent Accept becomes the document set, which also decides how the
+	// request is presented. A plugin that set its own Accept keeps it.
+	accept := req.Header.Get("Accept")
+	if accept == "" {
+		accept = defaultAccept
+		req.Header.Set("Accept", accept)
+	}
+	kind := classifyRequest(accept)
+
+	fill := func(name, value string) {
 		if req.Header.Get(name) == "" {
 			req.Header.Set(name, value)
 		}
+	}
+	fill("Accept-Language", defaultAcceptLang)
+	fill("Accept-Encoding", defaultAcceptEncoding)
+	fill("Priority", priorityFor(kind))
+	// A navigation is the only request Chromium asks to upgrade and to bypass
+	// the cache for; a subresource or a scripted call carries neither.
+	if kind == kindDocument {
+		fill("Cache-Control", defaultCacheControl)
+		fill("Upgrade-Insecure-Requests", "1")
+	}
+	for name, value := range fetchMetadata(req, kind) {
+		fill(name, value)
+	}
+	for name, value := range clientHints(agent) {
+		fill(name, value)
+	}
+}
+
+// priorityFor returns the request priority Chromium assigns to the kind. The
+// document is the most urgent, a scripted call sits in the middle, and an image
+// is normal.
+func priorityFor(kind requestKind) string {
+	switch kind {
+	case kindDocument:
+		return "u=0, i"
+	case kindImage:
+		return "u=2, i"
+	default:
+		return "u=1, i"
+	}
+}
+
+// fetchMetadata returns the Sec-Fetch-* set for one request. The three kinds are
+// the ones a plugin produces: a document navigation, an image subresource, and a
+// scripted call. A navigation also carries the user activation flag, which is
+// what separates it from a request the page made for itself.
+func fetchMetadata(req *http.Request, kind requestKind) map[string]string {
+	site := fetchSite(req)
+	switch kind {
+	case kindDocument:
+		return map[string]string{
+			"Sec-Fetch-Dest": "document",
+			"Sec-Fetch-Mode": "navigate",
+			"Sec-Fetch-Site": site,
+			"Sec-Fetch-User": "?1",
+		}
+	case kindImage:
+		return map[string]string{
+			"Sec-Fetch-Dest": "image",
+			"Sec-Fetch-Mode": "no-cors",
+			"Sec-Fetch-Site": site,
+		}
+	default:
+		mode := "cors"
+		if site == "same-origin" {
+			mode = "same-origin"
+		}
+		return map[string]string{
+			"Sec-Fetch-Dest": "empty",
+			"Sec-Fetch-Mode": mode,
+			"Sec-Fetch-Site": site,
+		}
+	}
+}
+
+// fetchSite relates the request to the referrer the browser would have sent. A
+// suffix match between the two hosts stands in for a registrable-domain
+// comparison, so a subdomain counts as the same site.
+func fetchSite(req *http.Request) string {
+	referer := req.Header.Get("Referer")
+	if referer == "" {
+		return "none"
+	}
+	parsed, err := url.Parse(referer)
+	if err != nil || parsed.Hostname() == "" {
+		return "none"
+	}
+	target := strings.ToLower(req.URL.Hostname())
+	origin := strings.ToLower(parsed.Hostname())
+	switch {
+	case target == origin:
+		return "same-origin"
+	case strings.HasSuffix(target, "."+origin), strings.HasSuffix(origin, "."+target):
+		return "same-site"
+	default:
+		return "cross-site"
+	}
+}
+
+// chromiumVersion matches the major version of a Chromium based agent string.
+var chromiumVersion = regexp.MustCompile(`(?:Chrome|Chromium)/(\d+)\.`)
+
+// clientHints returns the low entropy client hints a Chromium agent attaches to
+// every request. The high entropy hints are only sent after an Accept-CH
+// response, so they are not part of this set. An agent that names no Chromium
+// version gets none, because other brands do not send client hints.
+//
+// The platform and mobile flags are read back from the agent so the hints cannot
+// contradict the identity they travel with. A platform the agent does not name
+// leaves the platform hint off rather than guessing one.
+//
+// The middle brand is Chromium's randomized greasing token. Its value carries
+// no meaning and must not be interpreted.
+func clientHints(agent string) map[string]string {
+	match := chromiumVersion.FindStringSubmatch(agent)
+	if match == nil {
+		return nil
+	}
+	version := match[1]
+	hints := map[string]string{
+		"Sec-Ch-Ua":        `"Chromium";v="` + version + `", "Not A(Brand";v="99", "Google Chrome";v="` + version + `"`,
+		"Sec-Ch-Ua-Mobile": "?0",
+	}
+	platform, mobile := agentPlatform(agent)
+	if platform != "" {
+		hints["Sec-Ch-Ua-Platform"] = `"` + platform + `"`
+	}
+	if mobile {
+		hints["Sec-Ch-Ua-Mobile"] = "?1"
+	}
+	return hints
+}
+
+// agentPlatform reads the platform and the mobile flag from a user agent. The
+// returned name is the value Chromium reports in the platform hint.
+func agentPlatform(agent string) (string, bool) {
+	switch {
+	case strings.Contains(agent, "Android"):
+		return "Android", true
+	case strings.Contains(agent, "CrOS"):
+		return "Chrome OS", false
+	case strings.Contains(agent, "Macintosh"), strings.Contains(agent, "Mac OS X"):
+		return "macOS", false
+	case strings.Contains(agent, "Windows"):
+		return "Windows", false
+	case strings.Contains(agent, "Linux"), strings.Contains(agent, "X11"):
+		return "Linux", false
+	default:
+		return "", false
 	}
 }
 

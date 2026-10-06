@@ -205,9 +205,10 @@ func enum(values ...string) func(any) error {
 // It is editable because a stale agent is a real problem and choosing a
 // replacement is the reader's decision rather than something a build should
 // freeze. Without it the transport announces itself as Go-http-client, which many
-// origins refuse before any challenge is involved at all.
+// origins refuse before any challenge is involved at all. The client hint
+// version is derived from this string, so an edit keeps the two in step.
 const DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-	"(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+	"(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
 
 // userAgentDefaultJSON is DefaultUserAgent in the JSON form a schema stores. A
 // schema default is a JSON literal rather than a bare Go string, so a bare one
